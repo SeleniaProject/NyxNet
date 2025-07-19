@@ -17,8 +17,7 @@ use tokio::task::JoinHandle;
 use tracing::{error, info};
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_subscriber::{layer::SubscriberExt, Registry};
-use opentelemetry::sdk::{trace as sdktrace, Resource, InstrumentationLibrary};
-use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::{trace as sdktrace, Resource, runtime::Tokio};
 use tracing_opentelemetry::OpenTelemetryLayer;
 
 #[cfg(feature = "flamegraph")]
@@ -41,14 +40,15 @@ pub fn inc_request_total() {
 
 /// Initialize Bunyan-formatted `tracing` subscriber for structured JSON logs.
 /// Should be called once at application startup.
-pub fn init_bunyan(service_name: &str) -> Result<(), tracing::subscriber::SetGlobalDefaultError> {
+pub fn init_bunyan(service_name: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let formatting_layer = BunyanFormattingLayer::new(service_name.to_string(), std::io::stdout);
     // OpenTelemetry tracer
     let tracer = opentelemetry_otlp::new_pipeline()
         .tracing()
         .with_exporter(opentelemetry_otlp::new_exporter().tonic())
         .with_trace_config(sdktrace::config().with_resource(Resource::new(vec![opentelemetry::KeyValue::new("service.name", service_name.to_string())])))
-        .install_batch(opentelemetry::runtime::Tokio)?;
+        .install_batch(Tokio)
+        .map_err(|e| Box::<dyn std::error::Error + Send + Sync>::from(e))?;
 
     let otel_layer = OpenTelemetryLayer::new(tracer);
 
@@ -56,7 +56,7 @@ pub fn init_bunyan(service_name: &str) -> Result<(), tracing::subscriber::SetGlo
         .with(JsonStorageLayer)
         .with(formatting_layer)
         .with(otel_layer);
-    tracing::subscriber::set_global_default(subscriber)
+    tracing::subscriber::set_global_default(subscriber).map_err(|e| e.into())
 }
 
 /// Gracefully shutdown OpenTelemetry provider.

@@ -1,7 +1,6 @@
-use fluent_bundle::{FluentBundle, FluentResource, FluentArgs, FluentValue};
+use fluent_bundle::{FluentBundle, FluentResource, FluentArgs};
 use unic_langid::LanguageIdentifier;
 use once_cell::sync::Lazy;
-use std::borrow::Cow;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Lang {
@@ -37,9 +36,12 @@ config-reload = 配置已重新加载
 "#;
 
 fn make_bundle(lang: LanguageIdentifier, src: &'static str) -> FluentBundle<&'static FluentResource> {
-    let res = FluentResource::try_new(src.to_owned()).expect("valid FTL");
+    // Leak the resource to obtain a 'static reference suitable for FluentBundle.
+    let res: &'static FluentResource = Box::leak(Box::new(
+        FluentResource::try_new(src.to_owned()).expect("valid FTL"),
+    ));
     let mut bundle = FluentBundle::new(vec![lang]);
-    bundle.add_resource(&res).expect("add res");
+    bundle.add_resource(res).expect("add res");
     bundle
 }
 
@@ -47,9 +49,9 @@ fn make_bundle(lang: LanguageIdentifier, src: &'static str) -> FluentBundle<&'st
 /// Falls back to English if key missing.
 pub fn tr(lang: Lang, key: &str, args: Option<&FluentArgs>) -> String {
     let bundle = match lang {
-        Lang::En => make_bundle(*EN_ID, EN_FTL),
-        Lang::Zh => make_bundle(*ZH_ID, ZH_FTL),
-        Lang::Ja => make_bundle(*JA_ID, JA_FTL),
+        Lang::En => make_bundle(EN_ID.clone(), EN_FTL),
+        Lang::Zh => make_bundle(ZH_ID.clone(), ZH_FTL),
+        Lang::Ja => make_bundle(JA_ID.clone(), JA_FTL),
     };
     if let Some(msg) = bundle.get_message(key) {
         if let Some(pattern) = msg.value() {
@@ -62,12 +64,12 @@ pub fn tr(lang: Lang, key: &str, args: Option<&FluentArgs>) -> String {
                     &empty_args
                 }
             };
-            let val = bundle.format_pattern(pattern, args_ref, &mut errors);
+            let val = bundle.format_pattern(pattern, Some(args_ref), &mut errors);
             return val.into_owned();
         }
     }
     // fallback
-    let fallback_bundle = make_bundle(*EN_ID, EN_FTL);
+    let fallback_bundle = make_bundle(EN_ID.clone(), EN_FTL);
     if let Some(msg) = fallback_bundle.get_message(key) {
         if let Some(pattern) = msg.value() {
             let mut errors = vec![];
@@ -79,7 +81,7 @@ pub fn tr(lang: Lang, key: &str, args: Option<&FluentArgs>) -> String {
                     &empty_args
                 }
             };
-            return fallback_bundle.format_pattern(pattern, args_ref, &mut errors).into_owned();
+            return fallback_bundle.format_pattern(pattern, Some(args_ref), &mut errors).into_owned();
         }
     }
     key.to_string()
@@ -88,6 +90,7 @@ pub fn tr(lang: Lang, key: &str, args: Option<&FluentArgs>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fluent_bundle::FluentValue;
     #[test]
     fn en_translation() {
         let mut args = FluentArgs::new();

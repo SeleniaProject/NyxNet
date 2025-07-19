@@ -7,6 +7,8 @@
 //! 2. HKDF wrappers with misuse-resistant label semantics.
 //! 3. Optional Kyber1024 Post-Quantum fallback when built with `--features pq`.
 
+use zeroize::Zeroize;
+
 pub mod noise;
 pub mod kdf;
 

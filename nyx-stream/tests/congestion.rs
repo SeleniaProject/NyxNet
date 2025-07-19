@@ -9,5 +9,5 @@ fn cwnd_tracks_bandwidth() {
         cc.on_send(1280);
         cc.on_ack(1280, Duration::from_micros(104)); // 100Mbps
     }
-    assert!(cc.cwnd > 100.0);
+    assert!(cc.cwnd() > 100.0);
 } 

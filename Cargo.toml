@@ -17,6 +17,7 @@ members = [
     "nyx-control",
     "nyx-sdk-wasm",
     "nyx-conformance",
+    "build-protoc",
 ]
 resolver = "2"
 

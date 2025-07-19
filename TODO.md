@@ -92,9 +92,12 @@
 ---
 
 ## 🧪 テスト / QA
-- [ ] Conformance Suite 120 ケース実装 (20/120)
+- [ ] Conformance Suite 120 ケース実装 (30/120)  <!-- +4 cases: localized_string frame tests added -->
 - [x] E2E test matrix (KinD 5-node) in CI
 - [x] Chaos-mesh latency injection tests
+
+### Newly Completed
+- Implemented LOCALIZED_STRING frame parser/builder and associated conformance tests.
 
 ---
 

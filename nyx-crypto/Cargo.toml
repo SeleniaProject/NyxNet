@@ -20,7 +20,7 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 pqcrypto-kyber = { version = "0.7", optional = true, package = "pqcrypto-kyber" }
 pqcrypto-traits = { version = "0.3", optional = true, package = "pqcrypto-traits" }
 criterion = { version = "0.5", optional = true }
+zeroize = { version = "1", features=["zeroize_derive"] }
 
 [dev-dependencies]
 hex-literal = "0.4"
-zeroize = { version = "1", features=["zeroize_derive"] }

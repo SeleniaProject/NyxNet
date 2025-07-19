@@ -40,7 +40,7 @@ fn encode_binding_request(buf: &mut [u8]) -> [u8; 12] {
 }
 
 /// Decode Binding response and extract XOR-Mapped address if present.
-fn decode_binding_response(data: &[u8]) -> Option<SocketAddr> {
+pub fn decode_binding_response(data: &[u8]) -> Option<SocketAddr> {
     if data.len() < 20 { return None; }
     let msg_type = u16::from_be_bytes([data[0], data[1]]);
     if msg_type != STUN_BINDING_RESPONSE { return None; }

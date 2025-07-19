@@ -11,5 +11,6 @@ nom = { version = "7", default-features = false, features = ["std"] }
 nyx-core = { path = "../nyx-core" }
 nyx-fec = { path = "../nyx-fec" }
 tokio = { version = "1.37", features = ["sync", "time", "rt", "macros"] }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features=["derive"] }
+serde_bytes = "0.11"
 serde_cbor = "0.11"

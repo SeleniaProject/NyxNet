@@ -45,9 +45,13 @@ impl Default for Settings {
 pub fn validate_settings(json: &[u8]) -> Result<Settings, String> {
     let val: serde_json::Value = serde_json::from_slice(json).map_err(|e| e.to_string())?;
     let schema = schemars::schema_for!(Settings);
+    let schema_value = serde_json::to_value(&schema.schema).unwrap();
     let compiled = jsonschema::JSONSchema::options()
         .with_draft(jsonschema::Draft::Draft7)
-        .compile(&schema.schema)
+        .compile(&schema_value)
         .map_err(|e| e.to_string())?;
-    compiled.validate(&val).map_err(|e| format!("schema error: {}", e)).map(|_| serde_json::from_value(val).unwrap())
+    compiled.validate(&val).map_err(|err_iter| {
+        let joined = err_iter.map(|e| e.to_string()).collect::<Vec<_>>().join(", ");
+        format!("schema error: {}", joined)
+    }).map(|_| serde_json::from_value(val).unwrap())
 } 
