@@ -1,0 +1,24 @@
+site_name: Nyx Documentation
+site_description: Comprehensive specs, tutorials, and developer guides for the Nyx privacy-preserving mixnet.
+repo_url: https://github.com/SeleniaProject/NyxNet
+repo_name: SeleniaProject/NyxNet
+copyright: "Copyright © Nyx Project contributors"
+docs_dir: docs
+theme:
+  name: material
+  language: ja
+  features:
+    - navigation.tabs
+    - navigation.instant
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/SeleniaProject/NyxNet
+nav:
+  - はじめに: index.md
+  - チュートリアル:
+      - 最小チャットアプリ: tutorial_chat.md
+markdown_extensions:
+  - admonition
+  - codehilite
+  - pymdownx.extra 

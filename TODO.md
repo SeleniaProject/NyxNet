@@ -80,8 +80,8 @@
 
 ## 📚 ドキュメント / Docs
 - [x] Rustdoc doc-cfg annotations
-- [ ] MkDocs サイト自動公開 (GitHub Pages)
-- [ ] チュートリアル「最小チャットアプリ」
+- [x] MkDocs サイト自動公開 (GitHub Pages)
+- [x] チュートリアル「最小チャットアプリ」
 
 ---
 
