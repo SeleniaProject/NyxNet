@@ -10,6 +10,7 @@ use rand_core::OsRng;
 use sha2::Sha256;
 use hkdf::Hkdf;
 use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
+use super::kdf::{hkdf_expand, KdfLabel};
 
 /// Initiator が生成するハンドシェイクメッセージ (e 公開鍵) と秘密状態を返す。
 pub fn initiator_generate() -> (PublicKey, EphemeralSecret) {
@@ -31,10 +32,10 @@ pub fn initiator_finalize(sec: EphemeralSecret, resp_pub: &PublicKey) -> SharedS
     sec.diffie_hellman(resp_pub)
 }
 
-/// 応用用に、共有鍵から 32 バイトのセッションキーを派生する。
+/// Derive a 32 2Dbyte session key from the shared secret using the misuse 2Dresistant HKDF wrapper.
 pub fn derive_session_key(shared: &SharedSecret) -> [u8; 32] {
-    let hk = Hkdf::<Sha256>::new(None, shared.as_bytes());
-    let mut okm = [0u8; 32];
-    hk.expand(b"nyx-session", &mut okm).expect("HKDF expand");
-    okm
+    let okm = hkdf_expand(shared.as_bytes(), KdfLabel::Session, 32);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&okm);
+    out
 } 

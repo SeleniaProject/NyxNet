@@ -8,3 +8,4 @@
 //! 3. Optional Kyber1024 Post-Quantum fallback when built with `--features pq`.
 
 pub mod noise;
+pub mod kdf;

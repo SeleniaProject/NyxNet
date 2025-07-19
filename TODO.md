@@ -8,6 +8,7 @@
 - [x] 仕様書 (`Nyx_Protocol_v0.1_Spec.md`) 確定
 - [x] `nyx-core` クレート作成 & 基本 Config / エラー実装
 - [x] `nyx-crypto` クレート作成
+- [x] HKDF misuse-resistantラッパー
 
 ---
 
@@ -23,7 +24,6 @@
 ### Core & Crypto
 - [ ] `nyx-core` エラーハンドリング統一 (thiserror)
 - [ ] `nyx-crypto` Kyber1024 fallback (feature `pq`)
-- [ ] HKDF misuse-resistantラッパー
 
 ### Stream Layer
 - [x] Frame parser skeleton (nom) with header parsing
