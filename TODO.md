@@ -102,6 +102,7 @@
 - Added Japanese locale strings to core i18n implementation.
 - Implemented WeightedPathBuilder with latency/bandwidth heuristic and unit test.
 - Added Multipath PathID frame-header extension parsing support.
+- Implemented AdaptiveCoverGenerator with UtilizationEstimator for dynamic λ adjustment.
 
 ---
 
