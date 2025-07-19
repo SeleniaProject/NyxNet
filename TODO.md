@@ -101,6 +101,7 @@
 - Refined BBRv2-like congestion controller (gain-cycle cap) to satisfy conformance suite.
 - Added Japanese locale strings to core i18n implementation.
 - Implemented WeightedPathBuilder with latency/bandwidth heuristic and unit test.
+- Added Multipath PathID frame-header extension parsing support.
 
 ---
 
