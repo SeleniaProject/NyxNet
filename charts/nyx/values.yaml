@@ -1,0 +1,12 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/nyxproject/nyxd
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 43300
+
+resources: {} 

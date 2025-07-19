@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nyx.fullname" . }}
+  labels:
+    app: {{ include "nyx.name" . }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: {{ include "nyx.name" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "nyx.name" . }}
+    spec:
+      containers:
+        - name: nyxd
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 43300
+          resources: {{- toYaml .Values.resources | nindent 12 }} 

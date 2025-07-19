@@ -60,7 +60,7 @@
 - [x] Windows ビルド & CI
 - [x] WASM SDK (nyx-sdk-wasm)
 - [x] Docker multi-arch (amd64, arm64)
-- [ ] Helm Chart リリース
+- [x] Helm Chart リリース
 
 ---
 

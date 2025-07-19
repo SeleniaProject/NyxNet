@@ -79,3 +79,16 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ghcr.io/${{ github.repository }}/nyxd:${{ github.sha }} 
+  package-chart:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package Helm chart
+        run: |
+          sudo apt-get update && sudo apt-get install -y helm
+          helm package charts/nyx --destination ./chart-dist
+      - uses: actions/upload-artifact@v3
+        with:
+          name: nyx-chart
+          path: chart-dist/*.tgz 
