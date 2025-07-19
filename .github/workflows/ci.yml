@@ -41,4 +41,21 @@ jobs:
       - name: setup miri
         run: cargo miri setup
       - name: run miri tests
-        run: cargo miri test --workspace --exclude nyx-telemetry 
+        run: cargo miri test --workspace --exclude nyx-telemetry
+
+  windows:
+    name: Windows MSVC build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-protoc@v1
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          target: x86_64-pc-windows-msvc
+      - name: Build
+        run: cargo build --all --verbose
+      - name: Test
+        run: cargo test --all --verbose 
