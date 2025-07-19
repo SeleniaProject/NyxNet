@@ -13,6 +13,9 @@ thiserror = "1.0"
 tracing = "0.1"
 tokio = { version = "1.37", features = ["full"] }
 notify = { version = "6.1" }
+fluent-bundle = { version = "0.15", features = ["memoize-concat"] }
+unic-langid = "0.9"
+once_cell = "1.19"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 seccomp = "0.3"

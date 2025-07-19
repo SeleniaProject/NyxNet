@@ -5,6 +5,7 @@ pub mod error;
 pub mod types;
 #[cfg(target_os = "linux")]
 pub mod sandbox;
+pub mod i18n;
 
 pub use config::NyxConfig;
 pub use error::NyxError;
