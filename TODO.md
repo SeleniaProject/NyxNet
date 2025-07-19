@@ -22,7 +22,7 @@
 
 ## 🔜 v0.1 Alpha リリース目標タスク
 ### Core & Crypto
-- [ ] `nyx-core` エラーハンドリング統一 (thiserror)
+- [x] `nyx-core` エラーハンドリング統一 (thiserror)
 - [x] `nyx-crypto` Kyber1024 fallback (feature `pq`)
 
 ### Stream Layer

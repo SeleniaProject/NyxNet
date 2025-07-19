@@ -17,4 +17,7 @@ pub enum NyxError {
     /// Filesystem watch errors.
     #[error("Notify error: {0}")]
     Notify(#[from] notify::Error),
-} 
+}
+
+/// Convenient alias for results throughout Nyx crates.
+pub type NyxResult<T> = Result<T, NyxError>; 

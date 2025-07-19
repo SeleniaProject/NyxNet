@@ -42,17 +42,22 @@ fn default_listen_port() -> u16 {
 
 impl NyxConfig {
     /// Load a configuration file from the given path.
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, NyxError> {
+    pub fn from_file<P: AsRef<Path>>(path: P) -> crate::NyxResult<Self> {
         let data = fs::read_to_string(&path).map_err(NyxError::from)?;
         let cfg = toml::from_str::<NyxConfig>(&data).map_err(NyxError::ConfigParse)?;
         Ok(cfg)
+    }
+
+    /// Load config alias version
+    pub fn load<P: AsRef<Path>>(path: P) -> crate::NyxResult<Self> {
+        Self::from_file(path)
     }
 
     /// Watch the configuration file for changes and receive updates through a watch channel.
     ///
     /// Returns the initial configuration and a [`watch::Receiver`] that yields a new [`NyxConfig`]
     /// wrapped in [`Arc`] every time the file is modified on disk.
-    pub fn watch_file<P: AsRef<Path>>(path: P) -> Result<(Arc<NyxConfig>, watch::Receiver<Arc<NyxConfig>>), NyxError> {
+    pub fn watch_file<P: AsRef<Path>>(path: P) -> crate::NyxResult<(Arc<NyxConfig>, watch::Receiver<Arc<NyxConfig>>)> {
         let path_buf = path.as_ref().to_path_buf();
         let initial_cfg = Arc::new(Self::from_file(&path_buf)?);
         // Clone for closure capture to avoid moving the original `path_buf`.
