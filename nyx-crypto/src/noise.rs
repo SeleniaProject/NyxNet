@@ -36,4 +36,48 @@ pub fn derive_session_key(shared: &SharedSecret) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(&okm);
     out
+}
+
+// -----------------------------------------------------------------------------
+// Kyber1024 Post-Quantum fallback (feature "pq")
+// -----------------------------------------------------------------------------
+
+#[cfg(feature = "pq")]
+pub mod pq {
+    //! Kyber1024 KEM wrapper providing the same interface semantics as the X25519
+    //! Noise_Nyx handshake. When the `pq` feature is enabled at compile-time,
+    //! callers can switch to these APIs to negotiate a 32-byte session key that
+    //! is derived from the Kyber shared secret via the common HKDF wrapper to
+    //! ensure uniform key derivation logic across classic and PQ modes.
+
+    use pqcrypto_kyber::kyber1024::{keypair, encapsulate, decapsulate, PublicKey, SecretKey, Ciphertext, SharedSecret};
+    use crate::kdf::{hkdf_expand, KdfLabel};
+    use pqcrypto_traits::kem::SharedSecret as _; // bring trait for as_bytes
+
+    /// Generate a Kyber1024 keypair for the responder.
+    pub fn responder_keypair() -> (PublicKey, SecretKey) {
+        keypair()
+    }
+
+    /// Initiator encapsulates to responder's public key, returning the
+    /// ciphertext to transmit and the derived 32-byte session key.
+    pub fn initiator_encapsulate(pk: &PublicKey) -> (Ciphertext, [u8; 32]) {
+        let (ss, ct) = encapsulate(pk);
+        (ct, derive_session_key(&ss))
+    }
+
+    /// Responder decapsulates ciphertext with its secret key and derives the
+    /// matching 32-byte session key.
+    pub fn responder_decapsulate(ct: &Ciphertext, sk: &SecretKey) -> [u8; 32] {
+        let ss = decapsulate(ct, sk);
+        derive_session_key(&ss)
+    }
+
+    /// Convert Kyber shared secret into Nyx session key via HKDF.
+    fn derive_session_key(shared: &SharedSecret) -> [u8; 32] {
+        let okm = hkdf_expand(shared.as_bytes(), KdfLabel::Session, 32);
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&okm);
+        out
+    }
 } 

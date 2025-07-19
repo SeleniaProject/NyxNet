@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 
 [features]
 # Enable post-quantum Kyber fallback.
-pq = ["pqcrypto-kyber"]
+pq = ["pqcrypto-kyber", "pqcrypto-traits"]
 
 [dependencies]
 x25519-dalek = "2.0"
@@ -17,6 +17,7 @@ sha2 = "0.10"
 hkdf = "0.12"
 rand_core = { version = "0.6", features = ["getrandom"] }
 pqcrypto-kyber = { version = "0.7", optional = true, package = "pqcrypto-kyber" }
+pqcrypto-traits = { version = "0.3", optional = true, package = "pqcrypto-traits" }
 
 [dev-dependencies]
 hex-literal = "0.4"

@@ -742,6 +742,7 @@ dependencies = [
  "hex-literal",
  "hkdf",
  "pqcrypto-kyber",
+ "pqcrypto-traits",
  "rand_core",
  "sha2",
  "x25519-dalek",
