@@ -12,7 +12,7 @@
 
 ---
 
-## 🏗️ 進行中 / In Progress
+## 🏗️ 進行中
 - [x] Noise_Nyx パターン実装 & テストベクタ合致確認 (RFC7748 X25519 unit test)
 - [x] UDP Transport Adapter + basic hole punching
 - [x] Timing obfuscator integration in stream layer (StreamLayer, E2E test)
@@ -47,7 +47,7 @@
 - [ ] SETTINGS フォーマットの schema validation
 
 ### Telemetry
-- [ ] Prometheus exporter initial metrics
+- [x] Prometheus exporter initial metrics
 - [ ] Bunyan log middleware integration
 
 ### CI / Tooling
