@@ -60,4 +60,9 @@ impl TimingObfuscator {
     pub async fn recv(&mut self) -> Option<Packet> {
         self.rx.recv().await
     }
+
+    /// Get a clone of the internal sender for enqueueing packets from other tasks.
+    pub fn sender(&self) -> mpsc::Sender<Packet> {
+        self.tx.clone()
+    }
 } 
