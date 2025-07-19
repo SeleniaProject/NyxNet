@@ -1,17 +1,17 @@
 # Nyx Project TODO / タスク一覧
 
-> **更新日: 01-02** (随時更新)
+> **更新日: 01-03** (随時更新)
 
 ---
 
 ## ✅ 完了済み / Done
 - [x] 仕様書 (`Nyx_Protocol_v0.1_Spec.md`) 確定
 - [x] `nyx-core` クレート作成 & 基本 Config / エラー実装
+- [x] `nyx-crypto` クレート作成
 
 ---
 
 ## 🏗️ 進行中 / In Progress
-- [ ] Crate scaffolding (残りの `nyx-crypto` など) 作成
 - [ ] Noise_Nyx パターン実装 & テストベクタ合致確認
 - [ ] UDP Transport Adapter + 基本ホールパンチング
 - [ ] Fuzz テスト基盤セットアップ (`cargo-fuzz`)

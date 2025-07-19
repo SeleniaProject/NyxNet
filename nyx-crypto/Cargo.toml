@@ -1,0 +1,19 @@
+[package]
+name = "nyx-crypto"
+version = "0.1.0"
+edition = "2021"
+
+description = "Nyx cryptography engine implementing Noise_Nyx handshake and HKDF wrappers."
+license = "MIT OR Apache-2.0"
+
+[features]
+# Enable post-quantum Kyber fallback.
+pq = ["pqcrypto-kyber"]
+
+[dependencies]
+x25519-dalek = "2.0"
+blake3 = { version = "1.5", features = ["pure"] }
+sha2 = "0.10"
+hkdf = "0.12"
+rand_core = { version = "0.6", features = ["getrandom"] }
+pqcrypto-kyber = { version = "0.7", optional = true, package = "pqcrypto-kyber" }

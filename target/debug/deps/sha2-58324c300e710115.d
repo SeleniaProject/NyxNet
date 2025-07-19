@@ -1,0 +1,13 @@
+C:\Users\Aqua\Programming\SeleniaProject\NyxNet\target\debug\deps\sha2-58324c300e710115.d: C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\lib.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\core_api.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha256.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha512.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\consts.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha256\soft.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha256\x86.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha512\soft.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha512\x86.rs
+
+C:\Users\Aqua\Programming\SeleniaProject\NyxNet\target\debug\deps\libsha2-58324c300e710115.rmeta: C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\lib.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\core_api.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha256.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha512.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\consts.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha256\soft.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha256\x86.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha512\soft.rs C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha512\x86.rs
+
+C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\lib.rs:
+C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\core_api.rs:
+C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha256.rs:
+C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha512.rs:
+C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\consts.rs:
+C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha256\soft.rs:
+C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha256\x86.rs:
+C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha512\soft.rs:
+C:\Users\Aqua\.cargo\registry\src\index.crates.io-1949cf8c6b5b557f\sha2-0.10.9\src\sha512\x86.rs:
