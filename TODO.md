@@ -43,7 +43,7 @@
 - [x] STUN server モジュール
 
 ### Control Plane
-- [ ] Kademlia DHT integration (`libp2p`) テストネット起動
+- [x] Kademlia DHT integration (`libp2p`) テストネット起動
 - [ ] SETTINGS フォーマットの schema validation
 
 ### Telemetry
