@@ -1,0 +1,12 @@
+[package]
+name = "nyx-control"
+version = "0.1.0"
+edition = "2021"
+
+description = "Nyx control plane: DHT and settings sync"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+libp2p = { version = "0.49", default-features = false, features = ["kad", "tcp-async-io", "dns-async-std", "async-std"] }
+nyx-core = { path = "../nyx-core" }
+async-std = { version = "1", features = ["attributes"] }
