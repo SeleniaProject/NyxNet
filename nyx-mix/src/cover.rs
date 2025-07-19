@@ -6,7 +6,7 @@ use std::time::Duration;
 /// Poisson cover-traffic interval generator.
 /// λ = target bandwidth factor (events per second).
 pub struct CoverGenerator {
-    lambda: f64,
+    pub(crate) lambda: f64,
 }
 
 impl CoverGenerator {

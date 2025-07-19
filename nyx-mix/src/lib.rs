@@ -9,6 +9,8 @@ use rand::{seq::SliceRandom, thread_rng};
 
 pub mod cover;
 pub use cover::CoverGenerator;
+pub mod adaptive;
+pub use adaptive::{AdaptiveCoverGenerator, UtilizationEstimator};
 
 /// Candidate node with runtime metrics for weighted selection.
 #[derive(Debug, Clone, Copy)]
