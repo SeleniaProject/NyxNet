@@ -16,6 +16,6 @@ pub fn parse_header(input: &[u8]) -> IResult<&[u8], FrameHeader> {
     let byte0_type = byte0 >> 6;
     let byte0_flags = byte0 & 0x3F;
     let len_high = ((byte1 as u16) << 8) | (len_bytes[0] as u16);
-    let length = (len_high & 0x3FFF); // 14 bits
+    let length = len_high & 0x3FFF; // 14 bits
     Ok((input, FrameHeader { frame_type: byte0_type, flags: byte0_flags, length }))
 } 

@@ -7,8 +7,6 @@
 //! Kyber1024 フォールバックも feature `pq` で切り替えられるよう拡張します。
 
 use rand_core::OsRng;
-use sha2::Sha256;
-use hkdf::Hkdf;
 use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
 use super::kdf::{hkdf_expand, KdfLabel};
 

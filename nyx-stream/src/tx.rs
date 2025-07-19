@@ -20,10 +20,9 @@ impl TxQueue {
         tokio::spawn(async move {
             let mut recv_obf = obf;
             while let Some(pkt) = recv_obf.recv().await {
-                if let Packet(bytes) = pkt {
-                    if out_tx.send(bytes).await.is_err() {
-                        break;
-                    }
+                let Packet(bytes) = pkt;
+                if out_tx.send(bytes).await.is_err() {
+                    break;
                 }
             }
         });
@@ -37,5 +36,10 @@ impl TxQueue {
 
     pub async fn recv(&mut self) -> Option<Vec<u8>> {
         self.out_rx.recv().await
+    }
+
+    /// Provide a sender clone for external producers.
+    pub fn clone_sender(&self) -> mpsc::Sender<Packet> {
+        self.in_tx.clone()
     }
 } 

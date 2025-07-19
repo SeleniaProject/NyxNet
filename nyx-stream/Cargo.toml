@@ -10,4 +10,4 @@ license = "MIT OR Apache-2.0"
 nom = { version = "7", default-features = false, features = ["std"] }
 nyx-core = { path = "../nyx-core" }
 nyx-fec = { path = "../nyx-fec" }
-tokio = { version = "1.37", features = ["sync", "time"] }
+tokio = { version = "1.37", features = ["sync", "time", "rt", "macros"] }
