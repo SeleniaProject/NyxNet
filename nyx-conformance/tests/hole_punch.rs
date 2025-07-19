@@ -1,4 +1,4 @@
-use nyx_transport::{Transport, hole_punch, UdpPool, PacketHandler};
+use nyx_transport::{Transport, hole_punch, PacketHandler};
 use std::net::{SocketAddr, IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use tokio::sync::Notify;

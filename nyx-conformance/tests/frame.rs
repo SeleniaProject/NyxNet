@@ -1,4 +1,4 @@
-use nyx_stream::frame::{parse_header, FrameHeader};
+use nyx_stream::frame::parse_header;
 
 #[test]
 fn frame_header_parse() {

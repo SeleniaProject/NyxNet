@@ -17,7 +17,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 use tokio::{net::UdpSocket, time::{timeout, Duration}};
 use rand::{thread_rng, Rng};
 use crate::UdpPool;
-use tracing::{debug, error};
+// tracing removed (no direct logging in this module yet)
 
 /// STUN constants.
 const STUN_BINDING_REQUEST: u16 = 0x0001;

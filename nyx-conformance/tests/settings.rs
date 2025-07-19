@@ -1,4 +1,4 @@
-use nyx_control::settings::{validate_settings, Settings};
+use nyx_control::settings::validate_settings;
 use nyx_stream::{StreamSettings, build_settings_frame, parse_settings_frame};
 
 #[test]

@@ -1,4 +1,4 @@
-use nyx_control::settings::{validate_settings, Settings};
+use nyx_control::settings::validate_settings;
 
 #[test]
 fn valid_settings_pass() {

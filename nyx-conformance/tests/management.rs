@@ -1,4 +1,4 @@
-use nyx_stream::{build_close_frame, parse_close_frame, CloseFrame, build_path_challenge_frame, parse_path_challenge_frame, build_path_response_frame, parse_path_response_frame, PathChallengeFrame, PathResponseFrame, Setting, build_settings_frame, parse_settings_frame};
+use nyx_stream::{build_close_frame, parse_close_frame, build_path_challenge_frame, parse_path_challenge_frame, build_path_response_frame, parse_path_response_frame, Setting, build_settings_frame, parse_settings_frame};
 
 #[test]
 fn close_frame_roundtrip() {

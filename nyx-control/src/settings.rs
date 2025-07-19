@@ -50,8 +50,20 @@ pub fn validate_settings(json: &[u8]) -> Result<Settings, String> {
         .with_draft(jsonschema::Draft::Draft7)
         .compile(&schema_value)
         .map_err(|e| e.to_string())?;
+
+    // Basic schema validation (types) first
     compiled.validate(&val).map_err(|err_iter| {
         let joined = err_iter.map(|e| e.to_string()).collect::<Vec<_>>().join(", ");
         format!("schema error: {}", joined)
-    }).map(|_| serde_json::from_value(val).unwrap())
+    })?;
+
+    // Enforce presence of mandatory keys; defaults must not be implicitly filled when key missing.
+    let required = ["max_streams", "max_data", "idle_timeout"];
+    for key in &required {
+        if !val.get(*key).is_some() {
+            return Err(format!("schema error: missing required field '{}'", key));
+        }
+    }
+
+    Ok(serde_json::from_value(val).unwrap())
 } 

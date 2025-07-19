@@ -22,6 +22,7 @@ pub enum DhtCmd { Stub }
 /// Handle to interact with running DHT node.
 #[derive(Clone)]
 pub struct DhtHandle {
+    #[cfg(feature = "dht")]
     tx: mpsc::Sender<DhtCmd>,
 }
 
@@ -105,6 +106,6 @@ pub async fn spawn_dht() -> DhtHandle {
 // Fallback stub when the `dht` feature is disabled.
 #[cfg(not(feature = "dht"))]
 pub async fn spawn_dht() -> DhtHandle {
-    let (tx, _rx) = mpsc::channel::<DhtCmd>(1);
-    DhtHandle { tx }
+    let (_tx, _rx) = mpsc::channel::<DhtCmd>(1);
+    DhtHandle {}
 }
