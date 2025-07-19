@@ -1,6 +1,6 @@
 # Nyx Project TODO / タスク一覧
 
-> **更新日: 01-03** (随時更新)
+> **更新日: 01-04** (随時更新)
 
 ---
 
@@ -13,7 +13,7 @@
 
 ## 🏗️ 進行中 / In Progress
 - [ ] Noise_Nyx パターン実装 & テストベクタ合致確認
-- [ ] UDP Transport Adapter + 基本ホールパンチング
+- [x] UDP Transport Adapter + 基本ホールパンチング
 - [ ] Fuzz テスト基盤セットアップ (`cargo-fuzz`)
 
 ---
