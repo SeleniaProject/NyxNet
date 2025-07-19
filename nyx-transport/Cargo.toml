@@ -14,3 +14,7 @@ tracing = "0.1"
 async-trait = "0.1"
 nyx-core = { path = "../nyx-core" }
 nyx-mix = { path = "../nyx-mix" }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+nix = { version = "0.27" }
