@@ -15,7 +15,7 @@
 - [ ] Noise_Nyx パターン実装 & テストベクタ合致確認
 - [x] UDP Transport Adapter + basic hole punching
 - [x] Cover traffic integration with transport
-- [ ] Fuzz テスト基盤セットアップ (`cargo-fuzz`)
+- [x] Fuzz harness setup (`cargo-fuzz`) - initial noise_handshake target
 
 ---
 
