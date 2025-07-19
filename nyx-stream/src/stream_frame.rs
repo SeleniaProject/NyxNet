@@ -10,7 +10,7 @@ pub struct StreamFrame<'a> {
     pub data: &'a [u8],
 }
 
-pub fn parse_stream_frame(input: &[u8]) -> IResult<&[u8], StreamFrame> {
+pub fn parse_stream_frame<'a>(input: &'a [u8]) -> IResult<&'a [u8], StreamFrame<'a>> {
     let (input, stream_id) = be_u32(input)?;
     let (input, offset) = be_u32(input)?;
     let (input, fin_byte) = u8(input)?;

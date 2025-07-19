@@ -47,7 +47,12 @@ impl NyxFec {
             .enumerate()
             .map(|(i, s)| (&mut **s, present[i]))
             .collect();
-        self.rs.reconstruct(&mut tuples)
+        let res = self.rs.reconstruct(&mut tuples);
+        if res.is_ok() {
+            // Mark all shards as present now
+            for p in present.iter_mut() { *p = true; }
+        }
+        res
     }
 
     /// Verify parity for provided shards without reconstruction.

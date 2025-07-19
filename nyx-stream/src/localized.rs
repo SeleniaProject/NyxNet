@@ -33,7 +33,7 @@ pub struct LocalizedStringFrame<'a> {
 ///
 /// # Errors
 /// Returns a nom error if the input is malformed or violates UTF-8.
-pub fn parse_localized_string_frame(input: &[u8]) -> IResult<&[u8], LocalizedStringFrame> {
+pub fn parse_localized_string_frame<'a>(input: &'a [u8]) -> IResult<&'a [u8], LocalizedStringFrame<'a>> {
     let (input, tag_len) = u8(input)?;
     let (input, tag_bytes) = take(tag_len)(input)?;
     let (input, text_bytes) = take_while(|_| true)(input)?; // take rest of input

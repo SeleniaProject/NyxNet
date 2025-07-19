@@ -62,7 +62,7 @@ pub fn build_close_frame(code: u16, reason: &[u8]) -> Vec<u8> {
 }
 
 /// Parse CLOSE frame payload.
-pub fn parse_close_frame(input: &[u8]) -> IResult<&[u8], CloseFrame> {
+pub fn parse_close_frame<'a>(input: &'a [u8]) -> IResult<&'a [u8], CloseFrame<'a>> {
     let (input, code) = be_u16(input)?;
     let (input, len) = parse_u8(input)?;
     let (input, reason_bytes) = take(len)(input)?;
