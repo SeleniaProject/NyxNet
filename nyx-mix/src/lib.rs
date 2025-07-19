@@ -7,6 +7,9 @@
 use nyx_core::NodeId;
 use rand::{seq::SliceRandom, thread_rng};
 
+pub mod cover;
+pub use cover::CoverGenerator;
+
 /// PathBuilder provides weighted random path selection over candidate nodes.
 pub struct PathBuilder<'a> {
     candidates: &'a [NodeId],

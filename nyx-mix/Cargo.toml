@@ -8,4 +8,5 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 rand = { version = "0.8", features = ["std"] }
+rand_distr = "0.4"
 nyx-core = { path = "../nyx-core" }
