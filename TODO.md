@@ -98,6 +98,8 @@
 
 ### Newly Completed
 - Implemented LOCALIZED_STRING frame parser/builder and associated conformance tests.
+- Refined BBRv2-like congestion controller (gain-cycle cap) to satisfy conformance suite.
+- Added Japanese locale strings to core i18n implementation.
 
 ---
 
