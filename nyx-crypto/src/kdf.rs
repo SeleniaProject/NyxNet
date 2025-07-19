@@ -2,8 +2,8 @@
 
 //! Misuse-resistant HKDF wrapper.
 //! 
-//! Provides type Dbased labels to avoid context/domain confusion when expanding keys.
-//! All APIs use HKDF F-SHA256 as per Nyx specification.
+//! Provides type-based labels to avoid context/domain confusion when expanding keys.
+//! All APIs use HKDF-SHA256 as per Nyx specification.
 
 use sha2::Sha256;
 use hkdf::Hkdf;
@@ -16,7 +16,7 @@ pub enum KdfLabel {
     Session,
     /// Rekey operation for forward secrecy.
     Rekey,
-    /// Generic export (application 2Dspecific usage).
+    /// Generic export (application-specific usage).
     Export,
     /// Custom static string label supplied by caller.
     Custom(&'static [u8]),
@@ -26,9 +26,9 @@ impl KdfLabel {
     /// Convert to the associated ASCII label bytes.
     fn as_bytes(self) -> &'static [u8] {
         match self {
-            KdfLabel::Session => b"nyx 2Dsession",
-            KdfLabel::Rekey => b"nyx 2Drekey",
-            KdfLabel::Export => b"nyx 2Dexport",
+            KdfLabel::Session => b"nyx-session",
+            KdfLabel::Rekey => b"nyx-rekey",
+            KdfLabel::Export => b"nyx-export",
             KdfLabel::Custom(s) => s,
         }
     }
@@ -36,11 +36,11 @@ impl KdfLabel {
 
 /// Expand the given input keying material (`ikm`) into an output key of `out_len` bytes.
 ///
-/// Internally this uses HKDF F 2DSHA256 with an empty salt (per Noise recommendation),
-/// and a domain separation label to prevent cross 2Dprotocol key reuse.
+/// Internally this uses HKDF-SHA256 with an empty salt (per Noise recommendation),
+/// and a domain separation label to prevent cross-protocol key reuse.
 ///
 /// # Panics
-/// * If `out_len` exceeds the maximum allowed by HKDF (255 2A HashLen).
+/// * If `out_len` exceeds the maximum allowed by HKDF (255 * HashLen).
 pub fn hkdf_expand(ikm: &[u8], label: KdfLabel, out_len: usize) -> Vec<u8> {
     let hk = Hkdf::<Sha256>::new(None, ikm);
     let mut okm = vec![0u8; out_len];

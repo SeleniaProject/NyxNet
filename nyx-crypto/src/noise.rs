@@ -32,7 +32,7 @@ pub fn initiator_finalize(sec: EphemeralSecret, resp_pub: &PublicKey) -> SharedS
     sec.diffie_hellman(resp_pub)
 }
 
-/// Derive a 32 2Dbyte session key from the shared secret using the misuse 2Dresistant HKDF wrapper.
+/// Derive a 32-byte session key from the shared secret using the misuse-resistant HKDF wrapper.
 pub fn derive_session_key(shared: &SharedSecret) -> [u8; 32] {
     let okm = hkdf_expand(shared.as_bytes(), KdfLabel::Session, 32);
     let mut out = [0u8; 32];
