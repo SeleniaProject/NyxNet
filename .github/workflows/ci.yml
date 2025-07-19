@@ -28,6 +28,8 @@ jobs:
         run: cargo build --all --verbose
       - name: Test
         run: cargo test --all --verbose
+      - name: Constant-time bench
+        run: cargo bench --package nyx-crypto --no-run --features bench
   miri:
     runs-on: ubuntu-latest
     steps:

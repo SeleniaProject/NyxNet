@@ -66,7 +66,7 @@
 
 ## 🔐 セキュリティ / Security
 - [x] Secrets zeroize audit (cargo make-zeroize)
-- [ ] Constant-time audit (cargo criterion-cmp)
+- [x] Constant-time audit (cargo criterion-cmp)
 - [ ] seccomp sandbox profile
 
 ---
