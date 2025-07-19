@@ -14,5 +14,5 @@ fn kyber_kem_session_key_matches() {
     let key_r = responder_decapsulate(&ct, &sk);
 
     // Session keys must match
-    assert_eq!(key_i, key_r);
+    assert_eq!(key_i.0, key_r.0);
 } 

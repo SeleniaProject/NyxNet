@@ -2118,6 +2118,7 @@ dependencies = [
  "rand_core 0.6.4",
  "sha2 0.10.9",
  "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
@@ -2138,6 +2139,16 @@ dependencies = [
  "nyx-core",
  "rand 0.8.5",
  "rand_distr",
+]
+
+[[package]]
+name = "nyx-sdk-wasm"
+version = "0.1.0"
+dependencies = [
+ "getrandom 0.2.16",
+ "hex",
+ "nyx-crypto",
+ "wasm-bindgen",
 ]
 
 [[package]]

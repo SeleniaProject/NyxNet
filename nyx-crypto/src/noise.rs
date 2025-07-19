@@ -9,6 +9,7 @@
 use rand_core::OsRng;
 use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
 use super::kdf::{hkdf_expand, KdfLabel};
+use zeroize::Zeroize;
 
 /// Initiator が生成するハンドシェイクメッセージ (e 公開鍵) と秘密状態を返す。
 pub fn initiator_generate() -> (PublicKey, EphemeralSecret) {
@@ -30,12 +31,16 @@ pub fn initiator_finalize(sec: EphemeralSecret, resp_pub: &PublicKey) -> SharedS
     sec.diffie_hellman(resp_pub)
 }
 
-/// Derive a 32-byte session key from the shared secret using the misuse-resistant HKDF wrapper.
-pub fn derive_session_key(shared: &SharedSecret) -> [u8; 32] {
+/// 32-byte Nyx session key that zeroizes on drop.
+#[derive(Debug, Zeroize)]
+#[zeroize(drop)]
+pub struct SessionKey(pub [u8; 32]);
+
+pub fn derive_session_key(shared: &SharedSecret) -> SessionKey {
     let okm = hkdf_expand(shared.as_bytes(), KdfLabel::Session, 32);
     let mut out = [0u8; 32];
     out.copy_from_slice(&okm);
-    out
+    SessionKey(out)
 }
 
 // -----------------------------------------------------------------------------
@@ -61,23 +66,23 @@ pub mod pq {
 
     /// Initiator encapsulates to responder's public key, returning the
     /// ciphertext to transmit and the derived 32-byte session key.
-    pub fn initiator_encapsulate(pk: &PublicKey) -> (Ciphertext, [u8; 32]) {
+    pub fn initiator_encapsulate(pk: &PublicKey) -> (Ciphertext, super::SessionKey) {
         let (ss, ct) = encapsulate(pk);
         (ct, derive_session_key(&ss))
     }
 
     /// Responder decapsulates ciphertext with its secret key and derives the
     /// matching 32-byte session key.
-    pub fn responder_decapsulate(ct: &Ciphertext, sk: &SecretKey) -> [u8; 32] {
+    pub fn responder_decapsulate(ct: &Ciphertext, sk: &SecretKey) -> super::SessionKey {
         let ss = decapsulate(ct, sk);
         derive_session_key(&ss)
     }
 
     /// Convert Kyber shared secret into Nyx session key via HKDF.
-    fn derive_session_key(shared: &SharedSecret) -> [u8; 32] {
+    fn derive_session_key(shared: &SharedSecret) -> super::SessionKey {
         let okm = hkdf_expand(shared.as_bytes(), KdfLabel::Session, 32);
         let mut out = [0u8; 32];
         out.copy_from_slice(&okm);
-        out
+        super::SessionKey(out)
     }
 } 

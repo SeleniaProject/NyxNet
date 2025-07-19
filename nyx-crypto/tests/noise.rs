@@ -17,5 +17,5 @@ fn handshake_shared_secret_matches() {
     // Derive session keys and check equality
     let key_i = derive_session_key(&shared_initiator);
     let key_r = derive_session_key(&shared_responder);
-    assert_eq!(key_i, key_r);
+    assert_eq!(key_i.0, key_r.0);
 } 

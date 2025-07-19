@@ -21,3 +21,4 @@ pqcrypto-traits = { version = "0.3", optional = true, package = "pqcrypto-traits
 
 [dev-dependencies]
 hex-literal = "0.4"
+zeroize = { version = "1", features=["zeroize_derive"] }

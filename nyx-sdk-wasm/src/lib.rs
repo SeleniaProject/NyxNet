@@ -9,5 +9,5 @@ pub fn noise_handshake_demo() -> String {
     let shared_init = initiator_finalize(init_sec, &resp_pub);
     assert_eq!(shared_init.as_bytes(), shared_resp.as_bytes());
     let key = derive_session_key(&shared_init);
-    hex::encode(key)
+    hex::encode(key.0)
 } 
