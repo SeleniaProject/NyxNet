@@ -3,6 +3,7 @@ members = [
     "nyx-core",
     "nyx-crypto",
     "nyx-transport",
+    "nyx-mix",
 ]
 resolver = "2"
 

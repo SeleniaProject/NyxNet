@@ -1,6 +1,6 @@
 # Nyx Project TODO / タスク一覧
 
-> **更新日: 01-04** (随時更新)
+> **更新日: 01-05** (随時更新)
 
 ---
 
@@ -30,7 +30,7 @@
 - [ ] フレーム生成・多重化
 
 ### Mix Routing
-- [ ] PathBuilder (Kademlia lookup) PoC
+- [x] PathBuilder (uniform random) PoC
 - [ ] Cover traffic generator (Poisson) 実装
 
 ### Obfuscation & FEC

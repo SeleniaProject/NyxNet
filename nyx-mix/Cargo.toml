@@ -1,0 +1,11 @@
+[package]
+name = "nyx-mix"
+version = "0.1.0"
+edition = "2021"
+
+description = "Nyx mix routing layer (path selection & cover traffic)"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+rand = { version = "0.8", features = ["std"] }
+nyx-core = { path = "../nyx-core" }
