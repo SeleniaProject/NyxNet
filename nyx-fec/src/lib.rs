@@ -1,4 +1,5 @@
 #![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 //! Reed-Solomon FEC wrapper for Nyx fixed-length 1280-byte packets.
 //! Default parameters: data shards = 10, parity shards = 3 (≈30% overhead).
@@ -11,6 +12,13 @@ pub use timing::{TimingObfuscator, TimingConfig, Packet};
 pub const DATA_SHARDS: usize = 10;
 pub const PARITY_SHARDS: usize = 3;
 pub const SHARD_SIZE: usize = 1280; // One Nyx packet per shard.
+
+#[cfg(feature = "simd")]
+#[cfg_attr(docsrs, doc(cfg(feature = "simd")))]
+/// Compile-time feature flag enabling SIMD-accelerated encoding via C backend.
+pub const SIMD_ACCEL_ENABLED: bool = true;
+#[cfg(not(feature = "simd"))]
+pub const SIMD_ACCEL_ENABLED: bool = false;
 
 /// Nyx FEC codec.
 pub struct NyxFec {

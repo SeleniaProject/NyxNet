@@ -5,6 +5,7 @@
 //! invoke [`start_exporter`] at startup.
 
 #![forbid(unsafe_code)]
+#![cfg_attr(docsrs, feature(doc_cfg))]
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -83,6 +84,7 @@ pub fn start_exporter(port: u16) -> JoinHandle<()> {
 }
 
 #[cfg(feature = "flamegraph")]
+#[cfg_attr(docsrs, doc(cfg(feature = "flamegraph")))]
 /// Spawn a background profiler that dumps SVG flamegraphs every `interval` seconds to `output_dir`.
 /// Each file is named `flamegraph_<unix_ts>.svg`.
 pub fn start_flamegraph_dumper(output_dir: &str, interval: Duration) -> TokioJoin<()> {

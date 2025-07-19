@@ -79,7 +79,7 @@
 ---
 
 ## 📚 ドキュメント / Docs
-- [ ] Rustdoc doc-cfg annotations
+- [x] Rustdoc doc-cfg annotations
 - [ ] MkDocs サイト自動公開 (GitHub Pages)
 - [ ] チュートリアル「最小チャットアプリ」
 
