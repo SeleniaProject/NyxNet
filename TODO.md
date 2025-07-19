@@ -144,7 +144,7 @@
 - [ ] Teredo-like IPv6 NAT traversal module
 
 ### Observability
-- [ ] OpenTelemetry Exporter (OTLP gRPC)
+- [x] OpenTelemetry Exporter (OTLP gRPC)
 - [ ] Grafana Dashboard v1.0
 
 ### Security Hardening

@@ -16,6 +16,9 @@ use tokio::task::JoinHandle;
 use tracing::{error, info};
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_subscriber::{layer::SubscriberExt, Registry};
+use opentelemetry::sdk::{trace as sdktrace, Resource, InstrumentationLibrary};
+use opentelemetry_otlp::WithExportConfig;
+use tracing_opentelemetry::OpenTelemetryLayer;
 
 /// Total HTTP requests handled by the exporter itself.
 static REQUEST_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
@@ -32,10 +35,25 @@ pub fn inc_request_total() {
 /// Should be called once at application startup.
 pub fn init_bunyan(service_name: &str) -> Result<(), tracing::subscriber::SetGlobalDefaultError> {
     let formatting_layer = BunyanFormattingLayer::new(service_name.to_string(), std::io::stdout);
+    // OpenTelemetry tracer
+    let tracer = opentelemetry_otlp::new_pipeline()
+        .tracing()
+        .with_exporter(opentelemetry_otlp::new_exporter().tonic())
+        .with_trace_config(sdktrace::config().with_resource(Resource::new(vec![opentelemetry::KeyValue::new("service.name", service_name.to_string())])))
+        .install_batch(opentelemetry::runtime::Tokio)?;
+
+    let otel_layer = OpenTelemetryLayer::new(tracer);
+
     let subscriber = Registry::default()
         .with(JsonStorageLayer)
-        .with(formatting_layer);
+        .with(formatting_layer)
+        .with(otel_layer);
     tracing::subscriber::set_global_default(subscriber)
+}
+
+/// Gracefully shutdown OpenTelemetry provider.
+pub async fn shutdown_tracer() {
+    opentelemetry::global::shutdown_tracer_provider();
 }
 
 /// Start the Prometheus exporter on `0.0.0.0:port` in a background task.
