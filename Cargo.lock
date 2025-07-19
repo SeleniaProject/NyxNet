@@ -2177,6 +2177,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "nyx-workspace"
+version = "0.0.0"
+dependencies = [
+ "protoc-bin-vendored",
+]
+
+[[package]]
 name = "object"
 version = "0.36.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -1,3 +1,10 @@
+[package]
+name = "nyx-workspace"
+version = "0.0.0"
+edition = "2021"
+publish = false
+build = "build.rs"
+
 [workspace]
 members = [
     "nyx-core",
@@ -11,7 +18,13 @@ members = [
 ]
 resolver = "2"
 
+[build-dependencies]
+protoc-bin-vendored = "3"
+
 [profile.release]
 codegen-units = 1
 lto = "fat"
 opt-level = "z" 
+
+[lib]
+path = "src/empty.rs" 
