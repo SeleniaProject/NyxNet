@@ -547,7 +547,10 @@ name = "nyx-fec"
 version = "0.1.0"
 dependencies = [
  "nyx-core",
+ "rand",
+ "rand_distr",
  "reed-solomon-erasure",
+ "tokio",
 ]
 
 [[package]]
