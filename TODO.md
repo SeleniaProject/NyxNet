@@ -51,8 +51,8 @@
 - [x] Bunyan log middleware integration
 
 ### CI / Tooling
-- [ ] GitHub Actions miri ジョブ追加
-- [ ] Dependabot config
+- [x] GitHub Actions miri ジョブ追加
+- [x] Dependabot config
 
 ---
 

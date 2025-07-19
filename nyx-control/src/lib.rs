@@ -5,6 +5,8 @@ use futures::{StreamExt};
 use libp2p::{identity, kad::{Kademlia, store::MemoryStore, record::{Key, Record}, Quorum}, swarm::SwarmEvent, PeerId, Multiaddr, Transport};
 use tokio::sync::mpsc;
 
+pub mod settings;
+
 /// Control messages for the DHT event loop.
 pub enum DhtCmd {
     Put { key: String, value: Vec<u8> },

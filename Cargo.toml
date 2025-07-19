@@ -7,7 +7,7 @@ members = [
     "nyx-fec",
     "nyx-stream",
     "nyx-telemetry", # Prometheus exporter crate
-    # "nyx-control",  # Temporarily excluded until protoc is bundled
+    "nyx-control",
 ]
 resolver = "2"
 

@@ -13,3 +13,9 @@ thiserror = "1.0"
 tracing = "0.1"
 tokio = { version = "1.37", features = ["full"] }
 notify = { version = "6.1" }
+
+[dev-dependencies]
+hex-literal = "0.4"
+
+[build-dependencies]
+protoc-bin-vendored = "3"
