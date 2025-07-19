@@ -24,10 +24,6 @@ static EN_ID: Lazy<LanguageIdentifier> = Lazy::new(|| "en".parse().unwrap());
 static ZH_ID: Lazy<LanguageIdentifier> = Lazy::new(|| "zh".parse().unwrap());
 static JA_ID: Lazy<LanguageIdentifier> = Lazy::new(|| "ja".parse().unwrap());
 
-static EN_BUNDLE: Lazy<FluentBundle<&'static FluentResource>> = Lazy::new(|| make_bundle(*EN_ID, EN_FTL));
-static ZH_BUNDLE: Lazy<FluentBundle<&'static FluentResource>> = Lazy::new(|| make_bundle(*ZH_ID, ZH_FTL));
-static JA_BUNDLE: Lazy<FluentBundle<&'static FluentResource>> = Lazy::new(|| make_bundle(*JA_ID, JA_FTL));
-
 const EN_FTL: &str = r#"init-success = Nyx daemon started (port { $port })
 config-reload = Configuration reloaded
 "#;
@@ -40,7 +36,7 @@ const ZH_FTL: &str = r#"init-success = Nyx 守护进程已启动（端口 { $por
 config-reload = 配置已重新加载
 "#;
 
-fn make_bundle<'a>(lang: LanguageIdentifier, src: &'static str) -> FluentBundle<&'static FluentResource> {
+fn make_bundle(lang: LanguageIdentifier, src: &'static str) -> FluentBundle<&'static FluentResource> {
     let res = FluentResource::try_new(src.to_owned()).expect("valid FTL");
     let mut bundle = FluentBundle::new(vec![lang]);
     bundle.add_resource(&res).expect("add res");
@@ -51,22 +47,39 @@ fn make_bundle<'a>(lang: LanguageIdentifier, src: &'static str) -> FluentBundle<
 /// Falls back to English if key missing.
 pub fn tr(lang: Lang, key: &str, args: Option<&FluentArgs>) -> String {
     let bundle = match lang {
-        Lang::En => &*EN_BUNDLE,
-        Lang::Zh => &*ZH_BUNDLE,
-        Lang::Ja => &*JA_BUNDLE,
+        Lang::En => make_bundle(*EN_ID, EN_FTL),
+        Lang::Zh => make_bundle(*ZH_ID, ZH_FTL),
+        Lang::Ja => make_bundle(*JA_ID, JA_FTL),
     };
     if let Some(msg) = bundle.get_message(key) {
         if let Some(pattern) = msg.value() {
             let mut errors = vec![];
-            let val = bundle.format_pattern(pattern, args.unwrap_or(&FluentArgs::new()), &mut errors);
+            let empty_args;
+            let args_ref = match args {
+                Some(a) => a,
+                None => {
+                    empty_args = FluentArgs::new();
+                    &empty_args
+                }
+            };
+            let val = bundle.format_pattern(pattern, args_ref, &mut errors);
             return val.into_owned();
         }
     }
     // fallback
-    if let Some(msg) = EN_BUNDLE.get_message(key) {
+    let fallback_bundle = make_bundle(*EN_ID, EN_FTL);
+    if let Some(msg) = fallback_bundle.get_message(key) {
         if let Some(pattern) = msg.value() {
             let mut errors = vec![];
-            return EN_BUNDLE.format_pattern(pattern, args.unwrap_or(&FluentArgs::new()), &mut errors).into_owned();
+            let empty_args;
+            let args_ref = match args {
+                Some(a) => a,
+                None => {
+                    empty_args = FluentArgs::new();
+                    &empty_args
+                }
+            };
+            return fallback_bundle.format_pattern(pattern, args_ref, &mut errors).into_owned();
         }
     }
     key.to_string()
