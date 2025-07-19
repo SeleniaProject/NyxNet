@@ -20,6 +20,8 @@ pub mod layer;
 pub use layer::StreamLayer;
 mod reorder;
 pub use reorder::ReorderBuffer;
+mod receiver;
+pub use receiver::MultipathReceiver;
 pub use plugin::PluginHeader;
 
 pub use management::{PingFrame, PongFrame, build_ping_frame, parse_ping_frame, build_pong_frame, parse_pong_frame,
