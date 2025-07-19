@@ -357,5 +357,3 @@ Compaction every 6h; encryption via `aes-gcm-siv` with node secret.
 * **CLA**: DCO + sign-off required.
 
 ---
-
-これで設計書も更に詳細化しました。変更提案は `docs/design` ブランチで PR を作成し、レビューラベル `design-review` を付与して提出してください。 
