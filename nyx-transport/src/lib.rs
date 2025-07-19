@@ -66,6 +66,9 @@ pub struct Transport {
 impl Transport {
     /// Start transport; returns instance and transmission channel for internal use.
     pub async fn start<H: PacketHandler>(port: u16, handler: Arc<H>) -> std::io::Result<Self> {
+        #[cfg(target_os = "linux")]
+        let _ = nyx_core::install_seccomp();
+
         let pool = UdpPool::bind(port).await?;
         let sock = pool.socket();
         let (tx, mut rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>(1024);
