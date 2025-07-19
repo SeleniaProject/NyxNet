@@ -16,6 +16,7 @@ use nyx_mix::CoverGenerator;
 use tokio::time::{sleep, Duration};
 
 pub mod ice;
+pub mod stun_server;
 
 /// Maximum datagram size (aligned with 1280B spec).
 const MAX_DATAGRAM: usize = 1280;

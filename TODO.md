@@ -40,7 +40,7 @@
 
 ### Transport
 - [x] ICE Lite ハンドシェイク
-- [ ] STUN server モジュール (optional)
+- [x] STUN server モジュール
 
 ### Control Plane
 - [ ] Kademlia DHT integration (`libp2p`) テストネット起動
