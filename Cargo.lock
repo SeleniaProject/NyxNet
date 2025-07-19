@@ -798,6 +798,7 @@ dependencies = [
  "async-trait",
  "nyx-core",
  "nyx-mix",
+ "rand",
  "socket2",
  "tokio",
  "tracing",

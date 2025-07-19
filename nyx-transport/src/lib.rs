@@ -15,6 +15,8 @@ use nyx_mix::CoverGenerator;
 // timing obfuscator moved to upper layer
 use tokio::time::{sleep, Duration};
 
+pub mod ice;
+
 /// Maximum datagram size (aligned with 1280B spec).
 const MAX_DATAGRAM: usize = 1280;
 

@@ -7,7 +7,8 @@ description = "Nyx UDP transport adapter with NAT traversal utilities."
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-tokio = { version = "1.37", features = ["net", "rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+rand = "0.8"
 socket2 = "0.5"
 tracing = "0.1"
 async-trait = "0.1"

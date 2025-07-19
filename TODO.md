@@ -39,7 +39,7 @@
 - [x] Timing obfuscator (async queue)
 
 ### Transport
-- [ ] ICE Lite ハンドシェイク
+- [x] ICE Lite ハンドシェイク
 - [ ] STUN server モジュール (optional)
 
 ### Control Plane
