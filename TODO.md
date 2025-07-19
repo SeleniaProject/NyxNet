@@ -94,7 +94,7 @@
 ## 🧪 テスト / QA
 - [ ] Conformance Suite 120 ケース実装 (6/120)
 - [x] E2E test matrix (KinD 5-node) in CI
-- [ ] Chaos-mesh latency injection tests
+- [x] Chaos-mesh latency injection tests
 
 ---
 
