@@ -28,7 +28,7 @@
 ### Stream Layer
 - [x] Frame parser skeleton (nom) with header parsing
 - [x] Flow control skeleton implemented (BBRv2 style)
-- [ ] フレーム生成・多重化
+- [x] Frame multiplexing (StreamFrame encoder/decoder)
 
 ### Mix Routing
 - [x] PathBuilder (uniform random) PoC
