@@ -20,6 +20,13 @@ use opentelemetry::sdk::{trace as sdktrace, Resource, InstrumentationLibrary};
 use opentelemetry_otlp::WithExportConfig;
 use tracing_opentelemetry::OpenTelemetryLayer;
 
+#[cfg(feature = "flamegraph")]
+use std::{fs::File, time::{Duration, SystemTime, UNIX_EPOCH}};
+#[cfg(feature = "flamegraph")]
+use tokio::task::JoinHandle as TokioJoin;
+#[cfg(feature = "flamegraph")]
+use pprof::ProfilerGuard;
+
 /// Total HTTP requests handled by the exporter itself.
 static REQUEST_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
     register_int_counter!("nyx_exporter_requests_total", "Total HTTP requests to Nyx exporter").expect("metric can be registered")
@@ -71,6 +78,34 @@ pub fn start_exporter(port: u16) -> JoinHandle<()> {
 
         if let Err(e) = server.await {
             error!("Exporter server error: {}", e);
+        }
+    })
+}
+
+#[cfg(feature = "flamegraph")]
+/// Spawn a background profiler that dumps SVG flamegraphs every `interval` seconds to `output_dir`.
+/// Each file is named `flamegraph_<unix_ts>.svg`.
+pub fn start_flamegraph_dumper(output_dir: &str, interval: Duration) -> TokioJoin<()> {
+    let dir = output_dir.to_string();
+    tokio::spawn(async move {
+        loop {
+            let guard = ProfilerGuard::new(100).expect("create guard");
+            tokio::time::sleep(interval).await;
+            if let Ok(report) = guard.report().build() {
+                // Create filename with current unix timestamp.
+                let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+                let path = format!("{}/flamegraph_{}.svg", dir, ts);
+                match File::create(&path) {
+                    Ok(file) => {
+                        if report.flamegraph(file).is_ok() {
+                            info!("flamegraph written to {}", path);
+                        }
+                    }
+                    Err(e) => {
+                        error!("failed to create flamegraph file: {}", e);
+                    }
+                }
+            }
         }
     })
 }
