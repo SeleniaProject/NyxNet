@@ -18,4 +18,7 @@ pub mod layer;
 pub use layer::StreamLayer;
 pub use plugin::PluginHeader;
 
-pub use management::{PingFrame, PongFrame, build_ping_frame, parse_ping_frame, build_pong_frame, parse_pong_frame};
+pub use management::{PingFrame, PongFrame, build_ping_frame, parse_ping_frame, build_pong_frame, parse_pong_frame,
+    CloseFrame, build_close_frame, parse_close_frame,
+    PathChallengeFrame, PathResponseFrame, build_path_challenge_frame, build_path_response_frame, parse_path_challenge_frame, parse_path_response_frame,
+    Setting, SettingsFrame, build_settings_frame, parse_settings_frame};
