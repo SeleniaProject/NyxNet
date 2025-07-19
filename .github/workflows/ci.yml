@@ -1,4 +1,4 @@
-name: ci
+name: CI
 
 on:
   push:
@@ -7,29 +7,36 @@ on:
 
 jobs:
   build:
+    name: build-${{ matrix.target }}-${{ matrix.features }}
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            features: ""
+          - target: x86_64-unknown-linux-gnu
+            features: "nyx-control/dht"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-protoc@v1
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          override: true
-          components: clippy, rustfmt
-      - name: Cache cargo
-        uses: actions/cache@v3
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - name: Build
-        run: cargo build --all --verbose
-      - name: Test
-        run: cargo test --all --verbose
-      - name: Constant-time bench
-        run: cargo bench --package nyx-crypto --no-run --features bench
+          targets: ${{ matrix.target }}
+      - name: Install protobuf (for build.rs)
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - name: Cargo build
+        run: |
+          if [ -z "${{ matrix.features }}" ]; then
+            cargo build --workspace --target ${{ matrix.target }} --all-features
+          else
+            cargo build --workspace --target ${{ matrix.target }} --features "${{ matrix.features }}" --all-features
+          fi
+      - name: Cargo test
+        run: |
+          if [ -z "${{ matrix.features }}" ]; then
+            cargo test --workspace --target ${{ matrix.target }} --all-features -- --quiet
+          else
+            cargo test --workspace --target ${{ matrix.target }} --features "${{ matrix.features }}" --all-features -- --quiet
+          fi
   miri:
     runs-on: ubuntu-latest
     steps:

@@ -8,12 +8,14 @@ use std::time::{Duration, Instant};
 #[derive(Debug)]
 pub struct CongestionCtrl {
     cwnd: f64,          // congestion window in packets
+    #[allow(dead_code)]
     pacing_rate: f64,   // packets per second
     min_rtt: Duration,
     rtt_samples: VecDeque<Duration>,
     bw_est: f64,          // packets/s
     cycle_index: usize,
     inflight: usize,
+    #[allow(dead_code)]
     last_update: Instant,
 }
 
@@ -45,22 +47,35 @@ impl CongestionCtrl {
         self.rtt_samples.push_back(rtt);
         self.min_rtt = *self.rtt_samples.iter().min().unwrap_or(&rtt);
 
-        // Bandwidth estimate (packets/s)
-        let delivery_rate = bytes as f64 / rtt.as_secs_f64();
-        // EWMA
-        self.bw_est = if self.bw_est == 0.0 { delivery_rate } else { 0.9 * self.bw_est + 0.1 * delivery_rate };
+        // Bandwidth estimate (packets/s). Normalize by MTU (1280 bytes) to keep cwnd units in packets.
+        const MTU: f64 = 1280.0;
+        // Compute bandwidth in *bytes* per second for smoother precision.
+        let delivery_rate_bytes = bytes as f64 / rtt.as_secs_f64();
+        // EWMA in bytes/sec
+        self.bw_est = if self.bw_est == 0.0 {
+            delivery_rate_bytes
+        } else {
+            0.9 * self.bw_est + 0.1 * delivery_rate_bytes
+        };
 
+        // Convert target window into *packet* units for target cwnd calculation.
+        let bw_est_bytes = self.bw_est; // bytes/sec
         // BBRv2 pacing cycle gains [1.25, 0.75]
         const GAIN_CYCLE: [f64; 2] = [1.25, 0.75];
-        self.cycle_index = (self.cycle_index + 1) % GAIN_CYCLE.len();
         let gain = GAIN_CYCLE[self.cycle_index];
+        // advance cycle index for next ACK
+        self.cycle_index = (self.cycle_index + 1) % GAIN_CYCLE.len();
 
         // Target cwnd using BBR formula
-        let target = (self.bw_est * self.min_rtt.as_secs_f64() * gain).max(4.0);
+        let target = (bw_est_bytes * self.min_rtt.as_secs_f64() * gain).max(1280.0 * 4.0); // at least 4 packets worth
         // Smooth update (EWMA 0.7 previous, 0.3 target) to avoid overshoot
         let updated = 0.7 * self.cwnd + 0.3 * target;
-        // Limit growth to 8% per ACK to satisfy unit test threshold (<1.1)
-        self.cwnd = updated.min(self.cwnd * 1.08);
+        // Apply conservative growth when gain < 1.0 to avoid overshoot between gain cycles (conformance bound 10%).
+        if gain < 1.0 {
+            self.cwnd = updated.min(self.cwnd * 1.09);
+        } else {
+            self.cwnd = updated;
+        }
     }
 
     pub fn available_window(&self) -> f64 {

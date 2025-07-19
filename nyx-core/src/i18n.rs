@@ -10,6 +10,7 @@ pub enum Lang {
 }
 
 impl Lang {
+    #[allow(dead_code)]
     fn langid(self) -> &'static LanguageIdentifier {
         match self {
             Lang::En => &EN_ID,
