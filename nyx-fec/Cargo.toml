@@ -1,0 +1,11 @@
+[package]
+name = "nyx-fec"
+version = "0.1.0"
+edition = "2021"
+
+description = "Nyx Reed-Solomon FEC wrapper for 1280B fixed packets"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+reed-solomon-erasure = "6"
+nyx-core = { path = "../nyx-core" }

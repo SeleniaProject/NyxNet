@@ -1,6 +1,6 @@
 # Nyx Project TODO / タスク一覧
 
-> **更新日: 01-05** (随時更新)
+> **更新日: 01-06** (随時更新)
 
 ---
 
@@ -35,7 +35,7 @@
 - [x] Cover traffic generator (Poisson) 実装
 
 ### Obfuscation & FEC
-- [ ] Reed-Solomon codec ラッパ (benchmarks)
+- [x] Reed-Solomon codec wrapper (benchmarks pending)
 - [ ] Timing obfuscator (async queue)
 
 ### Transport
