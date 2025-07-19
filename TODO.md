@@ -73,7 +73,7 @@
 
 ## 📈 パフォーマンス / Performance
 - [x] UDP `send_mmsg` ベンチ
-- [ ] SIMD RS-FEC speedup (`stdsimd`) 評価
+- [x] SIMD RS-FEC speedup (`stdsimd`) 評価
 - [ ] Profiling flamegraph baseline
 
 ---
