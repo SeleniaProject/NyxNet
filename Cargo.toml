@@ -5,6 +5,7 @@ members = [
     "nyx-transport",
     "nyx-mix",
     "nyx-fec",
+    "nyx-stream",
 ]
 resolver = "2"
 

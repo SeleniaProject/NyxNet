@@ -1,6 +1,6 @@
 # Nyx Project TODO / タスク一覧
 
-> **更新日: 01-06** (随時更新)
+> **更新日: 01-07** (随時更新)
 
 ---
 
@@ -26,7 +26,7 @@
 - [ ] HKDF misuse-resistantラッパー
 
 ### Stream Layer
-- [ ] Frame parser (nom) 完全カバレッジ (>95%)
+- [x] Frame parser skeleton (nom) with header parsing
 - [ ] Flow control (BBRv2) 最低限実装
 - [ ] フレーム生成・多重化
 

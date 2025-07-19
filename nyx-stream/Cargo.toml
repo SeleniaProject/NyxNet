@@ -1,0 +1,13 @@
+[package]
+name = "nyx-stream"
+version = "0.1.0"
+edition = "2021"
+
+description = "Nyx secure stream layer: frame parser & flow control"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+nom = { version = "7", default-features = false, features = ["std"] }
+nyx-core = { path = "../nyx-core" }
+nyx-fec = { path = "../nyx-fec" }
+tokio = { version = "1.37", features = ["sync"] }
