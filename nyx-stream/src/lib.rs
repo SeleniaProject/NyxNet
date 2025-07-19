@@ -7,6 +7,7 @@ pub mod builder;
 pub mod tx;
 pub mod stream_frame;
 pub mod plugin;
+pub mod management;
 
 pub use frame::{FrameHeader, parse_header};
 pub use builder::build_header;
@@ -16,3 +17,5 @@ pub use stream_frame::{StreamFrame, build_stream_frame, parse_stream_frame};
 pub mod layer;
 pub use layer::StreamLayer;
 pub use plugin::PluginHeader;
+
+pub use management::{PingFrame, PongFrame, build_ping_frame, parse_ping_frame, build_pong_frame, parse_pong_frame};
