@@ -48,7 +48,7 @@
 
 ### Telemetry
 - [x] Prometheus exporter initial metrics
-- [ ] Bunyan log middleware integration
+- [x] Bunyan log middleware integration
 
 ### CI / Tooling
 - [ ] GitHub Actions miri ジョブ追加

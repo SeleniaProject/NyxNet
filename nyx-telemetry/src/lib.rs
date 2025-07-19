@@ -14,6 +14,8 @@ use once_cell::sync::Lazy;
 use prometheus::{Encoder, TextEncoder, IntCounter, register_int_counter};
 use tokio::task::JoinHandle;
 use tracing::{error, info};
+use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
+use tracing_subscriber::{layer::SubscriberExt, Registry};
 
 /// Total HTTP requests handled by the exporter itself.
 static REQUEST_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
@@ -24,6 +26,16 @@ static REQUEST_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
 #[inline]
 pub fn inc_request_total() {
     REQUEST_TOTAL.inc();
+}
+
+/// Initialize Bunyan-formatted `tracing` subscriber for structured JSON logs.
+/// Should be called once at application startup.
+pub fn init_bunyan(service_name: &str) -> Result<(), tracing::subscriber::SetGlobalDefaultError> {
+    let formatting_layer = BunyanFormattingLayer::new(service_name.to_string(), std::io::stdout);
+    let subscriber = Registry::default()
+        .with(JsonStorageLayer)
+        .with(formatting_layer);
+    tracing::subscriber::set_global_default(subscriber)
 }
 
 /// Start the Prometheus exporter on `0.0.0.0:port` in a background task.
