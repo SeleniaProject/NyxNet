@@ -104,6 +104,7 @@
 - Added Multipath PathID frame-header extension parsing support.
 - Implemented AdaptiveCoverGenerator with UtilizationEstimator for dynamic λ adjustment.
 - Added MultipathReceiver for per-path in-order delivery using ReorderBuffer.
+- Integrated per-Path Sequencer and TxQueue send_with_path API.
 
 ---
 
