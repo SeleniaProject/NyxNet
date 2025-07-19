@@ -22,3 +22,11 @@ markdown_extensions:
   - admonition
   - codehilite
   - pymdownx.extra 
+plugins:
+  - search
+  - i18n:
+      default_language: ja
+      languages:
+        ja: 日本語
+        en: English
+        zh: 中文 

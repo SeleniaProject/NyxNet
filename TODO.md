@@ -87,7 +87,7 @@
 
 ## 🌐 I18N
 - [x] cli メッセージ fluent localization (en, zh)
-- [ ] ドキュメント多言語切替
+- [x] ドキュメント多言語切替
 
 ---
 
