@@ -12,6 +12,7 @@ use tokio::{net::UdpSocket, sync::mpsc};
 use tracing::{info, error};
 use async_trait::async_trait;
 use nyx_mix::CoverGenerator;
+// timing obfuscator moved to upper layer
 use tokio::time::{sleep, Duration};
 
 /// Maximum datagram size (aligned with 1280B spec).
@@ -56,6 +57,7 @@ impl UdpPool {
 pub struct Transport {
     pool: UdpPool,
     tx: mpsc::Sender<(SocketAddr, Vec<u8>)>,
+
 }
 
 impl Transport {
@@ -123,6 +125,7 @@ impl Clone for Transport {
         Self {
             pool: self.pool.clone(),
             tx: self.tx.clone(),
+
         }
     }
 }

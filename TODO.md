@@ -14,7 +14,7 @@
 ## 🏗️ 進行中 / In Progress
 - [ ] Noise_Nyx パターン実装 & テストベクタ合致確認
 - [x] UDP Transport Adapter + basic hole punching
-- [x] Cover traffic integration with transport
+- [ ] Timing obfuscator integration in stream layer
 - [x] Fuzz harness setup (`cargo-fuzz`) - initial noise_handshake target
 
 ---
