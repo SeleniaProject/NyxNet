@@ -1,0 +1,16 @@
+[package]
+name = "nyx-conformance"
+version = "0.1.0"
+edition = "2021"
+
+description = "Nyx protocol conformance test suite"
+license = "MIT OR Apache-2.0"
+authors = ["SeleniaProject"]
+
+[dependencies]
+nyx-crypto = { path = "../nyx-crypto" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+once_cell = "1.19" 

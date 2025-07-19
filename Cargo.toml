@@ -16,6 +16,7 @@ members = [
     "nyx-telemetry", # Prometheus exporter crate
     "nyx-control",
     "nyx-sdk-wasm",
+    "nyx-conformance",
 ]
 resolver = "2"
 
