@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "nyx-core",
+]
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+opt-level = "z" 
