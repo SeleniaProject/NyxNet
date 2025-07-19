@@ -59,7 +59,7 @@
 ## 🚀 v0.1 Beta 追加タスク
 - [x] Windows ビルド & CI
 - [x] WASM SDK (nyx-sdk-wasm)
-- [ ] Docker multi-arch (amd64, arm64)
+- [x] Docker multi-arch (amd64, arm64)
 - [ ] Helm Chart リリース
 
 ---
