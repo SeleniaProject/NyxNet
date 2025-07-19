@@ -1,0 +1,41 @@
+{
+  "__inputs": [],
+  "id": null,
+  "title": "Nyx Overview",
+  "timezone": "utc",
+  "schemaVersion": 36,
+  "version": 1,
+  "panels": [
+    {
+      "type": "graph",
+      "title": "Bytes Sent / Received",
+      "datasource": "Prometheus",
+      "targets": [
+        { "expr": "rate(nyx_bytes_sent_total[1m])", "legendFormat": "sent", "refId": "A" },
+        { "expr": "rate(nyx_bytes_recv_total[1m])", "legendFormat": "recv", "refId": "B" }
+      ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 }
+    },
+    {
+      "type": "stat",
+      "title": "Active Streams",
+      "datasource": "Prometheus",
+      "targets": [ { "expr": "nyx_active_streams", "refId": "A" } ],
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 }
+    },
+    {
+      "type": "graph",
+      "title": "Cover Traffic Lambda",
+      "datasource": "Prometheus",
+      "targets": [ { "expr": "nyx_cover_lambda", "refId": "A" } ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 }
+    },
+    {
+      "type": "stat",
+      "title": "Min RTT (ms)",
+      "datasource": "Prometheus",
+      "targets": [ { "expr": "nyx_min_rtt_ms", "refId": "A" } ],
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 4 }
+    }
+  ]
+} 

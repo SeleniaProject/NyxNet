@@ -145,7 +145,7 @@
 
 ### Observability
 - [x] OpenTelemetry Exporter (OTLP gRPC)
-- [ ] Grafana Dashboard v1.0
+- [x] Grafana Dashboard v1.0
 
 ### Security Hardening
 - [ ] Post-Compromise Recovery Key Update
