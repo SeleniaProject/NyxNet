@@ -36,7 +36,7 @@
 
 ### Obfuscation & FEC
 - [x] Reed-Solomon codec wrapper (benchmarks pending)
-- [ ] Timing obfuscator (async queue)
+- [x] Timing obfuscator (async queue)
 
 ### Transport
 - [ ] ICE Lite ハンドシェイク
