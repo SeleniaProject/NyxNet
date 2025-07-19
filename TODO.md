@@ -13,7 +13,7 @@
 ---
 
 ## 🏗️ 進行中 / In Progress
-- [ ] Noise_Nyx パターン実装 & テストベクタ合致確認
+- [x] Noise_Nyx パターン実装 & テストベクタ合致確認 (RFC7748 X25519 unit test)
 - [x] UDP Transport Adapter + basic hole punching
 - [ ] Timing obfuscator integration in stream layer
 - [x] Fuzz harness setup (`cargo-fuzz`) - initial noise_handshake target

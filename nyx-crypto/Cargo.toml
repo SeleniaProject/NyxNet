@@ -17,3 +17,6 @@ sha2 = "0.10"
 hkdf = "0.12"
 rand_core = { version = "0.6", features = ["getrandom"] }
 pqcrypto-kyber = { version = "0.7", optional = true, package = "pqcrypto-kyber" }
+
+[dev-dependencies]
+hex-literal = "0.4"
