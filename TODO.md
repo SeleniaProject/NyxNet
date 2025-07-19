@@ -149,7 +149,7 @@
 
 ### Security Hardening
 - [ ] Post-Compromise Recovery Key Update
-- [ ] Memory-sanitizer build in CI
+- [x] Memory-sanitizer build in CI
 
 ### Documentation
 - [ ] v1.0 完全仕様 English 版

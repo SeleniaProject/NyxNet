@@ -1,0 +1,26 @@
+name: MemorySanitizer
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  msan:
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: "-Z sanitizer=memory -C target-cpu=native"
+      RUSTDOCFLAGS: "-Z sanitizer=memory"
+      CC: clang
+      CXX: clang++
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly toolchain with sanitizer support
+        run: |
+          rustup toolchain install nightly --component rust-src --component llvm-tools-preview
+          rustup default nightly
+      - name: Install clang
+        run: sudo apt-get update && sudo apt-get install -y clang lld
+      - name: Build and test (selected crates)
+        run: |
+          cargo test -p nyx-core -p nyx-crypto --all-features 
