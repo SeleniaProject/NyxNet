@@ -148,7 +148,7 @@
 - [x] Grafana Dashboard v1.0
 
 ### Security Hardening
-- [ ] Post-Compromise Recovery Key Update
+- [x] Post-Compromise Recovery Key Update
 - [x] Memory-sanitizer build in CI
 
 ### Documentation
