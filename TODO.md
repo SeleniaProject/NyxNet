@@ -27,7 +27,7 @@
 
 ### Stream Layer
 - [x] Frame parser skeleton (nom) with header parsing
-- [ ] Flow control (BBRv2) 最低限実装
+- [x] Flow control skeleton implemented (BBRv2 style)
 - [ ] フレーム生成・多重化
 
 ### Mix Routing
