@@ -44,7 +44,7 @@
 
 ### Control Plane
 - [x] Kademlia DHT integration (`libp2p`) テストネット起動
-- [ ] SETTINGS フォーマットの schema validation
+- [x] SETTINGS フォーマットの schema validation
 
 ### Telemetry
 - [x] Prometheus exporter initial metrics
