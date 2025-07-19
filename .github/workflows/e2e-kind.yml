@@ -1,0 +1,36 @@
+name: E2E KinD Matrix
+
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+
+jobs:
+  kind-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up KinD cluster (5 nodes)
+        uses: engineerd/setup-kind@v0.5.0
+        with:
+          version: v0.22.0
+          name: nyx-test
+          config: |
+            kind: Cluster
+            apiVersion: kind.x-k8s.io/v1alpha4
+            nodes:
+              - role: control-plane
+              - role: worker
+              - role: worker
+              - role: worker
+              - role: worker
+      - name: Verify nodes
+        run: |
+          kubectl get nodes -o wide
+          NODE_COUNT=$(kubectl get nodes --no-headers | wc -l)
+          if [ "$NODE_COUNT" -ne 5 ]; then
+            echo "Expected 5 nodes, got $NODE_COUNT" && exit 1
+          fi
+      - name: Run Smoke Tests
+        run: |
+          cargo test --workspace --all-features -- --skip slow 
