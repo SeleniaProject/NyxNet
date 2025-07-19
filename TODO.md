@@ -13,7 +13,8 @@
 
 ## 🏗️ 進行中 / In Progress
 - [ ] Noise_Nyx パターン実装 & テストベクタ合致確認
-- [x] UDP Transport Adapter + 基本ホールパンチング
+- [x] UDP Transport Adapter + basic hole punching
+- [x] Cover traffic integration with transport
 - [ ] Fuzz テスト基盤セットアップ (`cargo-fuzz`)
 
 ---
@@ -31,7 +32,7 @@
 
 ### Mix Routing
 - [x] PathBuilder (uniform random) PoC
-- [ ] Cover traffic generator (Poisson) 実装
+- [x] Cover traffic generator (Poisson) 実装
 
 ### Obfuscation & FEC
 - [ ] Reed-Solomon codec ラッパ (benchmarks)

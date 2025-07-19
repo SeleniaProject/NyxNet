@@ -519,6 +519,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "nyx-core",
+ "nyx-mix",
  "socket2",
  "tokio",
  "tracing",

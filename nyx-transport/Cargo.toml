@@ -12,3 +12,4 @@ socket2 = "0.5"
 tracing = "0.1"
 async-trait = "0.1"
 nyx-core = { path = "../nyx-core" }
+nyx-mix = { path = "../nyx-mix" }

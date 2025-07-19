@@ -11,6 +11,8 @@ use socket2::{Domain, Type};
 use tokio::{net::UdpSocket, sync::mpsc};
 use tracing::{info, error};
 use async_trait::async_trait;
+use nyx_mix::CoverGenerator;
+use tokio::time::{sleep, Duration};
 
 /// Maximum datagram size (aligned with 1280B spec).
 const MAX_DATAGRAM: usize = 1280;
@@ -100,6 +102,28 @@ impl Transport {
 
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         self.pool.socket().local_addr()
+    }
+
+    /// Spawn background task generating cover traffic to `target` at Poisson rate `lambda` (events/s).
+    pub fn spawn_cover_task(&self, target: SocketAddr, lambda: f64) {
+        let generator = CoverGenerator::new(lambda);
+        let tx_clone = self.clone();
+        tokio::spawn(async move {
+            loop {
+                let delay: Duration = generator.next_delay();
+                sleep(delay).await;
+                tx_clone.send(target, &[]).await;
+            }
+        });
+    }
+}
+
+impl Clone for Transport {
+    fn clone(&self) -> Self {
+        Self {
+            pool: self.pool.clone(),
+            tx: self.tx.clone(),
+        }
     }
 }
 
