@@ -9,6 +9,9 @@ use reed_solomon_erasure::{galois_8::ReedSolomon, Error as RSError};
 pub mod timing;
 pub use timing::{TimingObfuscator, TimingConfig, Packet};
 
+pub mod raptorq;
+pub use raptorq::{RaptorQCodec, AdaptiveRaptorQ};
+
 pub const DATA_SHARDS: usize = 10;
 pub const PARITY_SHARDS: usize = 3;
 pub const SHARD_SIZE: usize = 1280; // One Nyx packet per shard.

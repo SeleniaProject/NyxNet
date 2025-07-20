@@ -48,10 +48,10 @@
 ## v1.0 追加機能タスク (Nyx_Protocol_v1.0_Spec.md)
 - [x] Hybrid Post-Quantum Handshake (X25519 + Kyber/Bike) 実装
 - [x] HPKE サポート (export secrets)
-- [ ] Multipath 同時通信 (動的 PathID, 重み付けスケジューラ)
-- [ ] Latency-aware routing (LARMix++) 実装
-- [ ] 動的 Hop 数 (3–7) サポート
-- [ ] RaptorQ FEC & adaptive redundancy
+- [x] Multipath 同時通信 (動的 PathID, 重み付けスケジューラ)
+- [x] Latency-aware routing (LARMix++) 実装
+- [x] 動的 Hop 数 (3–7) サポート
+- [x] RaptorQ FEC & adaptive redundancy
 - [ ] VDF-based cMix batch (RSA accumulator & 100ms delay) 実装
 - [ ] Capability Negotiation via CBOR (UNSUPPORTED_CAP 処理含む)
 - [ ] Low Power Mode: Adaptive cover traffic rate + mobile bindings
