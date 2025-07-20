@@ -6,6 +6,7 @@
 use crate::cover::CoverGenerator;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
+use nyx_core::mobile::{battery_state, BatteryState};
 
 /// Sliding-window utilization estimator (bytes per second).
 pub struct UtilizationEstimator {
@@ -81,6 +82,10 @@ impl AdaptiveCoverGenerator {
 
     /// Produce next delay. Internal λ adjusted each call.
     pub fn next_delay(&mut self) -> Duration {
+        // If battery low (discharging) halve cover traffic to save power.
+        if matches!(battery_state(), BatteryState::Discharging) {
+            self.gen = CoverGenerator::new(self.base_lambda * 0.5);
+        }
         let util_bps = self.estimator.throughput_bps();
         // Heuristic: assume 1 packet ≈1200B, convert to packets/s
         let util_pps = util_bps / 1200.0;

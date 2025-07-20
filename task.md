@@ -36,7 +36,7 @@
 - [x] Sample Plugin: GeoStat collection
 - [x] Utilization Estimator (time window)
 - [x] λ 調整アルゴリズム実装
-- [ ] Mobile battery state integration (Android/iOS bindings)
+- [x] Mobile battery state integration (Android/iOS bindings)
 - [ ] QUIC DATAGRAM path
 - [ ] TCP Fallback encapsulation
 - [ ] Teredo-like IPv6 NAT traversal module
