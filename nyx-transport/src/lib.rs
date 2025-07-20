@@ -21,6 +21,7 @@ pub mod quic;
 pub use quic::{QuicEndpoint, QuicConnection};
 pub mod tcp_fallback;
 pub use tcp_fallback::{TcpEncapListener, TcpEncapConnection};
+pub mod teredo;
 
 /// Maximum datagram size (aligned with 1280B spec).
 const MAX_DATAGRAM: usize = 1280;

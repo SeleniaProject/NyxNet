@@ -39,7 +39,7 @@
 - [x] Mobile battery state integration (Android/iOS bindings)
 - [x] QUIC DATAGRAM path
 - [x] TCP Fallback encapsulation
-- [ ] Teredo-like IPv6 NAT traversal module
+- [x] Teredo-like IPv6 NAT traversal module
 - [ ] v1.0 完全仕様 English 版
 - [ ] Plugin 開発ガイド作成
 - [ ] Semantic Versioning: tag v1.0.0-rc1
