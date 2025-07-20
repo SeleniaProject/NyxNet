@@ -18,7 +18,7 @@
 - [x] Verifiable Delay Mix (cMix) 組み込み検討
 - [x] Post-Quantum only mode (PQ-only handshake)
 - [x] Hybrid X25519+Kyber Handshake 実装
-- [ ] PQ-Only モード (Kyber/Bike) CI matrix
+- [x] PQ-Only モード (Kyber/Bike) CI matrix
 - [ ] HPKE API サポート (exporter)
 - [ ] PathID 拡張パケットヘッダ実装
 - [ ] Weighted Round Robin スケジューラ
