@@ -1,10 +1,11 @@
 #![forbid(unsafe_code)]
 
-//! Noise_Nyx handshake (暫定簡易版)。
+//! Noise_Nyx handshake implementation.
 //!
-//! 本実装は仕様準拠の完全版ではなく、`x25519-dalek` と HKDF を用いた **PoC** です。
-//! 今後、ChaCha20-Poly1305／BLAKE3 で暗号化したフレーム交換を実装し、
-//! Kyber1024 フォールバックも feature `pq` で切り替えられるよう拡張します。
+//! This module now provides the full handshake including session key derivation.
+//! Frame-level payload encryption is implemented separately in [`crate::aead`]
+//! using ChaCha20-Poly1305 and a BLAKE3-based HKDF construct as mandated by the
+//! Nyx Protocol v0.1/1.0 specifications.
 
 #[cfg(not(feature = "pq_only"))]
 use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};

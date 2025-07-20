@@ -1,67 +1,13 @@
 # Nyx Project Outstanding Tasks / 未実装タスク一覧
 
-## v0.1 未実装・要修正タスク
-- [x] Weighted Round Robin Path Scheduler の実装 (inverse RTT 重み付け)
-- [x] LARMix++ 遅延・帯域プロービング & 経路最適化
-- [x] QUIC DATAGRAM サポート (`nyx-transport`)
-- [x] TCP Fallback Encapsulation 実装
-- [x] PathID 拡張パケットヘッダ実装 (Multipath Data Plane)
-- [x] Reordering Buffer Adaptive サイズ制御
-- [x] Plugin Registration & Permission Model (Frame Type 0x50–0x5F)
-- [x] Sample Plugin: GeoStat collection
-- [x] Telemetry テスト用 dev-dependencies 追加 (`nyx-telemetry`, `prometheus`)
-- [x] `pprof` / `nix` 依存を `cfg(unix)` ガードし Windows ビルド対応
-- [x] Conformance Telemetry テストを Windows でも成功させる
-
-## TODO.md で未チェックの項目
-- [x] Multipath (MPR) 実験実装
-- [x] Verifiable Delay Mix (cMix) 組み込み検討
-- [x] Post-Quantum only mode (PQ-only handshake)
-- [x] Hybrid X25519+Kyber Handshake 実装
-- [x] PQ-Only モード (Kyber/Bike) CI matrix
-- [x] HPKE API サポート (exporter)
-- [x] PathID 拡張パケットヘッダ実装
-- [x] Weighted Round Robin スケジューラ
-- [x] Reordering Buffer Adaptive サイズ
-- [x] Multipath Conformance Tests (loss, reorder)
-- [x] RTT & Bandwidth Probing in Control Plane
-- [x] LARMix++ アルゴリズム実装
-- [x] Load-Balancing Evaluation via simulation
-- [x] RSA Accumulator 設計 & key ceremony
-- [x] VDF delay 100ms ラスタ実装 (Rust VDF crate)
-- [x] cMix バッチコントローラ
-- [x] Frame Type 0x50–0x5F パーサー/serializer
-- [x] CBOR Schema Validation (serde_cbor)
-- [x] Plugin Registration & Permission Model
-- [x] Sample Plugin: GeoStat collection
-- [x] Utilization Estimator (time window)
-- [x] λ 調整アルゴリズム実装
-- [x] Mobile battery state integration (Android/iOS bindings)
-- [x] QUIC DATAGRAM path
-- [x] TCP Fallback encapsulation
-- [x] Teredo-like IPv6 NAT traversal module
-- [x] v1.0 完全仕様 English 版 (draft)
-- [x] Plugin 開発ガイド作成
-- [x] Semantic Versioning: tag v1.0.0-rc1
-- [x] Release notes generator (cargo-release)
-
-## v1.0 追加機能タスク (Nyx_Protocol_v1.0_Spec.md)
-- [x] Hybrid Post-Quantum Handshake (X25519 + Kyber/Bike) 実装
-- [x] HPKE サポート (export secrets)
-- [x] Multipath 同時通信 (動的 PathID, 重み付けスケジューラ)
-- [x] Latency-aware routing (LARMix++) 実装
-- [x] 動的 Hop 数 (3–7) サポート
-- [x] RaptorQ FEC & adaptive redundancy
-- [x] VDF-based cMix batch (RSA accumulator & 100ms delay) 実装
-- [x] Capability Negotiation via CBOR (UNSUPPORTED_CAP 処理含む)
-- [x] Low Power Mode: Adaptive cover traffic rate + mobile bindings
-- [x] OTLP Telemetry span 拡張 (`nyx.stream.send` attrs)
-- [x] Compliance Level 判定ロジック (Core / Plus / Full)
-
-## Windows ビルド互換タスク
-- [x] `pprof` 依存を optional feature 化し、Windows ではデフォルト無効
-- [x] `nix` 依存 API 使用箇所を `cfg(unix)` で分離 or `windows-sys` 代替
-- [x] `libp2p` の Windows UDP ソケット制限を検証しパッチ適用
-- [x] GitHub Actions Windows runner で `cargo test --all --all-features` 緑化
-- [x] Cross-compilation (x86_64-pc-windows-gnu/msvc) チェック
-- [x] PQCrypto (Kyber) の SIMD アセンブリを Windows 対応 or `no_simd` fallback 
+## v1.0 未実装タスク
+- [x] Noise_Nyx フレーム暗号化フル実装（ChaCha20-Poly1305 / BLAKE3、0-RTT 再生防止）
+- [ ] Capability Negotiation (CBOR SETTINGS) の送受信実装および `UNSUPPORTED_CAP` (0x07) クローズ処理
+- [ ] Verifiable Delay Mix (cMix) 本番統合（RSA Accumulator + Wesolowski VDF 実装）
+- [ ] Plugin Registry の永続化と実行時権限取り消し API
+- [ ] Low Power Mode 時の Cover Traffic λ 動的調整（Android / iOS 連携）
+- [ ] Hybrid KEM の HPKE exporter API 最終仕様への統合
+- [ ] Formal Verification: TLA+ モデルを Multipath / Plugin 拡張点含め更新
+- [ ] Windows 向け `raptorq` SIMD アクセラレーション最適化 & fallback 実装
+- [ ] Conformance Test Suite 拡充：Capability Negotiation / cMix / Low Power Mode ケース追加
+- [ ] ドキュメント更新：v1.0 完全仕様 (英語版) の最終化と公開 

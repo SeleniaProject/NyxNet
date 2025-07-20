@@ -13,6 +13,7 @@ pub mod noise;
 pub mod kdf;
 pub mod hpke;
 pub mod hybrid;
+pub mod aead;
 
 pub use kdf::KdfLabel;
 
