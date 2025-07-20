@@ -24,7 +24,7 @@
 - [x] Weighted Round Robin スケジューラ
 - [x] Reordering Buffer Adaptive サイズ
 - [x] Multipath Conformance Tests (loss, reorder)
-- [ ] RTT & Bandwidth Probing in Control Plane
+- [x] RTT & Bandwidth Probing in Control Plane
 - [ ] LARMix++ アルゴリズム実装
 - [ ] Load-Balancing Evaluation via simulation
 - [ ] RSA Accumulator 設計 & key ceremony

@@ -7,6 +7,7 @@ use libp2p::{identity, kad::{store::MemoryStore, Kademlia, Quorum, record::{Key,
 use tokio::sync::mpsc;
 
 pub mod settings;
+pub mod probe;
 
 /// Control messages for the DHT event loop.
 #[cfg(feature = "dht")]
