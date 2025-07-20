@@ -14,6 +14,11 @@ mod scheduler;
 mod plugin_registry;
 mod plugin_geostat;
 
+#[cfg(feature = "mpr_experimental")]
+mod mpr;
+#[cfg(feature = "mpr_experimental")]
+pub use mpr::MprDispatcher;
+
 pub use frame::{FrameHeader, parse_header, parse_header_ext, FLAG_HAS_PATH_ID};
 pub use builder::build_header;
 pub use congestion::CongestionCtrl;
