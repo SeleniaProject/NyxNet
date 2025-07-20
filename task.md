@@ -28,7 +28,7 @@
 - [x] LARMix++ アルゴリズム実装
 - [x] Load-Balancing Evaluation via simulation
 - [x] RSA Accumulator 設計 & key ceremony
-- [ ] VDF delay 100ms ラスタ実装 (Rust VDF crate)
+- [x] VDF delay 100ms ラスタ実装 (Rust VDF crate)
 - [ ] cMix バッチコントローラ
 - [ ] Frame Type 0x50–0x5F パーサー/serializer
 - [ ] CBOR Schema Validation (serde_cbor)

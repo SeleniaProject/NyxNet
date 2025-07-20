@@ -19,6 +19,7 @@ pub use adaptive::{AdaptiveCoverGenerator, UtilizationEstimator};
 pub mod larmix;
 pub use larmix::{Prober, LARMixPlanner};
 pub mod accumulator;
+pub mod vdf;
 
 /// Candidate node with runtime metrics for weighted selection.
 #[derive(Debug, Clone, Copy)]

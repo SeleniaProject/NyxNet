@@ -27,6 +27,8 @@ use rand::thread_rng;
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration, Instant};
+use crate::{accumulator::KeyCeremony, vdf};
+use num_bigint::BigUint;
 
 /// Default delay enforced by cMix (100 ms).
 const DEFAULT_DELAY_MS: u64 = 100;
@@ -83,7 +85,14 @@ impl CmixController {
                     let mut hasher = Sha256::new();
                     for p in &buffer { hasher.update(p); }
                     let digest = hasher.finalize();
-                    let batch = CmixBatch { packets: buffer.clone(), digest: digest.into(), vdf_proof: vec![0u8; 32] };
+                    // Derive VDF input from digest and compute 100ms-equivalent delay (fixed iterations).
+                    const ITER: u64 = 1_000; // placeholder; adjust via calibration for ≈100 ms
+                    let params = KeyCeremony::generate(2048); // dev-only modulus
+                    let x = BigUint::from_bytes_be(&digest);
+                    let y = vdf::eval(&x, &params.n, ITER);
+                    let mut proof = y.to_bytes_be();
+
+                    let batch = CmixBatch { packets: buffer.clone(), digest: digest.into(), vdf_proof: proof };
                     if out_tx.send(batch).await.is_err() { break; }
                     buffer.clear();
                     next_deadline = None;
