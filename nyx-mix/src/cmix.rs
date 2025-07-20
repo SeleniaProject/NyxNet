@@ -93,8 +93,11 @@ impl CmixController {
                     // VDF evaluation (fixed iterations calibrated ~100ms)
                     const ITER: u64 = 1_000;
                     let x = BigUint::from_bytes_be(&digest);
-                    let y = vdf::eval(&x, &params.n, ITER);
-                    let proof = y.to_bytes_be();
+                    let (y, pi) = vdf::prove(&x, &params.n, ITER);
+                    // concatenate y||pi for transport; could be structured later
+                    let mut proof = pi.to_bytes_be();
+                    // Store y as well to enable downstream verification if needed
+                    proof.extend_from_slice(&y.to_bytes_be());
 
                     // Update accumulator with hash_to_prime(digest)
                     let elem = crate::accumulator::hash_to_prime(&digest);

@@ -3,7 +3,7 @@
 ## v1.0 未実装タスク
 - [x] Noise_Nyx フレーム暗号化フル実装（ChaCha20-Poly1305 / BLAKE3、0-RTT 再生防止）
 - [x] Capability Negotiation (CBOR SETTINGS) の送受信実装および `UNSUPPORTED_CAP` (0x07) クローズ処理
-- [ ] Verifiable Delay Mix (cMix) 本番統合（RSA Accumulator + Wesolowski VDF 実装）
+- [x] Verifiable Delay Mix (cMix) 本番統合（RSA Accumulator + Wesolowski VDF 実装）
 - [ ] Plugin Registry の永続化と実行時権限取り消し API
 - [ ] Low Power Mode 時の Cover Traffic λ 動的調整（Android / iOS 連携）
 - [ ] Hybrid KEM の HPKE exporter API 最終仕様への統合
