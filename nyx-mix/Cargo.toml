@@ -11,3 +11,5 @@ rand = { version = "0.8", features = ["std"] }
 rand_distr = "0.4"
 nyx-core = { path = "../nyx-core" }
 sha2 = "0.10"
+num-bigint = "0.4"
+num-traits = "0.2"

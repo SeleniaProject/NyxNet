@@ -26,8 +26,8 @@
 - [x] Multipath Conformance Tests (loss, reorder)
 - [x] RTT & Bandwidth Probing in Control Plane
 - [x] LARMix++ アルゴリズム実装
-- [ ] Load-Balancing Evaluation via simulation
-- [ ] RSA Accumulator 設計 & key ceremony
+- [x] Load-Balancing Evaluation via simulation
+- [x] RSA Accumulator 設計 & key ceremony
 - [ ] VDF delay 100ms ラスタ実装 (Rust VDF crate)
 - [ ] cMix バッチコントローラ
 - [ ] Frame Type 0x50–0x5F パーサー/serializer
