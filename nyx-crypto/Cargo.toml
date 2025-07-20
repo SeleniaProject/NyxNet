@@ -33,3 +33,4 @@ pqcrypto-kyber = { version = "0.7", optional = true, package = "pqcrypto-kyber",
 
 [dev-dependencies]
 hex-literal = "0.4"
+pqcrypto-bike = { version = "0.7", optional = true, package = "pqcrypto-bike" }

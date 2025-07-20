@@ -46,8 +46,8 @@
 - [x] Release notes generator (cargo-release)
 
 ## v1.0 追加機能タスク (Nyx_Protocol_v1.0_Spec.md)
-- [ ] Hybrid Post-Quantum Handshake (X25519 + Kyber/Bike) 実装
-- [ ] HPKE サポート (export secrets)
+- [x] Hybrid Post-Quantum Handshake (X25519 + Kyber/Bike) 実装
+- [x] HPKE サポート (export secrets)
 - [ ] Multipath 同時通信 (動的 PathID, 重み付けスケジューラ)
 - [ ] Latency-aware routing (LARMix++) 実装
 - [ ] 動的 Hop 数 (3–7) サポート

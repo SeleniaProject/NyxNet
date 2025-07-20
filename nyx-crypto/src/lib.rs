@@ -12,6 +12,7 @@ use zeroize::Zeroize;
 pub mod noise;
 pub mod kdf;
 pub mod hpke;
+pub mod hybrid;
 
 pub use kdf::KdfLabel;
 
