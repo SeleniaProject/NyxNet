@@ -18,6 +18,9 @@
 
 use std::collections::HashMap;
 use serde::{Serialize, Deserialize};
+use std::path::Path;
+use std::fs::{File, create_dir_all};
+use std::io::{self, Read, Write};
 
 bitflags::bitflags! {
     #[derive(Serialize, Deserialize)]
@@ -38,6 +41,7 @@ pub struct PluginInfo {
 
 /// Runtime registry tracking plugin permissions.
 #[derive(Default)]
+/// Thread‐unsafe plugin registry. Callers must provide their own sync wrapper if shared.
 pub struct PluginRegistry {
     plugins: HashMap<u32, Permission>,
 }
@@ -57,6 +61,36 @@ impl PluginRegistry {
     pub fn has_permission(&self, plugin_id: u32, perm: Permission) -> bool {
         self.plugins.get(&plugin_id).map_or(false, |p| p.contains(perm))
     }
+
+    /// Persist registry as CBOR to `path`. Creates parent dir if missing.
+    pub fn save_to<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        let p = path.as_ref();
+        if let Some(parent) = p.parent() { create_dir_all(parent)?; }
+        let mut file = File::create(p)?;
+        let bytes = serde_cbor::to_vec(&self.plugins).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        file.write_all(&bytes)
+    }
+
+    /// Load registry from CBOR file; returns empty registry if file missing.
+    pub fn load_from<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        let p = path.as_ref();
+        if !p.exists() { return Ok(Self::new()); }
+        let mut buf = Vec::new();
+        File::open(p)?.read_to_end(&mut buf)?;
+        let plugins: HashMap<u32, Permission> = serde_cbor::from_slice(&buf).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        Ok(Self { plugins })
+    }
+
+    /// Revoke given permission bits from plugin at runtime.
+    /// Returns `true` if any bit was cleared.
+    pub fn revoke(&mut self, plugin_id: u32, perm: Permission) -> bool {
+        if let Some(p) = self.plugins.get_mut(&plugin_id) {
+            let before = *p;
+            p.remove(perm);
+            return *p != before;
+        }
+        false
+    }
 }
 
 #[cfg(test)]
@@ -71,5 +105,27 @@ mod tests {
         assert!(reg.has_permission(0xdead_beef, Permission::ACCESS_GEO));
         assert!(!reg.has_permission(0xdead_beef, Permission::SEND_STREAM));
         assert!(reg.register(&info).is_err()); // duplicate
+    }
+
+    #[test]
+    fn persistence() {
+        use std::env::temp_dir;
+        let mut reg = PluginRegistry::new();
+        let info = PluginInfo { id: 1, name: "test".into(), permissions: Permission::SEND_STREAM | Permission::ACCESS_GEO };
+        reg.register(&info).unwrap();
+        let path = temp_dir().join("nyx_plugin_test.cbor");
+        reg.save_to(&path).unwrap();
+        let loaded = PluginRegistry::load_from(&path).unwrap();
+        assert!(loaded.has_permission(1, Permission::ACCESS_GEO));
+    }
+
+    #[test]
+    fn revoke_perm() {
+        let mut reg = PluginRegistry::new();
+        let info = PluginInfo { id: 2, name: "geo".into(), permissions: Permission::ACCESS_GEO | Permission::SEND_STREAM };
+        reg.register(&info).unwrap();
+        assert!(reg.revoke(2, Permission::ACCESS_GEO));
+        assert!(!reg.has_permission(2, Permission::ACCESS_GEO));
+        assert!(reg.has_permission(2, Permission::SEND_STREAM));
     }
 } 
