@@ -17,6 +17,14 @@ pub enum NyxError {
     /// Filesystem watch errors.
     #[error("Notify error: {0}")]
     Notify(#[from] notify::Error),
+
+    /// CBOR decode errors
+    #[error("CBOR decode error: {0}")]
+    Cbor(#[from] serde_cbor::Error),
+
+    /// Required capability not supported by local implementation
+    #[error("Unsupported required capability {0}")]
+    UnsupportedCap(u32),
 }
 
 /// Convenient alias for results throughout Nyx crates.

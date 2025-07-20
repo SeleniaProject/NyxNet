@@ -19,7 +19,6 @@
 //! NOTE: This is *not* production-ready. Real VDF implementation and RSA
 //! accumulator integration are TODO.
 
-#![cfg(feature = "cmix_experimental")]
 #![forbid(unsafe_code)]
 
 use rand::seq::SliceRandom;

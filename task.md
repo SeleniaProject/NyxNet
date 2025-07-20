@@ -52,8 +52,8 @@
 - [x] Latency-aware routing (LARMix++) 実装
 - [x] 動的 Hop 数 (3–7) サポート
 - [x] RaptorQ FEC & adaptive redundancy
-- [ ] VDF-based cMix batch (RSA accumulator & 100ms delay) 実装
-- [ ] Capability Negotiation via CBOR (UNSUPPORTED_CAP 処理含む)
+- [x] VDF-based cMix batch (RSA accumulator & 100ms delay) 実装
+- [x] Capability Negotiation via CBOR (UNSUPPORTED_CAP 処理含む)
 - [ ] Low Power Mode: Adaptive cover traffic rate + mobile bindings
 - [ ] OTLP Telemetry span 拡張 (`nyx.stream.send` attrs)
 - [ ] Compliance Level 判定ロジック (Core / Plus / Full)
