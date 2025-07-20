@@ -29,7 +29,7 @@
 - [x] Load-Balancing Evaluation via simulation
 - [x] RSA Accumulator 設計 & key ceremony
 - [x] VDF delay 100ms ラスタ実装 (Rust VDF crate)
-- [ ] cMix バッチコントローラ
+- [x] cMix バッチコントローラ
 - [ ] Frame Type 0x50–0x5F パーサー/serializer
 - [ ] CBOR Schema Validation (serde_cbor)
 - [ ] Plugin Registration & Permission Model

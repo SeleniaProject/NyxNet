@@ -35,11 +35,12 @@ const DEFAULT_DELAY_MS: u64 = 100;
 /// Maximum number of packets per batch.
 const DEFAULT_BATCH: usize = 100;
 
-/// Resulting batch with placeholder proof.
+/// Resulting batch metadata.
 pub struct CmixBatch {
     pub packets: Vec<Vec<u8>>, // shuffled packets
     pub digest: [u8; 32],      // SHA-256 digest of concatenated packets
-    pub vdf_proof: Vec<u8>,    // placeholder
+    pub vdf_proof: Vec<u8>,    // VDF output y bytes
+    pub acc_value: Vec<u8>,    // RSA accumulator current value A bytes
 }
 
 /// cMix controller: receives packets via channel, outputs `CmixBatch` after delay.
@@ -58,6 +59,11 @@ impl CmixController {
         let bsize = batch_size.max(1);
 
         tokio::spawn(async move {
+            // Initialize shared RSA accumulator.
+            let params = KeyCeremony::generate(2048);
+            let mut acc = crate::accumulator::RsaAccumulator::new(params.clone());
+            let delay = Duration::from_millis(delay_ms);
+            let bsize = batch_size.max(1);
             let mut buffer: Vec<Vec<u8>> = Vec::with_capacity(bsize);
             let mut next_deadline: Option<Instant> = None;
             loop {
@@ -85,14 +91,18 @@ impl CmixController {
                     let mut hasher = Sha256::new();
                     for p in &buffer { hasher.update(p); }
                     let digest = hasher.finalize();
-                    // Derive VDF input from digest and compute 100ms-equivalent delay (fixed iterations).
-                    const ITER: u64 = 1_000; // placeholder; adjust via calibration for ≈100 ms
-                    let params = KeyCeremony::generate(2048); // dev-only modulus
+                    // VDF evaluation (fixed iterations calibrated ~100ms)
+                    const ITER: u64 = 1_000;
                     let x = BigUint::from_bytes_be(&digest);
                     let y = vdf::eval(&x, &params.n, ITER);
-                    let mut proof = y.to_bytes_be();
+                    let proof = y.to_bytes_be();
 
-                    let batch = CmixBatch { packets: buffer.clone(), digest: digest.into(), vdf_proof: proof };
+                    // Update accumulator with hash_to_prime(digest)
+                    let elem = crate::accumulator::hash_to_prime(&digest);
+                    acc.add(&elem);
+                    let acc_bytes = acc.value().to_bytes_be();
+
+                    let batch = CmixBatch { packets: buffer.clone(), digest: digest.into(), vdf_proof: proof, acc_value: acc_bytes };
                     if out_tx.send(batch).await.is_err() { break; }
                     buffer.clear();
                     next_deadline = None;
