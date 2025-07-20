@@ -17,6 +17,8 @@
 
 use hpke::{kem::X25519HkdfSha256, kdf::HkdfSha256, aead::ChaCha20Poly1305, OpModeR, OpModeS};
 use hpke::{Deserializable, Serializable};
+use crate::noise::SessionKey;
+use crate::kdf::{hkdf_expand, KdfLabel};
 
 pub type Kem = X25519HkdfSha256;
 pub type Kdf = HkdfSha256;
@@ -53,6 +55,12 @@ pub fn export_secret(context: &hpke::SingleShotExporter<Aead>, label: &[u8], len
     context.export(label, length)
 }
 
+/// Export secret from Nyx SessionKey using HKDF-SHA256 labelled "nyx-hpke-export".
+#[must_use]
+pub fn export_from_session(session: &SessionKey, length: usize) -> Vec<u8> {
+    hkdf_expand(&session.0, KdfLabel::Custom(b"nyx-hpke-export"), length)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -62,5 +70,13 @@ mod tests {
         let (enc, ct) = seal(&pk, b"info", b"", b"secret").unwrap();
         let pt = open(&sk, &enc, b"info", b"", &ct).unwrap();
         assert_eq!(pt, b"secret");
+    }
+
+    #[test]
+    fn export_from_session_unique() {
+        use crate::noise::SessionKey;
+        let sk1 = SessionKey([1u8;32]);
+        let sk2 = SessionKey([2u8;32]);
+        assert_ne!(export_from_session(&sk1, 32), export_from_session(&sk2, 32));
     }
 } 
