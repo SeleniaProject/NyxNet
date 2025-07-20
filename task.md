@@ -31,11 +31,11 @@
 - [x] VDF delay 100ms ラスタ実装 (Rust VDF crate)
 - [x] cMix バッチコントローラ
 - [x] Frame Type 0x50–0x5F パーサー/serializer
-- [ ] CBOR Schema Validation (serde_cbor)
+- [x] CBOR Schema Validation (serde_cbor)
 - [x] Plugin Registration & Permission Model
 - [x] Sample Plugin: GeoStat collection
-- [ ] Utilization Estimator (time window)
-- [ ] λ 調整アルゴリズム実装
+- [x] Utilization Estimator (time window)
+- [x] λ 調整アルゴリズム実装
 - [ ] Mobile battery state integration (Android/iOS bindings)
 - [ ] QUIC DATAGRAM path
 - [ ] TCP Fallback encapsulation
