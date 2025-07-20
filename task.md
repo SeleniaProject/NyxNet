@@ -20,10 +20,10 @@
 - [x] Hybrid X25519+Kyber Handshake 実装
 - [x] PQ-Only モード (Kyber/Bike) CI matrix
 - [x] HPKE API サポート (exporter)
-- [ ] PathID 拡張パケットヘッダ実装
-- [ ] Weighted Round Robin スケジューラ
-- [ ] Reordering Buffer Adaptive サイズ
-- [ ] Multipath Conformance Tests (loss, reorder)
+- [x] PathID 拡張パケットヘッダ実装
+- [x] Weighted Round Robin スケジューラ
+- [x] Reordering Buffer Adaptive サイズ
+- [x] Multipath Conformance Tests (loss, reorder)
 - [ ] RTT & Bandwidth Probing in Control Plane
 - [ ] LARMix++ アルゴリズム実装
 - [ ] Load-Balancing Evaluation via simulation
