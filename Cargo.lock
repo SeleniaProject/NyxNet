@@ -2687,6 +2687,7 @@ dependencies = [
  "nyx-core",
  "nyx-crypto",
  "nyx-fec",
+ "nyx-mix",
  "nyx-stream",
  "nyx-transport",
  "once_cell",
