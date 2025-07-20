@@ -7,6 +7,11 @@
 use nyx_core::NodeId;
 use rand::{seq::SliceRandom, thread_rng};
 
+#[cfg(feature = "cmix_experimental")]
+mod cmix;
+#[cfg(feature = "cmix_experimental")]
+pub use cmix::{CmixController, CmixBatch};
+
 pub mod cover;
 pub use cover::CoverGenerator;
 pub mod adaptive;
