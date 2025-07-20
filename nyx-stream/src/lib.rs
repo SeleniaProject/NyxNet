@@ -10,6 +10,7 @@ pub mod plugin;
 pub mod management;
 pub mod settings;
 mod localized;
+mod scheduler;
 
 pub use frame::{FrameHeader, parse_header, parse_header_ext, FLAG_HAS_PATH_ID};
 pub use builder::build_header;
@@ -34,3 +35,4 @@ pub use management::{PingFrame, PongFrame, build_ping_frame, parse_ping_frame, b
 pub use settings::{StreamSettings, settings_watch};
 
 pub use localized::{LocalizedStringFrame, build_localized_string_frame, parse_localized_string_frame};
+pub use scheduler::WeightedRrScheduler;
