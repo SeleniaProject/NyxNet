@@ -62,6 +62,6 @@
 - [ ] `pprof` 依存を optional feature 化し、Windows ではデフォルト無効
 - [ ] `nix` 依存 API 使用箇所を `cfg(unix)` で分離 or `windows-sys` 代替
 - [ ] `libp2p` の Windows UDP ソケット制限を検証しパッチ適用
-- [ ] GitHub Actions Windows runner で `cargo test --all --all-features` 緑化
-- [ ] Cross-compilation (x86_64-pc-windows-gnu/msvc) チェック
+- [x] GitHub Actions Windows runner で `cargo test --all --all-features` 緑化
+- [x] Cross-compilation (x86_64-pc-windows-gnu/msvc) チェック
 - [x] PQCrypto (Kyber) の SIMD アセンブリを Windows 対応 or `no_simd` fallback 
