@@ -30,10 +30,10 @@
 - [x] RSA Accumulator 設計 & key ceremony
 - [x] VDF delay 100ms ラスタ実装 (Rust VDF crate)
 - [x] cMix バッチコントローラ
-- [ ] Frame Type 0x50–0x5F パーサー/serializer
+- [x] Frame Type 0x50–0x5F パーサー/serializer
 - [ ] CBOR Schema Validation (serde_cbor)
-- [ ] Plugin Registration & Permission Model
-- [ ] Sample Plugin: GeoStat collection
+- [x] Plugin Registration & Permission Model
+- [x] Sample Plugin: GeoStat collection
 - [ ] Utilization Estimator (time window)
 - [ ] λ 調整アルゴリズム実装
 - [ ] Mobile battery state integration (Android/iOS bindings)
