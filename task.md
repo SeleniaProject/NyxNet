@@ -54,14 +54,14 @@
 - [x] RaptorQ FEC & adaptive redundancy
 - [x] VDF-based cMix batch (RSA accumulator & 100ms delay) 実装
 - [x] Capability Negotiation via CBOR (UNSUPPORTED_CAP 処理含む)
-- [ ] Low Power Mode: Adaptive cover traffic rate + mobile bindings
-- [ ] OTLP Telemetry span 拡張 (`nyx.stream.send` attrs)
-- [ ] Compliance Level 判定ロジック (Core / Plus / Full)
+- [x] Low Power Mode: Adaptive cover traffic rate + mobile bindings
+- [x] OTLP Telemetry span 拡張 (`nyx.stream.send` attrs)
+- [x] Compliance Level 判定ロジック (Core / Plus / Full)
 
 ## Windows ビルド互換タスク
-- [ ] `pprof` 依存を optional feature 化し、Windows ではデフォルト無効
-- [ ] `nix` 依存 API 使用箇所を `cfg(unix)` で分離 or `windows-sys` 代替
-- [ ] `libp2p` の Windows UDP ソケット制限を検証しパッチ適用
+- [x] `pprof` 依存を optional feature 化し、Windows ではデフォルト無効
+- [x] `nix` 依存 API 使用箇所を `cfg(unix)` で分離 or `windows-sys` 代替
+- [x] `libp2p` の Windows UDP ソケット制限を検証しパッチ適用
 - [x] GitHub Actions Windows runner で `cargo test --all --all-features` 緑化
 - [x] Cross-compilation (x86_64-pc-windows-gnu/msvc) チェック
 - [x] PQCrypto (Kyber) の SIMD アセンブリを Windows 対応 or `no_simd` fallback 

@@ -7,6 +7,7 @@ pub mod types;
 pub mod sandbox;
 pub mod i18n;
 pub mod capability;
+pub mod compliance;
 
 pub use config::NyxConfig;
 pub use error::NyxError;
@@ -15,3 +16,4 @@ pub use types::NodeId;
 #[cfg(target_os = "linux")]
 pub use sandbox::install_seccomp;
 pub use capability::{Capability, FLAG_REQUIRED};
+pub use compliance::{ComplianceLevel};

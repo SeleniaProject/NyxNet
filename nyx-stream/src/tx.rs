@@ -3,6 +3,7 @@
 use tokio::sync::mpsc;
 use nyx_fec::{TimingObfuscator, TimingConfig, Packet};
 use super::Sequencer;
+use tracing::instrument;
 
 /// TxQueue integrates TimingObfuscator and provides outgoing packet stream.
 pub struct TxQueue {
@@ -32,11 +33,15 @@ impl TxQueue {
         Self { in_tx, out_rx, sequencer: tokio::sync::Mutex::new(Sequencer::new()) }
     }
 
+    /// Send frame without specific PathID.  Emits OTLP span `nyx.stream.send`.
+    #[instrument(name = "nyx.stream.send", skip_all, fields(path_id = -1i8, cid = "unknown"))]
     pub async fn send(&self, bytes: Vec<u8>) {
         let _ = self.in_tx.send(Packet(bytes)).await;
     }
 
     /// Send bytes tagged with PathID, returning assigned sequence number.
+    /// Emits OTLP span `nyx.stream.send` with `path_id` attribute.
+    #[instrument(name = "nyx.stream.send", skip_all, fields(path_id = path_id, cid = "unknown"))]
     pub async fn send_with_path(&self, path_id: u8, bytes: Vec<u8>) -> u64 {
         let mut seq = self.sequencer.lock().await;
         let s = seq.next(path_id);
