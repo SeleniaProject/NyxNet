@@ -12,6 +12,7 @@ pq = ["pqcrypto-kyber", "pqcrypto-traits"]
 # Build with ONLY PQ algorithm (disable X25519). Implies pq.
 pq_only = ["pq"]
 bench = ["criterion"]
+hybrid = ["pq"]
 
 [dependencies]
 x25519-dalek = "2.0"

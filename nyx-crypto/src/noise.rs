@@ -90,4 +90,58 @@ pub mod pq {
         out.copy_from_slice(&okm);
         super::SessionKey(out)
     }
+}
+
+/// -----------------------------------------------------------------------------
+/// Hybrid X25519 + Kyber Handshake (feature "hybrid")
+/// -----------------------------------------------------------------------------
+#[cfg(feature = "hybrid")]
+pub mod hybrid {
+    use super::*;
+    use super::pq; // Kyber helpers
+    use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
+    use rand_core::OsRng;
+
+    /// Initiator generates X25519 ephemeral and Kyber encapsulation.
+    pub fn initiator_step(pk_kyber: &pq::PublicKey) -> (PublicKey, EphemeralSecret, pq::Ciphertext, SessionKey) {
+        let (ct, kyber_key) = pq::initiator_encapsulate(pk_kyber);
+        let secret = EphemeralSecret::random_from_rng(OsRng);
+        let public = PublicKey::from(&secret);
+        // Combine secrets later when responder key known; here return Kyber part as session key placeholder.
+        let k = kyber_key;
+        (public, secret, ct, k)
+    }
+
+    /// Responder receives initiator public keys and ciphertext; returns responder X25519 pub and combined session key.
+    pub fn responder_step(init_pub: &PublicKey, ct: &pq::Ciphertext, sk_kyber: &pq::SecretKey) -> (PublicKey, SessionKey) {
+        // Kyber part
+        let kyber_key = pq::responder_decapsulate(ct, sk_kyber);
+        // X25519 part
+        let secret = EphemeralSecret::random_from_rng(OsRng);
+        let public = PublicKey::from(&secret);
+        let x_key = secret.diffie_hellman(init_pub);
+        // Combine
+        combine_keys(&x_key, &kyber_key)
+            .map(|k| (public, k))
+            .unwrap()
+    }
+
+    /// Initiator finalizes with responder X25519 pub, producing combined session key.
+    pub fn initiator_finalize(sec: EphemeralSecret, resp_pub: &PublicKey, kyber_key: SessionKey) -> SessionKey {
+        let x_key = sec.diffie_hellman(resp_pub);
+        combine_keys(&x_key, &kyber_key).expect("hkdf")
+    }
+
+    fn combine_keys(classic: &SharedSecret, pq: &SessionKey) -> Option<SessionKey> {
+        use zeroize::Zeroize;
+        let mut concat = Vec::with_capacity(64);
+        concat.extend_from_slice(classic.as_bytes());
+        concat.extend_from_slice(&pq.0);
+        let okm = hkdf_expand(&concat, KdfLabel::Session, 32);
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&okm);
+        // zeroize temp
+        concat.zeroize();
+        Some(SessionKey(out))
+    }
 } 
