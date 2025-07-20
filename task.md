@@ -41,9 +41,9 @@
 - [x] TCP Fallback encapsulation
 - [x] Teredo-like IPv6 NAT traversal module
 - [x] v1.0 完全仕様 English 版 (draft)
-- [ ] Plugin 開発ガイド作成
-- [ ] Semantic Versioning: tag v1.0.0-rc1
-- [ ] Release notes generator (cargo-release)
+- [x] Plugin 開発ガイド作成
+- [x] Semantic Versioning: tag v1.0.0-rc1
+- [x] Release notes generator (cargo-release)
 
 ## v1.0 追加機能タスク (Nyx_Protocol_v1.0_Spec.md)
 - [ ] Hybrid Post-Quantum Handshake (X25519 + Kyber/Bike) 実装
@@ -64,4 +64,4 @@
 - [ ] `libp2p` の Windows UDP ソケット制限を検証しパッチ適用
 - [ ] GitHub Actions Windows runner で `cargo test --all --all-features` 緑化
 - [ ] Cross-compilation (x86_64-pc-windows-gnu/msvc) チェック
-- [ ] PQCrypto (Kyber) の SIMD アセンブリを Windows 対応 or `no_simd` fallback 
+- [x] PQCrypto (Kyber) の SIMD アセンブリを Windows 対応 or `no_simd` fallback 

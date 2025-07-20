@@ -1,0 +1,14 @@
+# Workspace-level release configuration for cargo-release
+
+[workspace]
+# Tag set to v{{version}}
+tag_name = "v{{version}}"
+# Push tags automatically when --execute
+push = true
+# Generate changelog from conventional commits
+changelog = true
+changelog_path = "CHANGELOG.md"
+
+[shared]
+consolidate_commits = true
+allow_branch = ["main"] 
