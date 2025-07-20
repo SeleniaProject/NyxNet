@@ -13,6 +13,7 @@ mod localized;
 mod scheduler;
 mod plugin_registry;
 mod plugin_geostat;
+mod capability;
 
 #[cfg(feature = "mpr_experimental")]
 mod mpr;
@@ -35,6 +36,7 @@ pub use sequencer::Sequencer;
 pub use plugin::PluginHeader;
 pub use plugin_registry::{PluginRegistry, PluginInfo, Permission};
 pub use plugin_geostat::{GeoStat, GEO_PLUGIN_ID, plugin_info};
+pub use capability::{Capability, FLAG_REQUIRED, encode_caps, decode_caps, negotiate, NegotiationError};
 
 pub use management::{PingFrame, PongFrame, build_ping_frame, parse_ping_frame, build_pong_frame, parse_pong_frame,
     CloseFrame, build_close_frame, parse_close_frame,

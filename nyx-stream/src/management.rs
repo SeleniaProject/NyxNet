@@ -139,4 +139,7 @@ pub fn parse_settings_frame(input: &[u8]) -> IResult<&[u8], SettingsFrame> {
         rest = i;
     }
     Ok((&[], SettingsFrame { settings: list }))
-} 
+}
+
+/// Error code for unsupported required capability (Nyx §8)
+pub const ERR_UNSUPPORTED_CAP: u16 = 0x07; 
