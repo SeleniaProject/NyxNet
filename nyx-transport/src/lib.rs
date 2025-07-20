@@ -19,6 +19,8 @@ pub mod ice;
 pub mod stun_server;
 pub mod quic;
 pub use quic::{QuicEndpoint, QuicConnection};
+pub mod tcp_fallback;
+pub use tcp_fallback::{TcpEncapListener, TcpEncapConnection};
 
 /// Maximum datagram size (aligned with 1280B spec).
 const MAX_DATAGRAM: usize = 1280;
