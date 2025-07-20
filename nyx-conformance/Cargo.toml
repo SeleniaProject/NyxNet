@@ -16,6 +16,7 @@ nyx-control = { path = "../nyx-control" }
 nyx-stream = { path = "../nyx-stream" }
 nyx-fec = { path = "../nyx-fec" }
 nyx-transport = { path = "../nyx-transport" }
+nyx-mix = { path = "../nyx-mix" }
 
 [dev-dependencies]
 once_cell = "1.19"
