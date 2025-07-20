@@ -6,19 +6,23 @@
 //! 今後、ChaCha20-Poly1305／BLAKE3 で暗号化したフレーム交換を実装し、
 //! Kyber1024 フォールバックも feature `pq` で切り替えられるよう拡張します。
 
-use rand_core::OsRng;
+#[cfg(not(feature = "pq_only"))]
 use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
+#[cfg(not(feature = "pq_only"))]
+use rand_core::OsRng;
 use super::kdf::{hkdf_expand, KdfLabel};
 use zeroize::Zeroize;
 
-/// Initiator が生成するハンドシェイクメッセージ (e 公開鍵) と秘密状態を返す。
+#[cfg(not(feature = "pq_only"))]
+/// Initiator generates ephemeral X25519 key.
 pub fn initiator_generate() -> (PublicKey, EphemeralSecret) {
     let secret = EphemeralSecret::random_from_rng(OsRng);
     let public = PublicKey::from(&secret);
     (public, secret)
 }
 
-/// Responder が受信した Initiator の公開鍵を処理し、自身の公開鍵/共有鍵を返す。
+#[cfg(not(feature = "pq_only"))]
+/// Responder process for X25519.
 pub fn responder_process(in_pub: &PublicKey) -> (PublicKey, SharedSecret) {
     let secret = EphemeralSecret::random_from_rng(OsRng);
     let public = PublicKey::from(&secret);
@@ -26,7 +30,8 @@ pub fn responder_process(in_pub: &PublicKey) -> (PublicKey, SharedSecret) {
     (public, shared)
 }
 
-/// Initiator が Responder 公開鍵を受信後に共有鍵を計算する。
+#[cfg(not(feature = "pq_only"))]
+/// Initiator finalize X25519.
 pub fn initiator_finalize(sec: EphemeralSecret, resp_pub: &PublicKey) -> SharedSecret {
     sec.diffie_hellman(resp_pub)
 }

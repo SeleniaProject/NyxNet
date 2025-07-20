@@ -9,6 +9,8 @@ license = "MIT OR Apache-2.0"
 [features]
 # Enable post-quantum Kyber fallback.
 pq = ["pqcrypto-kyber", "pqcrypto-traits"]
+# Build with ONLY PQ algorithm (disable X25519). Implies pq.
+pq_only = ["pq"]
 bench = ["criterion"]
 
 [dependencies]
