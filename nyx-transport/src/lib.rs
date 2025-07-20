@@ -17,6 +17,8 @@ use tokio::time::{sleep, Duration};
 
 pub mod ice;
 pub mod stun_server;
+pub mod quic;
+pub use quic::{QuicEndpoint, QuicConnection};
 
 /// Maximum datagram size (aligned with 1280B spec).
 const MAX_DATAGRAM: usize = 1280;

@@ -11,6 +11,8 @@ pub mod cover;
 pub use cover::CoverGenerator;
 pub mod adaptive;
 pub use adaptive::{AdaptiveCoverGenerator, UtilizationEstimator};
+pub mod larmix;
+pub use larmix::{Prober, LARMixPlanner};
 
 /// Candidate node with runtime metrics for weighted selection.
 #[derive(Debug, Clone, Copy)]
