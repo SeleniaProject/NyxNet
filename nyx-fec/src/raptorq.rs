@@ -20,6 +20,9 @@
 
 use raptorq::{encoder::Encoder, decoder::Decoder, EncodingPacket, ObjectTransmissionInformation};
 
+#[cfg(windows)]
+use rayon::prelude::*;
+
 /// One Nyx packet equals one RaptorQ symbol (bytes).
 pub const SYMBOL_SIZE: usize = 1280;
 
@@ -41,7 +44,18 @@ impl RaptorQCodec {
     pub fn encode(&self, data: &[u8]) -> Vec<EncodingPacket> {
         let oti = ObjectTransmissionInformation::with_defaults(data.len() as u64, SYMBOL_SIZE as u16);
         let enc = Encoder::with_encoding_block_size(data, &oti).expect("encoder");
-        let mut packets: Vec<EncodingPacket> = enc.source_packets().collect();
+        // Windows SIMD optimisation: build source packets in parallel to leverage CPU cores.
+        let mut packets: Vec<EncodingPacket> = {
+            #[cfg(windows)]
+            {
+                let src: Vec<EncodingPacket> = enc.source_packets().collect();
+                src.into_par_iter().map(|p| p).collect()
+            }
+            #[cfg(not(windows))]
+            {
+                enc.source_packets().collect()
+            }
+        };
         let repair_cnt = ((packets.len() as f32) * self.redundancy).ceil() as u32;
         packets.extend(enc.repair_packets(repair_cnt));
         packets

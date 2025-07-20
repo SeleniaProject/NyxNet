@@ -8,6 +8,6 @@
 - [x] Low Power Mode 時の Cover Traffic λ 動的調整（Android / iOS 連携）
 - [x] Hybrid KEM の HPKE exporter API 最終仕様への統合
 - [x] Formal Verification: TLA+ モデルを Multipath / Plugin 拡張点含め更新
-- [ ] Windows 向け `raptorq` SIMD アクセラレーション最適化 & fallback 実装
+- [x] Windows 向け `raptorq` SIMD アクセラレーション最適化 & fallback 実装
 - [ ] Conformance Test Suite 拡充：Capability Negotiation / cMix / Low Power Mode ケース追加
 - [ ] ドキュメント更新：v1.0 完全仕様 (英語版) の最終化と公開 
