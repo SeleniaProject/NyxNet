@@ -37,8 +37,8 @@
 - [x] Utilization Estimator (time window)
 - [x] λ 調整アルゴリズム実装
 - [x] Mobile battery state integration (Android/iOS bindings)
-- [ ] QUIC DATAGRAM path
-- [ ] TCP Fallback encapsulation
+- [x] QUIC DATAGRAM path
+- [x] TCP Fallback encapsulation
 - [ ] Teredo-like IPv6 NAT traversal module
 - [ ] v1.0 完全仕様 English 版
 - [ ] Plugin 開発ガイド作成
