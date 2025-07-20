@@ -19,7 +19,7 @@
 - [x] Post-Quantum only mode (PQ-only handshake)
 - [x] Hybrid X25519+Kyber Handshake 実装
 - [x] PQ-Only モード (Kyber/Bike) CI matrix
-- [ ] HPKE API サポート (exporter)
+- [x] HPKE API サポート (exporter)
 - [ ] PathID 拡張パケットヘッダ実装
 - [ ] Weighted Round Robin スケジューラ
 - [ ] Reordering Buffer Adaptive サイズ
