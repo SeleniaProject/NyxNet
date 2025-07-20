@@ -12,6 +12,7 @@ pub mod settings;
 mod localized;
 mod scheduler;
 mod plugin_registry;
+mod plugin_geostat;
 
 pub use frame::{FrameHeader, parse_header, parse_header_ext, FLAG_HAS_PATH_ID};
 pub use builder::build_header;
@@ -28,6 +29,7 @@ mod sequencer;
 pub use sequencer::Sequencer;
 pub use plugin::PluginHeader;
 pub use plugin_registry::{PluginRegistry, PluginInfo, Permission};
+pub use plugin_geostat::{GeoStat, GEO_PLUGIN_ID, plugin_info};
 
 pub use management::{PingFrame, PongFrame, build_ping_frame, parse_ping_frame, build_pong_frame, parse_pong_frame,
     CloseFrame, build_close_frame, parse_close_frame,
