@@ -1,0 +1,13 @@
+{{- if .Values.pdb.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "nyx.fullname" . }}
+  labels:
+    app: {{ include "nyx.name" . }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      app: {{ include "nyx.name" . }}
+{{- end }} 

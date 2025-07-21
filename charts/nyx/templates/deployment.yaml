@@ -20,4 +20,17 @@ spec:
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           ports:
             - containerPort: 43300
-          resources: {{- toYaml .Values.resources | nindent 12 }} 
+            - containerPort: {{ .Values.exporter.port }}
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+          livenessProbe:
+            tcpSocket:
+              port: 43300
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /metrics
+              port: {{ .Values.exporter.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 10 

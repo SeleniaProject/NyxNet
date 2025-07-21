@@ -5,7 +5,7 @@
 - [x] Low Power Mode Push 経路 (FCM / APNS) の実装
 - [x] Hybrid KEM の再鍵交換パス（定期キー更新）
 - [x] PATH_CHALLENGE/RESPONSE の再試行 & 損失耐性ロジック
-- [ ] エラーコード拡張のテレメトリ / CLI 伝搬
+- [x] エラーコード拡張のテレメトリ / CLI 伝搬
 - [ ] Helm Chart の Production Grade 設定（PDB, HPA, リソース制限 等）
 - [ ] DHT ルート完全実装 & 障害試験
 - [ ] cMix 実環境長期試験 & VDF パラメータ調整
