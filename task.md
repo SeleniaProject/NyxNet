@@ -1,13 +1,12 @@
 # Nyx Project Outstanding Tasks / 未実装タスク一覧
 
-## v1.0 Outstanding Tasks / 未実装タスク
-- [x] 遅延可変カバートラフィック λ の統計匿名性評価と最適化
-- [x] Low Power Mode Push 経路 (FCM / APNS) の実装
-- [x] Hybrid KEM の再鍵交換パス（定期キー更新）
-- [x] PATH_CHALLENGE/RESPONSE の再試行 & 損失耐性ロジック
-- [x] エラーコード拡張のテレメトリ / CLI 伝搬
-- [x] Helm Chart の Production Grade 設定（PDB, HPA, リソース制限 等）
-- [x] DHT ルート完全実装 & 障害試験
-- [x] cMix 実環境長期試験 & VDF パラメータ調整
-- [x] Formal Verification モデルに LowPower / Multipath 追加入り
-- [x] WASM ブラウザ版 Push 通知対応 
+- [x] HPKE モジュールの公開と Noise ハンドシェイク統合、およびユニットテスト追加
+- [ ] Post-Quantum Only ビルドフラグ (`pq_only`) と Kyber/Bike 切替ロジックの実装
+- [ ] Capability ネゴシエーション（CBOR）の Noise 層統合と CLOSE(0x07) エラーハンドリング
+- [ ] cMix RSA アキュムレータ統合および証明検証パスの実装
+- [ ] Push Gateway を `nyxd` に統合し Low Power Mode ウェイクアップ経路を確立
+- [ ] Teredo IPv6 Fallback 経路の Transport 層および Multipath スケジューラ統合
+- [ ] HPKE 導入に伴う鍵再更新・管理プロセスの拡張
+- [ ] TLA+ 形式検証モデルを CI パイプラインに統合
+- [ ] UNSUPPORTED_CAP (0x07) CLOSE フレーム送信・受信ロジックと CLI 表示
+- [ ] `TODO.md` の内容を完了のうえファイル削除 

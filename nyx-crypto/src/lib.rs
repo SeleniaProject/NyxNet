@@ -6,14 +6,15 @@
 //! 1. Noise_Nyx handshake implementation (see [`noise`] module).
 //! 2. HKDF wrappers with misuse-resistant label semantics.
 //! 3. Optional Kyber1024 Post-Quantum fallback when built with `--features pq`.
+//! 4. HPKE (RFC 9180) wrapper utilities.
 
 use zeroize::Zeroize;
 
 pub mod noise;
 pub mod kdf;
-// hpke temporarily disabled
-// pub mod hpke;
-pub mod hybrid;
+pub mod hpke;
+#[cfg(feature = "hybrid")]
+pub use noise::hybrid;
 pub mod aead;
 
 pub use kdf::KdfLabel;
