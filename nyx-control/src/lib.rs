@@ -4,16 +4,19 @@
 use futures::StreamExt;
 #[cfg(feature = "dht")]
 use libp2p::{identity, kad::{store::MemoryStore, Kademlia, Quorum, record::{Key, Record}}, swarm::SwarmEvent, PeerId, Multiaddr};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
+use std::collections::HashMap;
 
 pub mod settings;
 pub mod probe;
+pub mod push;
+pub use push::{PushHandle, spawn_push_service};
 
 /// Control messages for the DHT event loop.
 #[cfg(feature = "dht")]
 pub enum DhtCmd {
     Put { key: String, value: Vec<u8> },
-    Get { key: String, resp: mpsc::Sender<Option<Vec<u8>>> },
+    Get { key: String, resp: oneshot::Sender<Option<Vec<u8>>> },
     Bootstrap(Multiaddr),
 }
 
@@ -25,6 +28,8 @@ pub enum DhtCmd { Stub }
 pub struct DhtHandle {
     #[cfg(feature = "dht")]
     tx: mpsc::Sender<DhtCmd>,
+    #[cfg(feature = "dht")]
+    listen_addr: Multiaddr,
 }
 
 impl DhtHandle {
@@ -35,14 +40,20 @@ impl DhtHandle {
 
     #[cfg(feature = "dht")]
     pub async fn get(&self, key: &str) -> Option<Vec<u8>> {
-        let (resp_tx, mut resp_rx) = mpsc::channel(1);
+        let (resp_tx, resp_rx) = oneshot::channel();
         let _ = self.tx.send(DhtCmd::Get { key: key.to_string(), resp: resp_tx }).await;
-        resp_rx.recv().await.flatten()
+        resp_rx.await.ok().flatten()
     }
 
     #[cfg(feature = "dht")]
     pub async fn add_bootstrap(&self, addr: Multiaddr) {
         let _ = self.tx.send(DhtCmd::Bootstrap(addr)).await;
+    }
+
+    /// Return the primary listen address of this node.
+    #[must_use]
+    pub fn listen_addr(&self) -> &Multiaddr {
+        &self.listen_addr
     }
 
     #[cfg(not(feature = "dht"))]
@@ -75,6 +86,7 @@ pub async fn spawn_dht() -> DhtHandle {
         .build();
 
     let (tx, mut rx) = mpsc::channel::<DhtCmd>(32);
+    let mut pending_get: HashMap<libp2p::kad::QueryId, oneshot::Sender<Option<Vec<u8>>>> = HashMap::new();
 
     tokio::spawn(async move {
         loop {
@@ -84,24 +96,37 @@ pub async fn spawn_dht() -> DhtHandle {
                         let _ = swarm.behaviour_mut().put_record(Record::new(Key::new(&key), value), Quorum::One);
                     }
                     DhtCmd::Get { key, resp } => {
-                        let _ = swarm.behaviour_mut().get_record(Key::new(&key), Quorum::One);
-                        // Response will be sent via KademliaEvent below.
-                        // Store sender in behaviour not implemented for brevity.
-                        drop(resp);
+                        let query_id = swarm.behaviour_mut().get_record(Key::new(&key), Quorum::One);
+                        pending_get.insert(query_id, resp);
                     }
                     DhtCmd::Bootstrap(addr) => {
                         let _ = swarm.dial(addr);
                     }
                 },
                 event = swarm.select_next_some() => match event {
-                    SwarmEvent::Behaviour(libp2p::kad::KademliaEvent::OutboundQueryCompleted { .. }) => {}
+                    SwarmEvent::Behaviour(libp2p::kad::KademliaEvent::OutboundQueryCompleted { id, result, .. }) => {
+                        if let Some(sender) = pending_get.remove(&id) {
+                            let value = match result {
+                                libp2p::kad::QueryResult::GetRecord(Ok(r)) => {
+                                    r.records.first().map(|rec| rec.record.value.clone())
+                                },
+                                _ => None,
+                            };
+                            let _ = sender.send(value);
+                        }
+                    }
                     _ => {}
                 }
             }
         }
     });
 
-    DhtHandle { tx }
+    // Start listening on random local TCP port.
+    use libp2p::Multiaddr;
+    let listen_addr: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();
+    swarm.listen_on(listen_addr.clone()).expect("listen");
+
+    DhtHandle { tx, listen_addr }
 }
 
 // Fallback stub when the `dht` feature is disabled.
