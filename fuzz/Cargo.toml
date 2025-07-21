@@ -10,12 +10,31 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 
-[dependencies.nyx-core]
-path = ".."
+# Added Nyx crates and Tokio runtime for additional fuzz targets
+nyx-core = { path = ".." }
+nyx-mix = { path = "../nyx-mix" }
+nyx-crypto = { path = "../nyx-crypto" }
+
+# Tokio needed to spin a runtime inside fuzz target
+tokio = { version = "1", features = ["rt", "macros"] }
 
 [[bin]]
 name = "fuzz_target_1"
 path = "fuzz_targets/fuzz_target_1.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "noise_handshake"
+path = "fuzz_targets/noise_handshake.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cmix_batch"
+path = "fuzz_targets/cmix_batch.rs"
 test = false
 doc = false
 bench = false
