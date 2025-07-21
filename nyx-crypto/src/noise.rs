@@ -17,7 +17,8 @@ use zeroize::Zeroize;
 #[cfg(not(feature = "pq_only"))]
 /// Initiator generates ephemeral X25519 key.
 pub fn initiator_generate() -> (PublicKey, EphemeralSecret) {
-    let secret = EphemeralSecret::random_from_rng(OsRng);
+    let mut rng = OsRng;
+    let secret = EphemeralSecret::random_from_rng(&mut rng);
     let public = PublicKey::from(&secret);
     (public, secret)
 }
@@ -25,7 +26,8 @@ pub fn initiator_generate() -> (PublicKey, EphemeralSecret) {
 #[cfg(not(feature = "pq_only"))]
 /// Responder process for X25519.
 pub fn responder_process(in_pub: &PublicKey) -> (PublicKey, SharedSecret) {
-    let secret = EphemeralSecret::random_from_rng(OsRng);
+    let mut rng = OsRng;
+    let secret = EphemeralSecret::random_from_rng(&mut rng);
     let public = PublicKey::from(&secret);
     let shared = secret.diffie_hellman(in_pub);
     (public, shared)
@@ -106,7 +108,8 @@ pub mod hybrid {
     /// Initiator generates X25519 ephemeral and Kyber encapsulation.
     pub fn initiator_step(pk_kyber: &pq::PublicKey) -> (PublicKey, EphemeralSecret, pq::Ciphertext, SessionKey) {
         let (ct, kyber_key) = pq::initiator_encapsulate(pk_kyber);
-        let secret = EphemeralSecret::random_from_rng(OsRng);
+        let mut rng = OsRng;
+        let secret = EphemeralSecret::random_from_rng(&mut rng);
         let public = PublicKey::from(&secret);
         // Combine secrets later when responder key known; here return Kyber part as session key placeholder.
         let k = kyber_key;
@@ -118,7 +121,8 @@ pub mod hybrid {
         // Kyber part
         let kyber_key = pq::responder_decapsulate(ct, sk_kyber);
         // X25519 part
-        let secret = EphemeralSecret::random_from_rng(OsRng);
+        let mut rng = OsRng;
+        let secret = EphemeralSecret::random_from_rng(&mut rng);
         let public = PublicKey::from(&secret);
         let x_key = secret.diffie_hellman(init_pub);
         // Combine

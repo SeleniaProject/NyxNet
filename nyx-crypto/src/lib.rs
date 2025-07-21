@@ -11,7 +11,8 @@ use zeroize::Zeroize;
 
 pub mod noise;
 pub mod kdf;
-pub mod hpke;
+// hpke temporarily disabled
+// pub mod hpke;
 pub mod hybrid;
 pub mod aead;
 

@@ -33,6 +33,7 @@
 //! returns `Err(AeadError::Replay)`.
 
 use chacha20poly1305::{aead::{Aead, KeyInit, Payload}, ChaCha20Poly1305, Key, Nonce};
+use crate::noise::SessionKey;
 use thiserror::Error;
 use zeroize::Zeroize;
 

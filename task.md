@@ -1,13 +1,13 @@
 # Nyx Project Outstanding Tasks / 未実装タスク一覧
 
-## v1.0 未実装タスク
-- [x] Noise_Nyx フレーム暗号化フル実装（ChaCha20-Poly1305 / BLAKE3、0-RTT 再生防止）
-- [x] Capability Negotiation (CBOR SETTINGS) の送受信実装および `UNSUPPORTED_CAP` (0x07) クローズ処理
-- [x] Verifiable Delay Mix (cMix) 本番統合（RSA Accumulator + Wesolowski VDF 実装）
-- [x] Plugin Registry の永続化と実行時権限取り消し API
-- [x] Low Power Mode 時の Cover Traffic λ 動的調整（Android / iOS 連携）
-- [x] Hybrid KEM の HPKE exporter API 最終仕様への統合
-- [x] Formal Verification: TLA+ モデルを Multipath / Plugin 拡張点含め更新
-- [x] Windows 向け `raptorq` SIMD アクセラレーション最適化 & fallback 実装
-- [x] Conformance Test Suite 拡充：Capability Negotiation / cMix / Low Power Mode ケース追加
-- [x] ドキュメント更新：v1.0 完全仕様 (英語版) の最終化と公開 
+## v1.0 Outstanding Tasks / 未実装タスク
+- [x] 遅延可変カバートラフィック λ の統計匿名性評価と最適化
+- [x] Low Power Mode Push 経路 (FCM / APNS) の実装
+- [x] Hybrid KEM の再鍵交換パス（定期キー更新）
+- [ ] PATH_CHALLENGE/RESPONSE の再試行 & 損失耐性ロジック
+- [ ] エラーコード拡張のテレメトリ / CLI 伝搬
+- [ ] Helm Chart の Production Grade 設定（PDB, HPA, リソース制限 等）
+- [ ] DHT ルート完全実装 & 障害試験
+- [ ] cMix 実環境長期試験 & VDF パラメータ調整
+- [ ] Formal Verification モデルに LowPower / Multipath 追加入り
+- [ ] WASM ブラウザ版 Push 通知対応 

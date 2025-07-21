@@ -23,6 +23,9 @@ pub mod tcp_fallback;
 pub use tcp_fallback::{TcpEncapListener, TcpEncapConnection};
 pub mod teredo;
 
+pub mod path_validation;
+pub use path_validation::PathValidator;
+
 /// Maximum datagram size (aligned with 1280B spec).
 const MAX_DATAGRAM: usize = 1280;
 

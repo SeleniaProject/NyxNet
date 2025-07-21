@@ -14,7 +14,8 @@ tracing = "0.1"
 async-trait = "0.1"
 nyx-core = { path = "../nyx-core" }
 nyx-mix = { path = "../nyx-mix" }
-quinn = { version = "0.11", default-features = false, features = ["rustls", "runtime-tokio", "udp"] }
+nyx-stream = { path = "../nyx-stream" }
+quinn = { version = "0.11", default-features = false, features = ["rustls", "runtime-tokio"] }
 rcgen = "0.13"
 futures = "0.3"
 
