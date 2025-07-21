@@ -65,9 +65,11 @@ pub mod kyber {
     //! is derived from the Kyber shared secret via the common HKDF wrapper to
     //! ensure uniform key derivation logic across classic and PQ modes.
 
-    use pqcrypto_kyber::kyber1024::{keypair, encapsulate, decapsulate, PublicKey, SecretKey, Ciphertext, SharedSecret};
+    use pqcrypto_kyber::kyber1024::{keypair, encapsulate, decapsulate, SharedSecret};
     use crate::kdf::{hkdf_expand, KdfLabel};
     use pqcrypto_traits::kem::SharedSecret as _; // bring trait for as_bytes
+    // Re-export commonly used Kyber types for external modules (Hybrid handshake, etc.).
+    pub use pqcrypto_kyber::kyber1024::{PublicKey, SecretKey, Ciphertext};
 
     /// Generate a Kyber1024 keypair for the responder.
     pub fn responder_keypair() -> (PublicKey, SecretKey) {
@@ -113,11 +115,13 @@ pub mod hybrid {
     use super::*;
     use super::kyber; // Kyber helpers
     use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
+    use rand_core_06::OsRng;
 
     /// Initiator generates X25519 ephemeral and Kyber encapsulation.
     pub fn initiator_step(pk_kyber: &kyber::PublicKey) -> (PublicKey, EphemeralSecret, kyber::Ciphertext, SessionKey) {
         let (ct, kyber_key) = kyber::initiator_encapsulate(pk_kyber);
-        let secret = EphemeralSecret::random();
+        let mut rng = OsRng;
+        let secret = EphemeralSecret::random_from_rng(&mut rng);
         let public = PublicKey::from(&secret);
         // Combine secrets later when responder key known; here return Kyber part as session key placeholder.
         let k = kyber_key;
@@ -129,7 +133,8 @@ pub mod hybrid {
         // Kyber part
         let kyber_key = kyber::responder_decapsulate(ct, sk_kyber);
         // X25519 part
-        let secret = EphemeralSecret::random();
+        let mut rng = OsRng;
+        let secret = EphemeralSecret::random_from_rng(&mut rng);
         let public = PublicKey::from(&secret);
         let x_key = secret.diffie_hellman(init_pub);
         // Combine
