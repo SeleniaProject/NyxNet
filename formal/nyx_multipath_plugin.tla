@@ -20,6 +20,7 @@ CONSTANTS CapSet    \* Universe of capability IDs (Nat)
 VARIABLES path,           \* Sequence of selected NodeIds
           C_req, C_sup,   \* Sets of capabilities (subset CapSet)
           state,          \* "Init" | "Open" | "Close"
+          power,          \* "Normal" | "LowPower"
           error           \* None | 7 (UNSUPPORTED_CAP)
 
 Init == /\ state = "Init"
@@ -27,28 +28,34 @@ Init == /\ state = "Init"
         /\ Len(path) \in 3..7
         /\ C_req \subseteq CapSet
         /\ C_sup \subseteq CapSet
+        /\ power = "Normal"
         /\ error = None
 
 ChoosePath == /\ state = "Init"
-               /\ path' = path \* (fixed once)
-               /\ UNCHANGED <<C_req, C_sup, error, state>>
+               /\ path' = path
+               /\ UNCHANGED <<C_req, C_sup, error, state, power>>
 
 NegotiateOK == /\ state = "Init"
                /\ C_req \subseteq C_sup
                /\ state' = "Open"
-               /\ UNCHANGED <<path, C_req, C_sup, error>>
+               /\ UNCHANGED <<path, C_req, C_sup, error, power>>
 
 NegotiateFail == /\ state = "Init"
                  /\ ~(C_req \subseteq C_sup)
                  /\ state' = "Close"
                  /\ error' = 7
-                 /\ UNCHANGED <<path, C_req, C_sup>>
+                 /\ UNCHANGED <<path, C_req, C_sup, power>>
+
+EnterLowPower == /\ state = "Open"
+                 /\ power = "Normal"
+                 /\ power' = "LowPower"
+                 /\ UNCHANGED <<path, C_req, C_sup, state, error>>
 
 (* No further state change after Open / Close for this model *)
 Terminal == /\ state \in {"Open", "Close"}
-            /\ UNCHANGED <<path, C_req, C_sup, state, error>>
+            /\ UNCHANGED <<path, C_req, C_sup, state, power, error>>
 
-Next == ChoosePath \/ NegotiateOK \/ NegotiateFail \/ Terminal
+Next == ChoosePath \/ NegotiateOK \/ NegotiateFail \/ EnterLowPower \/ Terminal
 
 Spec == Init /\ [][Next]_<<path, C_req, C_sup, state, error>>
 
@@ -60,11 +67,13 @@ Inv_PathLen  == state # "Init" => Len(path) \in 3..7
 Inv_NoDup    == state # "Init" => \A i, j \in 1..Len(path): i # j => path[i] # path[j]
 Inv_Error    == state = "Close" => error = 7
 Inv_NoError  == state = "Open"  => error = None
+Inv_PowerState == power = "LowPower" => state = "Open"
 
 THEOREM Spec => []Inv_PathLen
 THEOREM Spec => []Inv_NoDup
 THEOREM Spec => []Inv_Error
 THEOREM Spec => []Inv_NoError
+THEOREM Spec => []Inv_PowerState
 
 (*************************************************************************)
 (* Liveness: eventually we leave Init                                     *)
