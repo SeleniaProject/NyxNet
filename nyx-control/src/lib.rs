@@ -6,6 +6,26 @@ use futures::StreamExt;
 use libp2p::{identity, kad::{store::MemoryStore, Kademlia, Quorum, record::{Key, Record}}, swarm::SwarmEvent, PeerId, Multiaddr};
 use tokio::sync::{mpsc, oneshot};
 use std::collections::HashMap;
+use nyx_core::{NyxConfig};
+
+/// Aggregates control-plane handles (DHT + optional Push service).
+#[derive(Clone)]
+pub struct ControlManager {
+    pub dht: DhtHandle,
+    pub push: Option<PushHandle>,
+}
+
+/// Initialize control plane based on runtime configuration.
+///
+/// * Spawns Kademlia DHT node (feature gated)
+/// * Starts background push service when `cfg.push` is provided
+///
+/// This async helper is intended to be invoked by the Nyx daemon at startup.
+pub async fn init_control(cfg: &NyxConfig) -> ControlManager {
+    let dht = spawn_dht().await;
+    let push = cfg.push.clone().map(spawn_push_service);
+    ControlManager { dht, push }
+}
 
 pub mod settings;
 pub mod probe;
@@ -50,11 +70,16 @@ impl DhtHandle {
         let _ = self.tx.send(DhtCmd::Bootstrap(addr)).await;
     }
 
-    /// Return the primary listen address of this node.
+    // Return the primary listen address when DHT is enabled.
+    #[cfg(feature = "dht")]
     #[must_use]
-    pub fn listen_addr(&self) -> &Multiaddr {
+    pub fn listen_addr(&self) -> &libp2p::Multiaddr {
         &self.listen_addr
     }
+
+    #[cfg(not(feature = "dht"))]
+    #[must_use]
+    pub fn listen_addr(&self) {}
 
     #[cfg(not(feature = "dht"))]
     pub async fn put(&self, _key: &str, _val: Vec<u8>) {}
