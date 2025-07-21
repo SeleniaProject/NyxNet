@@ -1,0 +1,30 @@
+name: TLA+ Model Check CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  modelcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: "temurin"
+          java-version: "17"
+
+      - name: Download TLA+ tools
+        run: |
+          curl -L -o tla2tools.jar https://tla.msr-inria.inria.fr/tlatoolbox/resources/tla2tools.jar
+
+      - name: Run TLC on models
+        run: |
+          for file in formal/*.tla; do
+            echo "Running TLC on $file";
+            java -cp tla2tools.jar tlc2.TLC -deadlock -cleanup "$file";
+          done 
