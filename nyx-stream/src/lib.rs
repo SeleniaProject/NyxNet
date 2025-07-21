@@ -14,6 +14,8 @@ mod scheduler;
 mod plugin_registry;
 mod plugin_geostat;
 mod capability;
+mod cap_negotiator;
+pub use cap_negotiator::perform_cap_negotiation;
 
 #[cfg(feature = "mpr_experimental")]
 mod mpr;
@@ -40,6 +42,7 @@ pub use capability::{Capability, FLAG_REQUIRED, encode_caps, decode_caps, negoti
 
 pub use management::{PingFrame, PongFrame, build_ping_frame, parse_ping_frame, build_pong_frame, parse_pong_frame,
     CloseFrame, build_close_frame, parse_close_frame,
+    build_close_unsupported_cap,
     PathChallengeFrame, PathResponseFrame, build_path_challenge_frame, build_path_response_frame, parse_path_challenge_frame, parse_path_response_frame,
     Setting, SettingsFrame, build_settings_frame, parse_settings_frame};
 

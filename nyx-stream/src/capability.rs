@@ -21,6 +21,28 @@
 use serde::{Deserialize, Serialize};
 use serde_bytes::ByteBuf;
 
+/// Capability IDs this implementation supports.  These should be kept in
+/// sync with any new features added to the Nyx protocol.
+/// For the reference implementation we reserve ID 0x0001 = "core", which is
+/// always required, and 0x0002 = "plugin_framework" which is optional.
+pub const LOCAL_CAP_IDS: &[u32] = &[0x0001, 0x0002];
+
+/// Build the list of capabilities this node will advertise in the first
+/// CRYPTO frame during handshake.  Currently all capabilities are exported
+/// as *optional* except the foundational `core` capability (0x0001).
+pub fn local_caps() -> Vec<Capability> {
+    LOCAL_CAP_IDS
+        .iter()
+        .map(|&id| {
+            if id == 0x0001 {
+                Capability::required(id)
+            } else {
+                Capability::optional(id)
+            }
+        })
+        .collect()
+}
+
 /// Bit flag indicating the capability is *required*.
 pub const FLAG_REQUIRED: u8 = 0x01;
 

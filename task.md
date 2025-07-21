@@ -2,7 +2,7 @@
 
 - [x] HPKE モジュールの公開と Noise ハンドシェイク統合、およびユニットテスト追加
 - [x] Post-Quantum Only ビルドフラグ (`pq_only`) と Kyber/Bike 切替ロジックの実装
-- [ ] Capability ネゴシエーション（CBOR）の Noise 層統合と CLOSE(0x07) エラーハンドリング
+- [x] Capability ネゴシエーション（CBOR）の Noise 層統合と CLOSE(0x07) エラーハンドリング
 - [ ] cMix RSA アキュムレータ統合および証明検証パスの実装
 - [ ] Push Gateway を `nyxd` に統合し Low Power Mode ウェイクアップ経路を確立
 - [ ] Teredo IPv6 Fallback 経路の Transport 層および Multipath スケジューラ統合

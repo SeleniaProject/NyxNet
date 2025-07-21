@@ -143,3 +143,10 @@ pub fn parse_settings_frame(input: &[u8]) -> IResult<&[u8], SettingsFrame> {
 
 /// Error code for unsupported required capability (Nyx §8)
 pub const ERR_UNSUPPORTED_CAP: u16 = 0x07; 
+
+/// Convenience: build CLOSE payload for unsupported required capability.
+pub fn build_close_unsupported_cap(cap_id: u32) -> Vec<u8> {
+    let mut reason = Vec::with_capacity(4);
+    reason.extend_from_slice(&cap_id.to_be_bytes());
+    build_close_frame(ERR_UNSUPPORTED_CAP, &reason)
+} 
