@@ -9,9 +9,7 @@ use reed_solomon_erasure::{galois_8::ReedSolomon, Error as RSError};
 pub mod timing;
 pub use timing::{TimingObfuscator, TimingConfig, Packet};
 
-#[cfg(feature = "raptorq")]
 pub mod raptorq;
-#[cfg(feature = "raptorq")]
 pub use raptorq::{RaptorQCodec, AdaptiveRaptorQ};
 
 pub const DATA_SHARDS: usize = 10;
