@@ -15,7 +15,7 @@ nyx-core = { path = "../nyx-core" }
 tokio = { version = "1.37", features = ["time", "sync", "rt"] }
 rand = "0.8"
 rand_distr = "0.4"
-raptorq = "0.3"
+raptorq = "2"
 rayon = { version = "1.10", optional = true }
 
 [target.'cfg(windows)'.dependencies]

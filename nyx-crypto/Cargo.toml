@@ -15,7 +15,7 @@ bench = ["criterion"]
 hybrid = ["pq"]
 
 [dependencies]
-x25519-dalek = "2.0"
+x25519-dalek = { version = "2.0", features=["u64_backend"] }
 blake3 = { version = "1.5", features = ["pure"] }
 sha2 = "0.10"
 hkdf = "0.12"
@@ -23,7 +23,7 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 criterion = { version = "0.5", optional = true }
 zeroize = { version = "1", features=["zeroize_derive"] }
 pqcrypto-traits = { version = "0.3", optional = true, package = "pqcrypto-traits" }
-hpke = { version = "0.10", default-features = false, features=["chacha20poly1305"] }
+hpke = "0.10"
 chacha20poly1305 = { version = "0.10", default-features = false, features=["alloc"] }
 thiserror = "1"
 
@@ -35,4 +35,3 @@ pqcrypto-kyber = { version = "0.7", optional = true, package = "pqcrypto-kyber",
 
 [dev-dependencies]
 hex-literal = "0.4"
-pqcrypto-bike = { version = "0.7", optional = true, package = "pqcrypto-bike" }
