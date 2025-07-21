@@ -19,6 +19,9 @@ kyber = ["pqcrypto-kyber", "pqcrypto-traits"]
 bike = ["pqcrypto-traits"]
 
 # Convenience flag: build solely with PQ algorithms (Kyber by default)
+hybrid = ["classic", "kyber"]
+
+# Convenience flag: build solely with PQ algorithms (Kyber by default)
 pq_only = ["kyber"]
 
 # Enable criterion benchmarks
