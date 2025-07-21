@@ -18,6 +18,9 @@ pub mod larmix;
 pub use larmix::{Prober, LARMixPlanner};
 pub mod accumulator;
 pub mod vdf;
+pub mod vdf_calib;
+pub use vdf_calib::calibrate_t;
+pub mod anonymity;
 
 /// Candidate node with runtime metrics for weighted selection.
 #[derive(Debug, Clone, Copy)]
