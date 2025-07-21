@@ -15,6 +15,7 @@ members = [
     "nyx-stream",
     "nyx-telemetry", # Prometheus exporter crate
     "nyx-control",
+    "nyx-cli",
     "nyx-sdk-wasm",
     "nyx-conformance",
     "build-protoc",

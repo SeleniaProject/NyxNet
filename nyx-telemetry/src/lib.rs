@@ -13,6 +13,7 @@ use hyper::{Body, Method, Request, Response, Server};
 use hyper::service::{make_service_fn, service_fn};
 use once_cell::sync::Lazy;
 use prometheus::{Encoder, TextEncoder, IntCounter, register_int_counter};
+use prometheus::{IntCounterVec, register_int_counter_vec};
 use tokio::task::JoinHandle;
 use tracing::{error, info};
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
@@ -32,10 +33,25 @@ static REQUEST_TOTAL: Lazy<IntCounter> = Lazy::new(|| {
     register_int_counter!("nyx_exporter_requests_total", "Total HTTP requests to Nyx exporter").expect("metric can be registered")
 });
 
+/// Total errors grouped by Nyx extended error code (hex string).
+static ERROR_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    register_int_counter_vec!(
+        "nyx_error_total",
+        "Total Nyx errors grouped by extended error code",
+        &["code"]
+    ).expect("metric can be registered")
+});
+
 /// Increment the internal request counter.
 #[inline]
 pub fn inc_request_total() {
     REQUEST_TOTAL.inc();
+}
+
+/// Record occurrence of an extended Nyx error code.
+pub fn record_error(code: u16) {
+    let label = format!("{:04x}", code);
+    ERROR_TOTAL.with_label_values(&[&label]).inc();
 }
 
 /// Initialize Bunyan-formatted `tracing` subscriber for structured JSON logs.

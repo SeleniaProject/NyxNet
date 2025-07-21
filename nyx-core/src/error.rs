@@ -27,5 +27,24 @@ pub enum NyxError {
     UnsupportedCap(u32),
 }
 
+impl NyxError {
+    /// Map this error variant to Nyx extended error code (spec §20).
+    #[must_use]
+    pub fn code(&self) -> u16 {
+        match self {
+            NyxError::UnsupportedCap(_) => 0x07, // ERR_UNSUPPORTED_CAP
+            _ => 0x06, // INTERNAL_ERROR by default
+        }
+    }
+
+    /// Record this error via telemetry metrics (if telemetry is linked).
+    pub fn record(&self) {
+        // Avoid hard dependency when nyx-telemetry not present.
+        #[cfg(feature = "telemetry")] {
+            nyx_telemetry::record_error(self.code());
+        }
+    }
+}
+
 /// Convenient alias for results throughout Nyx crates.
 pub type NyxResult<T> = Result<T, NyxError>; 

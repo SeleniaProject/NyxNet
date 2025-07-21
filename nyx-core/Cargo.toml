@@ -18,6 +18,14 @@ unic-langid = "0.9"
 once_cell = "1.19"
 serde_cbor = "0.11"
 
+# Optional telemetry integration
+nyx-telemetry = { path = "../nyx-telemetry", optional = true }
+
+[features]
+default = []
+# Enable automatic error metric recording.
+telemetry = ["nyx-telemetry"]
+
 [target.'cfg(target_os = "linux")'.dependencies]
 seccomp = "0.1"
 anyhow = "1"

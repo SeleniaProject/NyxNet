@@ -1,0 +1,13 @@
+[package]
+name = "nyx-cli"
+version = "0.1.0"
+edition = "2021"
+
+description = "Nyx command line interface utilities"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"] }
+regex = "1.10"
+anyhow = "1" 

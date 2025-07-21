@@ -4,7 +4,7 @@
 - [x] 遅延可変カバートラフィック λ の統計匿名性評価と最適化
 - [x] Low Power Mode Push 経路 (FCM / APNS) の実装
 - [x] Hybrid KEM の再鍵交換パス（定期キー更新）
-- [ ] PATH_CHALLENGE/RESPONSE の再試行 & 損失耐性ロジック
+- [x] PATH_CHALLENGE/RESPONSE の再試行 & 損失耐性ロジック
 - [ ] エラーコード拡張のテレメトリ / CLI 伝搬
 - [ ] Helm Chart の Production Grade 設定（PDB, HPA, リソース制限 等）
 - [ ] DHT ルート完全実装 & 障害試験
