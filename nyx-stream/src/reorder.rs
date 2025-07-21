@@ -49,6 +49,16 @@ impl<T> ReorderBuffer<T> {
         }
         ready
     }
+
+    /// Pop a single in-order packet if available.
+    pub fn pop_front(&mut self) -> Option<T> {
+        if let Some(pkt) = self.window.remove(&self.next_seq) {
+            self.next_seq += 1;
+            Some(pkt)
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg(test)]

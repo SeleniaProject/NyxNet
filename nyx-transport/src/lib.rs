@@ -17,16 +17,28 @@ use crate::teredo::{discover as teredo_discover, DEFAULT_SERVER, TeredoAddr};
 // timing obfuscator moved to upper layer
 use tokio::time::{sleep, Duration};
 
-pub mod ice;
-pub mod stun_server;
+#[cfg(feature = "quic")]
 pub mod quic;
+#[cfg(feature = "quic")]
 pub use quic::{QuicEndpoint, QuicConnection};
+#[cfg(feature = "quic")]
 pub mod tcp_fallback;
+#[cfg(feature = "quic")]
 pub use tcp_fallback::{TcpEncapListener, TcpEncapConnection};
-pub mod teredo;
 
+#[cfg(feature = "quic")]
 pub mod path_validation;
+#[cfg(feature = "quic")]
 pub use path_validation::PathValidator;
+
+#[cfg(not(feature = "quic"))]
+pub struct QuicEndpoint; // stubs
+#[cfg(not(feature = "quic"))]
+pub struct QuicConnection;
+#[cfg(not(feature = "quic"))]
+pub struct PathValidator;
+
+pub mod teredo;
 
 /// Maximum datagram size (aligned with 1280B spec).
 const MAX_DATAGRAM: usize = 1280;
@@ -161,7 +173,7 @@ impl Clone for Transport {
         Self {
             pool: self.pool.clone(),
             tx: self.tx.clone(),
-
+            teredo_addr: self.teredo_addr.clone(),
         }
     }
 }

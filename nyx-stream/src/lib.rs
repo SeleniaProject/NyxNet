@@ -6,14 +6,17 @@ pub mod congestion;
 pub mod builder;
 pub mod tx;
 pub mod stream_frame;
+#[cfg(feature = "plugin")]
 pub mod plugin;
 pub mod management;
 pub mod settings;
 mod localized;
 mod scheduler;
+#[cfg(feature = "plugin")]
 mod plugin_registry;
+#[cfg(feature = "plugin")]
 mod plugin_geostat;
-mod capability;
+pub mod capability;
 mod cap_negotiator;
 pub use cap_negotiator::perform_cap_negotiation;
 
@@ -35,9 +38,18 @@ mod receiver;
 pub use receiver::MultipathReceiver;
 mod sequencer;
 pub use sequencer::Sequencer;
+#[cfg(feature = "plugin")]
 pub use plugin::PluginHeader;
+#[cfg(feature = "plugin")]
 pub use plugin_registry::{PluginRegistry, PluginInfo, Permission};
+#[cfg(feature = "plugin")]
 pub use plugin_geostat::{GeoStat, GEO_PLUGIN_ID, plugin_info};
+#[cfg(not(feature = "plugin"))]
+pub struct PluginHeader;
+#[cfg(not(feature = "plugin"))]
+pub struct PluginInfo;
+#[cfg(not(feature = "plugin"))]
+pub struct PluginRegistry;
 pub use capability::{Capability, FLAG_REQUIRED, encode_caps, decode_caps, negotiate, NegotiationError};
 
 pub use management::{PingFrame, PongFrame, build_ping_frame, parse_ping_frame, build_pong_frame, parse_pong_frame,

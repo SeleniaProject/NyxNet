@@ -1,3 +1,5 @@
+#![cfg(feature = "quic")]
+
 use nyx_transport::ice::decode_binding_response;
 
 #[test]

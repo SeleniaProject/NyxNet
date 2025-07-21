@@ -29,7 +29,7 @@ pub struct Ciphertext {
 /// Encapsulate hybrid secret for recipient keys.
 pub fn encapsulate<R: RngCore + CryptoRng>(rng: &mut R, pq_pk: &[u8], algo: PqAlgo, x25519_pk: &XPublic) -> (Ciphertext, Vec<u8>) {
     // X25519 ephemeral
-    let mut eph_priv = StaticSecret::random_from_rng(rng);
+    let eph_priv = StaticSecret::random();
     let eph_pub = XPublic::from(&eph_priv);
     let dh = eph_priv.diffie_hellman(x25519_pk);
 
@@ -122,7 +122,7 @@ mod tests_rekey {
     #[test]
     fn hybrid_rekey_roundtrip() {
         // Generate dummy keys
-        let x_sk_b = StaticSecret::random_from_rng(&mut OsRng);
+        let x_sk_b = StaticSecret::random();
         let x_pk_b = XPublic::from(&x_sk_b);
 
         let (pq_pk_b, pq_sk_b) = pqcrypto_kyber::kyber1024::keypair();

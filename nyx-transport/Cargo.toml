@@ -6,6 +6,10 @@ edition = "2021"
 description = "Nyx UDP transport adapter with NAT traversal utilities."
 license = "MIT OR Apache-2.0"
 
+[features]
+default = []
+quic = []
+
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
 rand = "0.8"
@@ -16,9 +20,10 @@ async-trait = "0.1"
 nyx-core = { path = "../nyx-core" }
 nyx-mix = { path = "../nyx-mix" }
 nyx-stream = { path = "../nyx-stream" }
-quinn = { version = "0.11", default-features = false, features = ["rustls", "runtime-tokio"] }
-rcgen = "0.13"
+quinn = { version = "0.11", default-features = false, features = ["rustls", "runtime-tokio"], optional = true }
+rcgen = { version = "0.13", optional = true }
 futures = "0.3"
+anyhow = "1"
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

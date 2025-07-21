@@ -18,7 +18,7 @@
 //! assert_eq!(data, rec);
 //! ```
 
-use raptorq::{encoder::Encoder, decoder::Decoder, EncodingPacket, ObjectTransmissionInformation};
+use raptorq::{Encoder, Decoder, EncodingPacket, ObjectTransmissionInformation};
 
 #[cfg(windows)]
 use rayon::prelude::*;
@@ -42,8 +42,8 @@ impl RaptorQCodec {
     /// according to the configured redundancy ratio.
     #[must_use]
     pub fn encode(&self, data: &[u8]) -> Vec<EncodingPacket> {
-        let oti = ObjectTransmissionInformation::with_defaults(data.len() as u64, SYMBOL_SIZE as u16);
-        let enc = Encoder::with_encoding_block_size(data, &oti).expect("encoder");
+        // Build encoder with default parameters using MTU (=symbol size).
+        let enc = Encoder::with_defaults(data, SYMBOL_SIZE as u16);
         // Windows SIMD optimisation: build source packets in parallel to leverage CPU cores.
         let mut packets: Vec<EncodingPacket> = {
             #[cfg(windows)]
@@ -67,10 +67,14 @@ impl RaptorQCodec {
         if packets.is_empty() {
             return None;
         }
-        let oti = packets[0].oti();
-        let mut dec = Decoder::new(oti).ok()?;
+        // Reconstruct OTI from total length (encoded within packet meta).
+        let total_len = packets[0].payload_range().end as u64; // approximate
+        let oti = ObjectTransmissionInformation::with_defaults(total_len, SYMBOL_SIZE as u16);
+        let mut dec = Decoder::new(oti);
         for p in packets {
-            dec.insert(p.clone()).ok()?;
+            if dec.insert(p.clone()).is_err() {
+                return None;
+            }
         }
         dec.decode().ok()
     }

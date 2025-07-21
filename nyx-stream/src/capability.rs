@@ -69,7 +69,8 @@ impl Capability {
 
 /// CBOR encode capability list.
 pub fn encode_caps(caps: &[Capability]) -> Vec<u8> {
-    serde_cbor::to_vec(caps).expect("CBOR encode")
+    // Convert to Vec to satisfy Sized bound in serde_cbor::to_vec.
+    serde_cbor::to_vec(&caps.to_vec()).expect("CBOR encode")
 }
 
 /// CBOR decode capability list.

@@ -24,6 +24,7 @@ rayon = { version = "1.10" }
 [features]
 # Enable C/assembly SIMD acceleration in reed-solomon-erasure when available.
 simd = ["reed-solomon-erasure/simd-accel"]
+raptorq = []
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

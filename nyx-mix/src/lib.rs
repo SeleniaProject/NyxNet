@@ -7,8 +7,8 @@
 use nyx_core::NodeId;
 use rand::{seq::SliceRandom, thread_rng};
 
-mod cmix;
-pub use cmix::{CmixController, CmixBatch, verify_batch};
+pub mod cmix;
+pub use cmix::{CmixController, verify_batch};
 
 pub mod cover;
 pub use cover::CoverGenerator;

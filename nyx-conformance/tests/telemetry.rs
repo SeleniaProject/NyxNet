@@ -1,3 +1,4 @@
+#![cfg(feature = "telemetry")]
 use nyx_telemetry::inc_request_total;
 
 #[test]

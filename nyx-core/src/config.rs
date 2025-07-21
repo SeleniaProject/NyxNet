@@ -11,6 +11,16 @@ use notify::{RecommendedWatcher, RecursiveMode, Result as NotifyResult, Watcher,
 
 use crate::NyxError;
 
+/// Push notification provider configuration used for Low Power Mode wake-up.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+pub enum PushProvider {
+    /// Firebase Cloud Messaging – uses legacy server key authentication.
+    Fcm { server_key: String },
+    /// Apple Push Notification Service – uses JWT authentication token.
+    Apns { auth_token: String },
+}
+
 /// Primary configuration structure shared across Nyx components.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -24,6 +34,9 @@ pub struct NyxConfig {
     /// UDP listen port for incoming Nyx traffic.
     #[serde(default = "default_listen_port")]
     pub listen_port: u16,
+
+    /// Optional push notification provider (FCM / APNS). When `None`, push support is disabled.
+    pub push: Option<PushProvider>,
 }
 
 impl Default for NyxConfig {
@@ -32,6 +45,7 @@ impl Default for NyxConfig {
             node_id: None,
             log_level: Some("info".to_string()),
             listen_port: default_listen_port(),
+            push: None,
         }
     }
 }

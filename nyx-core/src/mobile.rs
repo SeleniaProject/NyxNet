@@ -7,6 +7,9 @@
 //! call `UIDevice.batteryState` through the `objc` runtime. Desktop builds
 //! fallback to `Unknown`.
 
+use tokio_stream::{wrappers::ReceiverStream, Stream};
+use tokio::sync::watch;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BatteryState {
     Charging,
@@ -19,6 +22,28 @@ pub enum BatteryState {
 #[must_use]
 pub fn battery_state() -> BatteryState {
     platform::battery_state()
+}
+
+/// High-level power state used by higher layers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MobilePowerState {
+    /// Screen on / foreground, device plugged in or on battery but active.
+    Foreground,
+    /// Screen is off and device on battery (low-power).
+    ScreenOff,
+    /// Device is connected to external power and charging.
+    Charging,
+    /// Device running on battery and discharging (screen on).
+    Discharging,
+}
+
+/// Subscribe to power state changes (stubbed on desktop).
+pub fn subscribe_power_events() -> impl Stream<Item = MobilePowerState> {
+    // Desktop platforms: emit a single Foreground and then end.
+    let (tx, rx) = watch::channel(MobilePowerState::Foreground);
+    // Send initial state; no further updates in stub.
+    let _ = tx.send(MobilePowerState::Foreground);
+    ReceiverStream::new(rx)
 }
 
 #[cfg(target_os = "android")]

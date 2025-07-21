@@ -64,6 +64,7 @@ pub struct AdaptiveCoverGenerator {
     manual_low_power: bool,
     anonymity_evaluator: AnonymityEvaluator,
     anonymity_target: f64,
+    power_state: nyx_core::mobile::MobilePowerState,
 }
 
 impl AdaptiveCoverGenerator {
@@ -84,6 +85,19 @@ impl AdaptiveCoverGenerator {
             manual_low_power: false,
             anonymity_evaluator: AnonymityEvaluator::new(ANON_WINDOW_SEC),
             anonymity_target: anonymity_target.clamp(0.0, 1.0),
+            power_state: nyx_core::mobile::MobilePowerState::Foreground,
+        }
+    }
+
+    /// Apply external power state updates (from mobile platform layer).
+    pub fn apply_power_state(&mut self, state: nyx_core::mobile::MobilePowerState) {
+        self.power_state = state;
+        // If entering low-power conditions, reduce λ immediately.
+        let low = matches!(state, nyx_core::mobile::MobilePowerState::ScreenOff | nyx_core::mobile::MobilePowerState::Discharging);
+        if low {
+            self.gen = CoverGenerator::new(self.base_lambda * 0.1);
+        } else {
+            self.gen = CoverGenerator::new(self.base_lambda);
         }
     }
 
@@ -95,7 +109,7 @@ impl AdaptiveCoverGenerator {
     /// Produce next delay. Internal λ adjusted each call.
     pub fn next_delay(&mut self) -> Duration {
         // Low Power Mode: either explicit flag or battery discharging. Scale λ to 0.1×.
-        let low_power_detected = self.manual_low_power || matches!(battery_state(), BatteryState::Discharging);
+        let low_power_detected = self.manual_low_power || matches!(self.power_state, nyx_core::mobile::MobilePowerState::ScreenOff | nyx_core::mobile::MobilePowerState::Discharging);
         if low_power_detected {
             self.gen = CoverGenerator::new(self.base_lambda * 0.1);
         }

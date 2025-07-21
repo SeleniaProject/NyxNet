@@ -1,11 +1,14 @@
-use nyx_mix::AdaptiveCoverGenerator;
+use nyx_mix::adaptive::AdaptiveCoverGenerator;
+use nyx_core::mobile::MobilePowerState::*;
 
 #[test]
-fn adaptive_cover_low_power_scales_lambda() {
-    let mut gen = AdaptiveCoverGenerator::new(10.0, 0.5);
-    let baseline = gen.current_lambda();
-    gen.set_low_power(true);
-    // cause internal lambda recalculation
-    gen.next_delay();
-    assert!(gen.current_lambda() < baseline * 0.5, "lambda not reduced sufficiently");
+fn low_power_lambda_scales() {
+    let mut gen = AdaptiveCoverGenerator::new(10.0, 0.4);
+    let base = gen.current_lambda();
+    // Enter low power (screen off)
+    gen.apply_power_state(ScreenOff);
+    assert!(gen.current_lambda() < base * 0.2);
+    // Back to foreground
+    gen.apply_power_state(Foreground);
+    assert!(gen.current_lambda() >= base);
 } 

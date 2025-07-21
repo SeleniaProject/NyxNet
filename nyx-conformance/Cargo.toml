@@ -15,7 +15,7 @@ nyx-core = { path = "../nyx-core" }
 nyx-control = { path = "../nyx-control" }
 nyx-stream = { path = "../nyx-stream" }
 nyx-fec = { path = "../nyx-fec" }
-nyx-transport = { path = "../nyx-transport" }
+nyx-transport = { path = "../nyx-transport", default-features = false }
 nyx-mix = { path = "../nyx-mix" }
 
 [dev-dependencies]
@@ -23,6 +23,7 @@ once_cell = "1.19"
 tokio = { version = "1.37", features = ["full"] }
 async-trait = "0.1"
 num-bigint = "0.4"
+prometheus = "0.13"
 
 [features]
 pq = [] 

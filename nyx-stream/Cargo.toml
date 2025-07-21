@@ -20,5 +20,6 @@ jsonschema = "0.17"
 tracing = "0.1"
 
 [features]
-# existing features
+default = []
+plugin = []
 mpr_experimental = []

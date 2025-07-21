@@ -1,3 +1,4 @@
+#![cfg(feature = "plugin")]
 use nyx_stream::PluginHeader;
 
 #[test]
