@@ -10,4 +10,4 @@
 - [x] DHT ルート完全実装 & 障害試験
 - [ ] cMix 実環境長期試験 & VDF パラメータ調整
 - [ ] Formal Verification モデルに LowPower / Multipath 追加入り
-- [ ] WASM ブラウザ版 Push 通知対応 
+- [x] WASM ブラウザ版 Push 通知対応 
