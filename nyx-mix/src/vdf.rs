@@ -86,14 +86,13 @@ pub fn verify(x: &BigUint, y: &BigUint, pi: &BigUint, n: &BigUint, t: u64) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
-    use num_bigint::RandPrime;
-    use rand::rngs::OsRng;
+    use num_bigint::BigUint;
 
     #[test]
     fn vdf_round_trip() {
-        let mut rng = OsRng;
-        let p = rng.gen_prime(512);
-        let q = rng.gen_prime(512);
+        // Small primes for test
+        let p = BigUint::from(1009u32);
+        let q = BigUint::from(1013u32);
         let n = &p * &q;
         let x = BigUint::from(5u8);
         let t = 100;

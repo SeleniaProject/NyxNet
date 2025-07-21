@@ -27,7 +27,8 @@
 //! "try-and-increment" hash-to-prime adapter over SHA-256 suitable for
 //! 128-bit security in practice.
 
-use num_bigint::{BigUint, RandPrime, ToBigUint};
+use num_bigint::{BigUint, ToBigUint};
+use num_integer::Integer;
 use num_traits::{One, Zero};
 use rand::{rngs::OsRng, RngCore};
 use sha2::{Digest, Sha256};
@@ -87,8 +88,8 @@ pub fn hash_to_prime(data: &[u8]) -> BigUint {
         let digest = hasher.finalize();
         // take 256-bit directly, set MSB and LSB to ensure odd > 2^{255}
         let mut candidate = BigUint::from_bytes_le(&digest);
-        candidate.set_bit(255, true);
-        candidate.set_bit(0, true);
+        candidate.set_bit(255u64, true);
+        candidate.set_bit(0u64, true);
         if primal_check(&candidate) { return candidate; }
         counter = counter.wrapping_add(1);
     }
@@ -134,11 +135,38 @@ impl KeyCeremony {
     #[must_use]
     pub fn generate(bits: usize) -> AccumulatorParams {
         let mut rng = OsRng;
-        let p = rng.gen_prime(bits / 2);
-        let q = rng.gen_prime(bits / 2);
+        let p = generate_prime(bits / 2, &mut rng);
+        let q = generate_prime(bits / 2, &mut rng);
         let n = &p * &q;
         AccumulatorParams { n, g: G_DEFAULT.to_biguint().unwrap() }
     }
+}
+
+/// Generate a random prime of `bits` length using rejection sampling.
+fn generate_prime(bits: usize, rng: &mut impl RngCore) -> BigUint {
+    loop {
+        // Generate random candidate with MSB and LSB set.
+        let byte_len = (bits + 7) / 8;
+        let mut bytes = vec![0u8; byte_len];
+        rng.fill_bytes(&mut bytes);
+        // Ensure correct bit length and oddness.
+        bytes[0] |= 0x80; // set MSB
+        *bytes.last_mut().unwrap() |= 1; // set LSB (odd)
+        let mut candidate = BigUint::from_bytes_be(&bytes);
+        candidate.set_bit((bits - 1) as u64, true);
+        candidate.set_bit(0, true);
+        if primal_check(&candidate) {
+            return candidate;
+        }
+    }
+}
+
+/// Verify that `witness^{x} mod n == acc_value`.
+/// This variant does not require an instantiated `RsaAccumulator` and is
+/// therefore useful for stateless verification paths.
+#[must_use]
+pub fn verify_membership(n: &BigUint, element: &BigUint, witness: &BigUint, acc_value: &BigUint) -> bool {
+    witness.modpow(element, n) == *acc_value
 }
 
 #[cfg(test)]

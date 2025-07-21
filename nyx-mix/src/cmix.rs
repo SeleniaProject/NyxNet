@@ -35,17 +35,23 @@ const DEFAULT_DELAY_MS: u64 = 100;
 const DEFAULT_BATCH: usize = 100;
 
 /// Resulting batch metadata.
+#[derive(Debug, Clone)]
 pub struct CmixBatch {
-    pub packets: Vec<Vec<u8>>, // shuffled packets
+    pub packets: Vec<Vec<u8>>, // shuffled packets (shallow copy)
     pub digest: [u8; 32],      // SHA-256 digest of concatenated packets
-    pub vdf_proof: Vec<u8>,    // VDF output y bytes
-    pub acc_value: Vec<u8>,    // RSA accumulator current value A bytes
+    // Wesolowski VDF proof components
+    pub vdf_y: Vec<u8>,        // y = x^{2^t} mod n
+    pub vdf_pi: Vec<u8>,       // π = x^q mod n
+    // RSA accumulator data
+    pub acc_value: Vec<u8>,    // current accumulator value A bytes
+    pub witness: Vec<u8>,      // membership witness (pre-add accumulator)
 }
 
 /// cMix controller: receives packets via channel, outputs `CmixBatch` after delay.
 pub struct CmixController {
     in_tx: mpsc::Sender<Vec<u8>>,
     out_rx: mpsc::Receiver<CmixBatch>,
+    params: crate::accumulator::AccumulatorParams,
 }
 
 impl CmixController {
@@ -54,13 +60,17 @@ impl CmixController {
     pub fn new(batch_size: usize, delay_ms: u64) -> Self {
         let (in_tx, mut in_rx) = mpsc::channel::<Vec<u8>>(1024);
         let (out_tx, out_rx) = mpsc::channel::<CmixBatch>(16);
+
+        // Shared RSA accumulator parameters (single-party setup for now)
+        let params = KeyCeremony::generate(2048);
+        let params_cloned = params.clone();
+
         let delay = Duration::from_millis(delay_ms);
         let bsize = batch_size.max(1);
 
         tokio::spawn(async move {
             // Initialize shared RSA accumulator.
-            let params = KeyCeremony::generate(2048);
-            let mut acc = crate::accumulator::RsaAccumulator::new(params.clone());
+            let mut acc = crate::accumulator::RsaAccumulator::new(params_cloned.clone());
             let delay = Duration::from_millis(delay_ms);
             let bsize = batch_size.max(1);
             let mut buffer: Vec<Vec<u8>> = Vec::with_capacity(bsize);
@@ -77,41 +87,44 @@ impl CmixController {
                     recv_fut.await
                 };
 
+                let no_packet = packet_opt.is_none();
                 if let Some(pkt) = packet_opt {
                     buffer.push(pkt);
                     if buffer.len() == 1 { next_deadline = Some(Instant::now() + delay); }
                 }
 
-                let should_emit = buffer.len() >= bsize || packet_opt.is_none() && !buffer.is_empty();
+                let should_emit = buffer.len() >= bsize || no_packet && !buffer.is_empty();
                 if should_emit {
                     // Simulate VDF delay (already elapsed by timeout).
-                    let mut rng = thread_rng();
-                    buffer.shuffle(&mut rng);
+                    buffer.shuffle(&mut thread_rng());
                     let mut hasher = Sha256::new();
                     for p in &buffer { hasher.update(p); }
                     let digest = hasher.finalize();
                     // VDF evaluation (fixed iterations calibrated ~100ms)
                     const ITER: u64 = 1_000;
                     let x = BigUint::from_bytes_be(&digest);
-                    let (y, pi) = vdf::prove(&x, &params.n, ITER);
-                    // concatenate y||pi for transport; could be structured later
-                    let mut proof = pi.to_bytes_be();
-                    // Store y as well to enable downstream verification if needed
-                    proof.extend_from_slice(&y.to_bytes_be());
+                    let (y, pi) = vdf::prove(&x, &params_cloned.n, ITER);
 
                     // Update accumulator with hash_to_prime(digest)
                     let elem = crate::accumulator::hash_to_prime(&digest);
-                    acc.add(&elem);
+                    let witness = acc.add(&elem); // pre-add value
                     let acc_bytes = acc.value().to_bytes_be();
 
-                    let batch = CmixBatch { packets: buffer.clone(), digest: digest.into(), vdf_proof: proof, acc_value: acc_bytes };
+                    let batch = CmixBatch {
+                        packets: buffer.clone(),
+                        digest: digest.into(),
+                        vdf_y: y.to_bytes_be(),
+                        vdf_pi: pi.to_bytes_be(),
+                        acc_value: acc_bytes,
+                        witness: witness.to_bytes_be(),
+                    };
                     if out_tx.send(batch).await.is_err() { break; }
                     buffer.clear();
                     next_deadline = None;
                 }
             }
         });
-        Self { in_tx, out_rx }
+        Self { in_tx, out_rx, params }
     }
 
     /// Sender handle for incoming packets.
@@ -119,10 +132,38 @@ impl CmixController {
 
     /// Receive next cMix batch.
     pub async fn recv(&mut self) -> Option<CmixBatch> { self.out_rx.recv().await }
+
+    /// Access RSA accumulator public parameters for verification.
+    #[must_use] pub fn params(&self) -> &crate::accumulator::AccumulatorParams { &self.params }
 }
 
 impl Default for CmixController {
     fn default() -> Self { Self::new(DEFAULT_BATCH, DEFAULT_DELAY_MS) }
+}
+
+/// Verify `CmixBatch` integrity: digest, VDF proof, and RSA accumulator membership.
+pub fn verify_batch(batch: &CmixBatch, params: &crate::accumulator::AccumulatorParams, vdf_iters: u64) -> bool {
+    use crate::accumulator::verify_membership;
+    // Recompute digest from packets.
+    let mut hasher = Sha256::new();
+    for p in &batch.packets { hasher.update(p); }
+    if hasher.finalize().as_slice() != &batch.digest {
+        return false;
+    }
+
+    // Verify VDF proof.
+    let x = BigUint::from_bytes_be(&batch.digest);
+    let y = BigUint::from_bytes_be(&batch.vdf_y);
+    let pi = BigUint::from_bytes_be(&batch.vdf_pi);
+    if !vdf::verify(&x, &y, &pi, &params.n, vdf_iters) {
+        return false;
+    }
+
+    // Verify RSA accumulator membership.
+    let elem = crate::accumulator::hash_to_prime(&batch.digest);
+    let witness = BigUint::from_bytes_be(&batch.witness);
+    let acc_val = BigUint::from_bytes_be(&batch.acc_value);
+    verify_membership(&params.n, &elem, &witness, &acc_val)
 }
 
 #[cfg(test)]
@@ -137,5 +178,7 @@ mod tests {
         // Expect batch within ~70ms
         let batch = cmix.recv().await.expect("no batch");
         assert_eq!(batch.packets.len(), 1);
+        // Verify proofs
+        assert!(verify_batch(&batch, cmix.params(), 1_000));
     }
 } 

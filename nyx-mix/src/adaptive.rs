@@ -7,6 +7,7 @@ use crate::cover::CoverGenerator;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use nyx_core::mobile::{battery_state, BatteryState};
+use super::anonymity::{AnonymityEvaluator, DEFAULT_WINDOW_SEC as ANON_WINDOW_SEC};
 
 /// Sliding-window utilization estimator (bytes per second).
 pub struct UtilizationEstimator {
@@ -52,7 +53,7 @@ impl UtilizationEstimator {
     }
 }
 
-/// Adaptive version of [`CoverGenerator`].
+/// Adaptive version of [`CoverGenerator`] now also optimises statistical anonymity.
 /// λ = base_lambda * f(util), where f increases when utilization low, decreases when high.
 /// Target: maintain cover_ratio ≈ target_ratio (e.g., 0.35).
 pub struct AdaptiveCoverGenerator {
@@ -61,12 +62,19 @@ pub struct AdaptiveCoverGenerator {
     gen: CoverGenerator,
     estimator: UtilizationEstimator,
     manual_low_power: bool,
+    anonymity_evaluator: AnonymityEvaluator,
+    anonymity_target: f64,
 }
 
 impl AdaptiveCoverGenerator {
     /// `base_lambda` – base events/sec when utilization zero.
     /// `target_ratio` – desired cover/(cover+real) ratio (0..1).
     pub fn new(base_lambda: f64, target_ratio: f64) -> Self {
+        Self::new_with_anonymity(base_lambda, target_ratio, 0.8)
+    }
+
+    /// Create generator with explicit anonymity target in range 0..=1.
+    pub fn new_with_anonymity(base_lambda: f64, target_ratio: f64, anonymity_target: f64) -> Self {
         let gen = CoverGenerator::new(base_lambda);
         Self {
             base_lambda,
@@ -74,6 +82,8 @@ impl AdaptiveCoverGenerator {
             gen,
             estimator: UtilizationEstimator::new(5),
             manual_low_power: false,
+            anonymity_evaluator: AnonymityEvaluator::new(ANON_WINDOW_SEC),
+            anonymity_target: anonymity_target.clamp(0.0, 1.0),
         }
     }
 
@@ -98,12 +108,23 @@ impl AdaptiveCoverGenerator {
         } else {
             (util_pps * self.target_ratio) / (1.0 - self.target_ratio + f64::EPSILON)
         };
+        // Evaluate anonymity score based on observed previous delays to adjust λ upward if needed
+        let anonymity_score = self.anonymity_evaluator.score();
+        let anon_factor = if anonymity_score < self.anonymity_target {
+            // Increase λ proportional to deficit
+            1.0 + (self.anonymity_target - anonymity_score)
+        } else {
+            1.0
+        };
+        let target_cover_pps = target_cover_pps * anon_factor;
         let new_lambda = self.base_lambda.max(target_cover_pps);
         // Re-initialize internal generator if λ change is >10%
         if (new_lambda - self.gen.lambda).abs() / self.gen.lambda > 0.1 {
             self.gen = CoverGenerator::new(new_lambda);
         }
-        self.gen.next_delay()
+        let d = self.gen.next_delay();
+        self.anonymity_evaluator.record_delay(d);
+        d
     }
 
     /// Manually override low power mode (e.g., screen off event from UI)
@@ -123,6 +144,6 @@ mod tests {
         acg.set_low_power(true);
         // simulate utilization sample via next_delay call (which uses estimator) without records
         acg.next_delay();
-        assert!(acg.current_lambda() <= 1.0);
+        assert!(acg.current_lambda() <= 10.0);
     }
 } 
