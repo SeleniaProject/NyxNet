@@ -10,5 +10,5 @@
 - [x] RaptorQ FEC アダプティブ冗長率ロジック実装
 - [x] Plugin Framework: Permission Enforcement 強化と Sandbox 分離
 - [x] Capability Negotiation (CBOR) 拡張フィールドテストケース追加
-- [ ] E2E / CI テスト: cMix、LowPower、Multipath、RaptorQ 全経路網シナリオ
+- [x] E2E / CI テスト: cMix、LowPower、Multipath、RaptorQ 全経路網シナリオ
 ---
