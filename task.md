@@ -8,6 +8,6 @@
 - [x] エラーコード拡張のテレメトリ / CLI 伝搬
 - [x] Helm Chart の Production Grade 設定（PDB, HPA, リソース制限 等）
 - [x] DHT ルート完全実装 & 障害試験
-- [ ] cMix 実環境長期試験 & VDF パラメータ調整
-- [ ] Formal Verification モデルに LowPower / Multipath 追加入り
+- [x] cMix 実環境長期試験 & VDF パラメータ調整
+- [x] Formal Verification モデルに LowPower / Multipath 追加入り
 - [x] WASM ブラウザ版 Push 通知対応 
