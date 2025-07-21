@@ -6,12 +6,14 @@
 //! * Async receive loop dispatches datagrams to a handler trait.
 //! * Provides helper for basic UDP hole punching (ICE-lite style stub).
 
-use std::{net::{SocketAddr, IpAddr, Ipv4Addr}, sync::Arc};
+use std::{net::{SocketAddr, IpAddr, Ipv4Addr, Ipv6Addr}, sync::Arc};
+use once_cell::sync::OnceCell;
 use socket2::{Domain, Type};
 use tokio::{net::UdpSocket, sync::mpsc};
 use tracing::{info, error};
 use async_trait::async_trait;
 use nyx_mix::CoverGenerator;
+use crate::teredo::{discover as teredo_discover, DEFAULT_SERVER, TeredoAddr};
 // timing obfuscator moved to upper layer
 use tokio::time::{sleep, Duration};
 
@@ -69,6 +71,8 @@ pub struct Transport {
     pool: UdpPool,
     tx: mpsc::Sender<(SocketAddr, Vec<u8>)>,
 
+    /// Optional Teredo-derived IPv6 address of this node (lazy‐discovered).
+    teredo_addr: OnceCell<TeredoAddr>,
 }
 
 impl Transport {
@@ -108,7 +112,7 @@ impl Transport {
         });
 
         info!("nyx-transport listening on {}", sock.local_addr().unwrap());
-        Ok(Self { pool, tx })
+        Ok(Self { pool, tx, teredo_addr: OnceCell::new() })
     }
 
     /// Send datagram asynchronously.
@@ -118,6 +122,24 @@ impl Transport {
 
     pub fn local_addr(&self) -> std::io::Result<SocketAddr> {
         self.pool.socket().local_addr()
+    }
+
+    /// Return (and cache) local Teredo IPv6 address discovered via default server.
+    /// This helper can be used by upper layers when IPv4 traversal fails.
+    pub async fn teredo_ipv6(&self) -> Option<Ipv6Addr> {
+        if let Some(addr) = self.teredo_addr.get() {
+            return Some(addr.0);
+        }
+        match teredo_discover(DEFAULT_SERVER).await {
+            Ok(t) => {
+                let _ = self.teredo_addr.set(t);
+                Some(t.0)
+            }
+            Err(e) => {
+                tracing::warn!("teredo discovery failed: {e}");
+                None
+            }
+        }
     }
 
     /// Spawn background task generating cover traffic to `target` at Poisson rate `lambda` (events/s).
