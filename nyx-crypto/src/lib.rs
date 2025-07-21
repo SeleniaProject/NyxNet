@@ -12,9 +12,10 @@ use zeroize::Zeroize;
 
 pub mod noise;
 pub mod kdf;
-pub mod hpke;
-#[cfg(feature = "hybrid")]
-pub use noise::hybrid;
+#[cfg(feature = "bike")]
+pub use noise::bike;
+#[cfg(feature = "kyber")]
+pub use noise::kyber;
 pub mod aead;
 
 pub use kdf::KdfLabel;

@@ -7,31 +7,35 @@
 //! using ChaCha20-Poly1305 and a BLAKE3-based HKDF construct as mandated by the
 //! Nyx Protocol v0.1/1.0 specifications.
 
-#[cfg(not(feature = "pq_only"))]
+#[cfg(feature = "classic")]
 use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
-#[cfg(not(feature = "pq_only"))]
-use rand_core::OsRng;
+// no external RNG needed; use EphemeralSecret::random()
 use super::kdf::{hkdf_expand, KdfLabel};
 use zeroize::Zeroize;
+#[cfg(feature = "classic")]
+use rand_core_06::OsRng;
+// rand_core 0.6 static RNG used internally by EphemeralSecret::random()
 
-#[cfg(not(feature = "pq_only"))]
+#[cfg(feature = "classic")]
 /// Initiator generates ephemeral X25519 key.
 pub fn initiator_generate() -> (PublicKey, EphemeralSecret) {
-    let secret = EphemeralSecret::random();
+    let mut rng = OsRng;
+    let secret = EphemeralSecret::random_from_rng(&mut rng);
     let public = PublicKey::from(&secret);
     (public, secret)
 }
 
-#[cfg(not(feature = "pq_only"))]
+#[cfg(feature = "classic")]
 /// Responder process for X25519.
 pub fn responder_process(in_pub: &PublicKey) -> (PublicKey, SharedSecret) {
-    let secret = EphemeralSecret::random();
+    let mut rng = OsRng;
+    let secret = EphemeralSecret::random_from_rng(&mut rng);
     let public = PublicKey::from(&secret);
     let shared = secret.diffie_hellman(in_pub);
     (public, shared)
 }
 
-#[cfg(not(feature = "pq_only"))]
+#[cfg(feature = "classic")]
 /// Initiator finalize X25519.
 pub fn initiator_finalize(sec: EphemeralSecret, resp_pub: &PublicKey) -> SharedSecret {
     sec.diffie_hellman(resp_pub)
@@ -53,8 +57,8 @@ pub fn derive_session_key(shared: &SharedSecret) -> SessionKey {
 // Kyber1024 Post-Quantum fallback (feature "pq")
 // -----------------------------------------------------------------------------
 
-#[cfg(feature = "pq")]
-pub mod pq {
+#[cfg(feature = "kyber")]
+pub mod kyber {
     //! Kyber1024 KEM wrapper providing the same interface semantics as the X25519
     //! Noise_Nyx handshake. When the `pq` feature is enabled at compile-time,
     //! callers can switch to these APIs to negotiate a 32-byte session key that
@@ -93,19 +97,26 @@ pub mod pq {
     }
 }
 
+#[cfg(feature = "bike")]
+pub mod bike {
+    //! BIKE post-quantum KEM integration is planned but the required Rust
+    //! crate is not yet available on crates.io. Attempting to compile with
+    //! `--features bike` will therefore raise a compile-time error.
+    compile_error!("Feature `bike` is not yet supported – awaiting upstream pqcrypto-bike crate");
+}
+
 /// -----------------------------------------------------------------------------
 /// Hybrid X25519 + Kyber Handshake (feature "hybrid")
 /// -----------------------------------------------------------------------------
 #[cfg(feature = "hybrid")]
 pub mod hybrid {
     use super::*;
-    use super::pq; // Kyber helpers
+    use super::kyber; // Kyber helpers
     use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
-    use rand_core::OsRng;
 
     /// Initiator generates X25519 ephemeral and Kyber encapsulation.
-    pub fn initiator_step(pk_kyber: &pq::PublicKey) -> (PublicKey, EphemeralSecret, pq::Ciphertext, SessionKey) {
-        let (ct, kyber_key) = pq::initiator_encapsulate(pk_kyber);
+    pub fn initiator_step(pk_kyber: &kyber::PublicKey) -> (PublicKey, EphemeralSecret, kyber::Ciphertext, SessionKey) {
+        let (ct, kyber_key) = kyber::initiator_encapsulate(pk_kyber);
         let secret = EphemeralSecret::random();
         let public = PublicKey::from(&secret);
         // Combine secrets later when responder key known; here return Kyber part as session key placeholder.
@@ -114,9 +125,9 @@ pub mod hybrid {
     }
 
     /// Responder receives initiator public keys and ciphertext; returns responder X25519 pub and combined session key.
-    pub fn responder_step(init_pub: &PublicKey, ct: &pq::Ciphertext, sk_kyber: &pq::SecretKey) -> (PublicKey, SessionKey) {
+    pub fn responder_step(init_pub: &PublicKey, ct: &kyber::Ciphertext, sk_kyber: &kyber::SecretKey) -> (PublicKey, SessionKey) {
         // Kyber part
-        let kyber_key = pq::responder_decapsulate(ct, sk_kyber);
+        let kyber_key = kyber::responder_decapsulate(ct, sk_kyber);
         // X25519 part
         let secret = EphemeralSecret::random();
         let public = PublicKey::from(&secret);
