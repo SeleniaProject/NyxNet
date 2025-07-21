@@ -9,5 +9,5 @@
 - [x] Hybrid KEM の HPKE exporter API 最終仕様への統合
 - [x] Formal Verification: TLA+ モデルを Multipath / Plugin 拡張点含め更新
 - [x] Windows 向け `raptorq` SIMD アクセラレーション最適化 & fallback 実装
-- [ ] Conformance Test Suite 拡充：Capability Negotiation / cMix / Low Power Mode ケース追加
-- [ ] ドキュメント更新：v1.0 完全仕様 (英語版) の最終化と公開 
+- [x] Conformance Test Suite 拡充：Capability Negotiation / cMix / Low Power Mode ケース追加
+- [x] ドキュメント更新：v1.0 完全仕様 (英語版) の最終化と公開 
