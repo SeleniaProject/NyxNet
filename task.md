@@ -8,7 +8,7 @@
 - [x] Multipath 送信スケジューラ: RTT 逆数重み付け Weighted Round-Robin 実装
 - [x] Multipath 冗長送信（MPR）パラメータ最適化 & ロス率適応
 - [x] RaptorQ FEC アダプティブ冗長率ロジック実装
-- [ ] Plugin Framework: Permission Enforcement 強化と Sandbox 分離
+- [x] Plugin Framework: Permission Enforcement 強化と Sandbox 分離
 - [ ] Capability Negotiation (CBOR) 拡張フィールドテストケース追加
 - [ ] E2E / CI テスト: cMix、LowPower、Multipath、RaptorQ 全経路網シナリオ
 ---

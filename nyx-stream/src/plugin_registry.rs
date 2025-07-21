@@ -23,13 +23,18 @@ use std::fs::{File, create_dir_all};
 use std::io::{self, Read, Write};
 
 bitflags::bitflags! {
-    #[derive(Serialize, Deserialize)]
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     pub struct Permission: u8 {
         const SEND_STREAM  = 0b0000_0001;
         const SEND_DATAGRAM= 0b0000_0010;
         const ACCESS_GEO   = 0b0000_0100;
     }
 }
+
+/// Permissions that the host is willing to grant.
+const ALLOWED_PERMS: Permission = Permission::SEND_STREAM
+    .union(Permission::SEND_DATAGRAM)
+    .union(Permission::ACCESS_GEO);
 
 /// Metadata advertised by a plugin during the registration handshake.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,7 +56,12 @@ impl PluginRegistry {
 
     /// Register a plugin; returns Err if ID already taken.
     pub fn register(&mut self, info: &PluginInfo) -> Result<(), ()> {
+        // ID uniqueness check
         if self.plugins.contains_key(&info.id) { return Err(()); }
+        // Permission enforcement: reject if plugin requests bits we do not allow.
+        if !ALLOWED_PERMS.contains(info.permissions) {
+            return Err(());
+        }
         self.plugins.insert(info.id, info.permissions);
         Ok(())
     }
