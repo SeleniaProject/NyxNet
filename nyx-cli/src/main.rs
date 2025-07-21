@@ -45,11 +45,19 @@ fn cmd_errors(base: &str) -> Result<()> {
 
     // Regex capturing code label and value.
     let re = Regex::new(r#"nyx_error_total\{code="([0-9a-f]{4})"\}\s+(\d+)"#)?;
-    println!("Error Code | Count\n-----------|------");
+    println!("Error Code | Description | Count\n-----------|-------------|------");
+    fn desc(code: &str) -> &str {
+        match code {
+            "0007" => "UNSUPPORTED_CAP",
+            "0004" => "VERSION_MISMATCH",
+            "0005" => "PATH_VALIDATION_FAILED",
+            _ => "UNKNOWN",
+        }
+    }
     for cap in re.captures_iter(&body) {
         let code = &cap[1];
         let count = &cap[2];
-        println!("0x{code}     | {count}");
+        println!("0x{code}     | {:<15} | {count}", desc(code));
     }
     Ok(())
 } 
