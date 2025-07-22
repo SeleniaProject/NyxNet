@@ -24,13 +24,13 @@
 ## Plugin Framework
 - [x] Frame Type 0x50–0x5F パーサ & ディスパッチ
 - [x] CBOR Capability Negotiation ハンドシェイク実装
-- [ ] Sandbox 分離 & Permission Enforcement 強化
+- [x] Sandbox 分離 & Permission Enforcement 強化
 - [ ] Plugin ライフサイクル API (load/unload, version check)
 - [ ] 必須/任意 Plugin Capability テストケース
 
 ## FEC Layer
-- [ ] RaptorQ エンコーダ/デコーダ統合 (`nyx-fec`)
-- [ ] 冗長率アダプティブ制御ロジック
+- [x] RaptorQ エンコーダ/デコーダ統合 (`nyx-fec`)
+- [x] 冗長率アダプティブ制御ロジック
 - [ ] SIMD 強化 Reed-Solomon 最適化
 
 ## Transport Adapter

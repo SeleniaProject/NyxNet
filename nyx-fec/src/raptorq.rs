@@ -18,7 +18,7 @@
 //! assert_eq!(data, rec);
 //! ```
 
-use raptorq::{Encoder, Decoder, EncodingPacket, ObjectTransmissionInformation};
+use raptorq::{Encoder, Decoder, EncodingPacket, ObjectTransmissionInformation, PayloadId};
 
 #[cfg(windows)]
 use rayon::prelude::*;
@@ -44,20 +44,24 @@ impl RaptorQCodec {
     pub fn encode(&self, data: &[u8]) -> Vec<EncodingPacket> {
         // Build encoder with default parameters using MTU (=symbol size).
         let enc = Encoder::with_defaults(data, SYMBOL_SIZE as u16);
-        // Windows SIMD optimisation: build source packets in parallel to leverage CPU cores.
-        let mut packets: Vec<EncodingPacket> = {
-            #[cfg(windows)]
-            {
-                let src: Vec<EncodingPacket> = enc.source_packets().collect();
-                src.into_par_iter().map(|p| p).collect()
-            }
-            #[cfg(not(windows))]
-            {
-                enc.source_packets().collect()
-            }
-        };
-        let repair_cnt = ((packets.len() as f32) * self.redundancy).ceil() as u32;
-        packets.extend(enc.repair_packets(repair_cnt));
+        let repair_cnt_est = ((enc.get_config().transfer_length() as f32 / SYMBOL_SIZE as f32)
+            * self.redundancy)
+            .ceil() as u32;
+
+        let mut packets: Vec<EncodingPacket> = enc.get_encoded_packets(repair_cnt_est);
+
+        // Prepend a sentinel packet encoding the original data length so the decoder can recover
+        // the exact length without guessing. We reserve `source_block_number = 0xFF` and
+        // `encoding_symbol_id = 0xFFFFFF` (max 24-bit) for this purpose.
+        let mut len_bytes = (data.len() as u64).to_be_bytes().to_vec();
+        let sentinel = EncodingPacket::new(PayloadId::new(0xFF, 0xFFFFFF), len_bytes);
+        packets.insert(0, sentinel);
+
+        #[cfg(windows)]
+        {
+            // Shuffle into parallel vector to improve cache locality on Windows multi-core.
+            packets = packets.into_par_iter().map(|p| p).collect();
+        }
         packets
     }
 
@@ -67,16 +71,38 @@ impl RaptorQCodec {
         if packets.is_empty() {
             return None;
         }
-        // Reconstruct OTI from total length (encoded within packet meta).
-        let total_len = packets[0].payload_range().end as u64; // approximate
-        let oti = ObjectTransmissionInformation::with_defaults(total_len, SYMBOL_SIZE as u16);
+        // Extract sentinel length packet.
+        let mut iter = packets.iter();
+        let first = iter.next().unwrap();
+        let (orig_len, remaining_packets): (u64, Vec<EncodingPacket>) = if first.payload_id().source_block_number() == 0xFF
+            && first.payload_id().encoding_symbol_id() == 0xFFFFFF {
+            let mut len_arr = [0u8; 8];
+            len_arr.copy_from_slice(first.data());
+            (u64::from_be_bytes(len_arr), iter.cloned().collect())
+        } else {
+            // Fallback if sentinel missing – estimate via symbol count.
+            let pkts: Vec<EncodingPacket> = packets.to_vec();
+            let max_esi = pkts
+                .iter()
+                .map(|p| p.payload_id().encoding_symbol_id())
+                .max()
+                .unwrap_or(0);
+            let est_symbol_cnt = max_esi + 1;
+            (est_symbol_cnt as u64 * SYMBOL_SIZE as u64, pkts)
+        };
+
+        let oti = ObjectTransmissionInformation::with_defaults(orig_len, SYMBOL_SIZE as u16);
         let mut dec = Decoder::new(oti);
-        for p in packets {
-            if dec.insert(p.clone()).is_err() {
-                return None;
+
+        for p in remaining_packets {
+            if let Some(data) = dec.decode(p.clone()) {
+                // Truncate potential zero-pad to original length.
+                let mut out = data;
+                out.truncate(orig_len as usize);
+                return Some(out);
             }
         }
-        dec.decode().ok()
+        None
     }
 
     /// Expose the current redundancy ratio.
