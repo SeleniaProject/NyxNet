@@ -5,6 +5,19 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+const GAIN_CYCLE: [f64; 8] = [
+    1.25, 1.2, 1.15, 1.1, // ProbeUp
+    1.0,                  // Steady
+    0.9, 0.85, 0.8        // ProbeDown
+];
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum Mode {
+    Startup,
+    Drain,
+    ProbeBw,
+}
+
 #[derive(Debug)]
 pub struct CongestionCtrl {
     cwnd: f64,          // congestion window in packets
@@ -17,6 +30,11 @@ pub struct CongestionCtrl {
     inflight: usize,
     #[allow(dead_code)]
     last_update: Instant,
+
+    mode: Mode,
+    full_bw: f64,
+    full_bw_cnt: u8,
+    min_rtt_timestamp: Instant,
 }
 
 impl CongestionCtrl {
@@ -30,6 +48,11 @@ impl CongestionCtrl {
             cycle_index: 0,
             inflight: 0,
             last_update: Instant::now(),
+
+            mode: Mode::Startup,
+            full_bw: 0.0,
+            full_bw_cnt: 0,
+            min_rtt_timestamp: Instant::now(),
         }
     }
 
@@ -42,40 +65,54 @@ impl CongestionCtrl {
     pub fn on_ack(&mut self, bytes: usize, rtt: Duration) {
         self.inflight = self.inflight.saturating_sub(bytes);
 
-        // RTT tracking
+        // RTT tracking & aging (update min_rtt every 10s)
         if self.rtt_samples.len() == 8 { self.rtt_samples.pop_front(); }
         self.rtt_samples.push_back(rtt);
-        self.min_rtt = *self.rtt_samples.iter().min().unwrap_or(&rtt);
+        if rtt < self.min_rtt || self.min_rtt_timestamp.elapsed() > Duration::from_secs(10) {
+            self.min_rtt = rtt;
+            self.min_rtt_timestamp = Instant::now();
+        }
 
-        // Bandwidth estimate (packets/s). Normalize by MTU (1280 bytes) to keep cwnd units in packets.
-        const MTU: f64 = 1280.0;
-        // Compute bandwidth in *bytes* per second for smoother precision.
-        let delivery_rate_bytes = bytes as f64 / rtt.as_secs_f64();
-        // EWMA in bytes/sec
-        self.bw_est = if self.bw_est == 0.0 {
-            delivery_rate_bytes
-        } else {
-            0.9 * self.bw_est + 0.1 * delivery_rate_bytes
+        // Bandwidth sample in bytes/sec
+        let delivery_rate = bytes as f64 / rtt.as_secs_f64();
+        self.bw_est = 0.9 * self.bw_est + 0.1 * delivery_rate;
+
+        // Mode transitions per BBRv2 simplified
+        match self.mode {
+            Mode::Startup => {
+                if self.bw_est >= self.full_bw * 1.25 {
+                    self.full_bw = self.bw_est;
+                    self.full_bw_cnt = 0;
+                } else {
+                    self.full_bw_cnt += 1;
+                    if self.full_bw_cnt >= 3 {
+                        self.mode = Mode::Drain;
+                    }
+                }
+            }
+            Mode::Drain => {
+                if self.inflight as f64 <= self.cwnd {
+                    self.mode = Mode::ProbeBw;
+                    self.cycle_index = 0; // reset probe cycle
+                }
+            }
+            Mode::ProbeBw => {
+                // cycle index advances each ACK below
+            }
+        }
+
+        let gain = match self.mode {
+            Mode::Startup => 2.0,
+            Mode::Drain => 0.7,
+            Mode::ProbeBw => {
+                let g = GAIN_CYCLE[self.cycle_index];
+                self.cycle_index = (self.cycle_index + 1) % GAIN_CYCLE.len();
+                g
+            }
         };
 
-        // Convert target window into *packet* units for target cwnd calculation.
-        let bw_est_bytes = self.bw_est; // bytes/sec
-        // BBRv2 pacing cycle gains [1.25, 0.75]
-        const GAIN_CYCLE: [f64; 2] = [1.25, 0.75];
-        let gain = GAIN_CYCLE[self.cycle_index];
-        // advance cycle index for next ACK
-        self.cycle_index = (self.cycle_index + 1) % GAIN_CYCLE.len();
-
-        // Target cwnd using BBR formula
-        let target = (bw_est_bytes * self.min_rtt.as_secs_f64() * gain).max(1280.0 * 4.0); // at least 4 packets worth
-        // Smooth update (EWMA 0.7 previous, 0.3 target) to avoid overshoot
-        let updated = 0.7 * self.cwnd + 0.3 * target;
-        // Apply conservative growth when gain < 1.0 to avoid overshoot between gain cycles (conformance bound 10%).
-        if gain < 1.0 {
-            self.cwnd = updated.min(self.cwnd * 1.09);
-        } else {
-            self.cwnd = updated;
-        }
+        let target = (self.bw_est * self.min_rtt.as_secs_f64() * gain).max(1280.0 * 4.0);
+        self.cwnd = 0.9 * self.cwnd + 0.1 * target;
     }
 
     pub fn available_window(&self) -> f64 {
