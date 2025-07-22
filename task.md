@@ -12,7 +12,7 @@
 - [x] `nyx-stream/src/congestion.rs` の BBRv2 アルゴリズムを最小実装から完全実装へ拡充する
 - [x] `nyx-transport/src/ice.rs` および `nyx-transport/src/stun_server.rs` の STUN/BINDING メッセージ構築プレースホルダを正式仕様準拠に置換する
 - [x] `nyx-control/src/push.rs` の APNS Push 実装を HTTP/2 + JWT 認証含めて完成させる
-- [ ] `nyx-core/src/sandbox.rs` の seccomp フィルタを全システムコール網羅に更新し、最小セットコメントを除去する
+- [x] `nyx-core/src/sandbox.rs` の seccomp フィルタを全システムコール網羅に更新し、最小セットコメントを除去する
 - [x] `nyx-transport/src/teredo.rs` の interface identifier プレースホルダを正式アルゴリズムで算出する
 - [ ] `src/empty.rs` プレースホルダクレートを削除するか実用途のユーティリティクレートへ置換する
 - [ ] `nyx-stream/src/management.rs` CLOSE コード 0x07 (UNSUPPORTED_CAP) ハンドリングを追加し、Capability Negotiation エラーを適切に伝播する
