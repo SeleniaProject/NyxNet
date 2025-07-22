@@ -67,7 +67,7 @@
 - [x] `nyx-sdk-wasm` 用 WASM ビルド CI マトリクス
 
 ## Security Hardening
-- [ ] Linux seccomp プロファイル生成 & 適用
-- [ ] OpenBSD pledge/unveil バインディング実装
-- [ ] systemd panic=abort リカバリ & コアダンプ連携
+- [x] Linux seccomp プロファイル生成 & 適用
+- [x] OpenBSD pledge/unveil バインディング実装
+- [x] systemd panic=abort リカバリ & コアダンプ連携
 ---
