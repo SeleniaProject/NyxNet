@@ -42,6 +42,24 @@ static ERROR_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
     ).expect("metric can be registered")
 });
 
+/// Total Plugin frames processed per plugin ID.
+static PLUGIN_FRAMES_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    register_int_counter_vec!(
+        "nyx_plugin_frames_total",
+        "Total plugin frames processed grouped by plugin id",
+        &["plugin_id"]
+    ).expect("metric can be registered")
+});
+
+/// Total Plugin bytes processed per plugin ID.
+static PLUGIN_BYTES_TOTAL: Lazy<IntCounterVec> = Lazy::new(|| {
+    register_int_counter_vec!(
+        "nyx_plugin_bytes_total",
+        "Total plugin frame payload bytes processed grouped by plugin id",
+        &["plugin_id"]
+    ).expect("metric can be registered")
+});
+
 /// Increment the internal request counter.
 #[inline]
 pub fn inc_request_total() {
@@ -52,6 +70,13 @@ pub fn inc_request_total() {
 pub fn record_error(code: u16) {
     let label = format!("{:04x}", code);
     ERROR_TOTAL.with_label_values(&[&label]).inc();
+}
+
+/// Increment plugin frame and byte counters.
+pub fn record_plugin_frame(plugin_id: u32, bytes: usize) {
+    let label = format!("{:08x}", plugin_id);
+    PLUGIN_FRAMES_TOTAL.with_label_values(&[&label]).inc();
+    PLUGIN_BYTES_TOTAL.with_label_values(&[&label]).inc_by(bytes as u64);
 }
 
 /// Initialize Bunyan-formatted `tracing` subscriber for structured JSON logs.

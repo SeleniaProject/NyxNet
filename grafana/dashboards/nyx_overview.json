@@ -36,6 +36,13 @@
       "datasource": "Prometheus",
       "targets": [ { "expr": "nyx_min_rtt_ms", "refId": "A" } ],
       "gridPos": { "h": 4, "w": 4, "x": 12, "y": 4 }
+    },
+    {
+      "type": "graph",
+      "title": "Plugin Frames/sec",
+      "datasource": "Prometheus",
+      "targets": [ { "expr": "rate(nyx_plugin_frames_total[1m])", "legendFormat": "{{plugin_id}}", "refId": "A" } ],
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 }
     }
   ]
 } 

@@ -44,9 +44,9 @@
 - [x] 低電力モード E2E シナリオテスト
 
 ## Telemetry & Observability
-- [ ] OpenTelemetry Span 追加 (全 async task)
-- [ ] Prometheus メトリクス拡充 (新モジュール対応)
-- [ ] Grafana ダッシュボード v1.0 メトリクス反映
+- [x] OpenTelemetry Span 追加 (全 async task)
+- [x] Prometheus メトリクス拡充 (新モジュール対応)
+- [x] Grafana ダッシュボード v1.0 メトリクス反映
 
 ## Deployment / Kubernetes
 - [ ] Helm Chart: HPA (nyx_bytes_sent_total & CPU) 定義

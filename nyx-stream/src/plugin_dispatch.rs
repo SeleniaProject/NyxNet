@@ -20,6 +20,7 @@ use libloading::Library;
 
 use crate::{plugin_registry::{PluginRegistry, Permission}, plugin::PluginHeader};
 use crate::plugin_registry::PluginInfo;
+use nyx_telemetry::record_plugin_frame;
 
 /// Message sent to a plugin runtime.
 #[derive(Debug)]
@@ -91,6 +92,7 @@ impl PluginDispatcher {
             // Deep copy so lifetime 'static
             let owned = frame_bytes.to_vec();
             let hdr_owned = PluginHeader::decode(&owned).map_err(|_| ())?;
+            record_plugin_frame(hdr.id, hdr_owned.data.len());
             let _ = r.tx.send(PluginMessage { header: hdr_owned }).await;
             Ok(())
         } else {
