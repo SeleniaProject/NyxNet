@@ -1,0 +1,44 @@
+syntax = "proto3";
+
+package nyx.api;
+
+import "google/protobuf/empty.proto";
+
+option go_package = "github.com/nyxproject/nyx/api";
+
+message NodeInfo {
+  string node_id = 1;
+  string version = 2;
+  uint32 uptime_sec = 3;
+  uint64 bytes_in = 4;
+  uint64 bytes_out = 5;
+}
+
+message OpenRequest {
+  string stream_name = 1;
+}
+
+message StreamResponse {
+  uint32 stream_id = 1;
+  string status = 2;
+}
+
+message StreamId {
+  uint32 id = 1;
+}
+
+message EventFilter {
+  repeated string types = 1;
+}
+
+message Event {
+  string type = 1;
+  string detail = 2;
+}
+
+service NyxControl {
+  rpc GetInfo (google.protobuf.Empty) returns (NodeInfo);
+  rpc OpenStream (OpenRequest) returns (StreamResponse);
+  rpc CloseStream (StreamId) returns (google.protobuf.Empty);
+  rpc SubscribeEvents (EventFilter) returns (stream Event);
+} 

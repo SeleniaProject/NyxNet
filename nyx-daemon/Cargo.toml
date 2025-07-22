@@ -1,0 +1,26 @@
+[package]
+name = "nyx-daemon"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+async-trait = "0.1"
+prost = "0.12"
+prost-types = "0.12"
+tokio = { version = "1.37", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tonic = { version = "0.10", features = ["transport", "uds"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+
+nyx-core = { path = "../nyx-core" }
+nyx-transport = { path = "../nyx-transport" }
+nyx-stream = { path = "../nyx-stream" }
+nyx-mix = { path = "../nyx-mix" }
+nyx-control = { path = "../nyx-control" }
+nyx-telemetry = { path = "../nyx-telemetry" }
+
+[build-dependencies]
+tonic-build = "0.10" 
