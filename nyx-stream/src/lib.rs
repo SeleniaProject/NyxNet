@@ -16,6 +16,8 @@ mod scheduler;
 mod plugin_registry;
 #[cfg(feature = "plugin")]
 mod plugin_geostat;
+#[cfg(all(feature = "dynamic_plugin", target_os = "linux"))]
+pub mod plugin_sandbox;
 pub mod capability;
 mod cap_negotiator;
 pub use cap_negotiator::perform_cap_negotiation;

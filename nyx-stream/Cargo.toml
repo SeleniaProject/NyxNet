@@ -22,9 +22,11 @@ nyx-crypto = { path = "../nyx-crypto" }
 nyx-telemetry = { path = "../nyx-telemetry" }
 semver = { version = "1.0", features = ["serde"] }
 libloading = { version = "0.8", optional = true }
+nix = { version = "0.27", optional = true, default-features = false, features = ["sched", "hostname", "fs"] }
+caps = { version = "0.8", optional = true }
 
 [features]
 default = []
 plugin = []
 mpr_experimental = []
-dynamic_plugin = ["libloading"]
+dynamic_plugin = ["libloading", "nix", "caps"]
