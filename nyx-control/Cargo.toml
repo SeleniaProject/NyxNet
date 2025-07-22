@@ -7,7 +7,7 @@ description = "Nyx control plane: DHT and settings sync"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-libp2p = { version = "0.49", default-features = false, features = ["kad", "dns-tokio", "tcp-tokio", "mplex", "yamux", "noise", "websocket"], optional = true }
+libp2p = { version = "0.49", default-features = false, optional = true, features = ["kad", "dns-tokio", "tcp-tokio", "mplex", "yamux", "noise", "websocket", "tokio"] }
 nyx-core = { path = "../nyx-core" }
 tokio = { version = "1", features = ["rt", "macros", "net", "time"] }
 futures = "0.3"
@@ -20,12 +20,12 @@ nyx-stream = { path = "../nyx-stream" }
 reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
 tracing = "0.1"
 jsonwebtoken = "9"
-chrono = { version = "0.4", default-features = false, features = ["std"] }
+chrono = { version = "0.4", features = ["std"] }
 
 [features]
 # Full DHT functionality requires libp2p.
 dht = ["libp2p"]
-default = []
+default = ["dht"]
 
 [dependencies.build-protoc]
 path = "../build-protoc"

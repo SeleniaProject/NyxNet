@@ -35,7 +35,7 @@
 - [x] ICE Lite / STUN サーバ実装を実ネットワークテストで検証
 
 ## 7. Control Plane
-- [ ] libp2p-kad DHT ノード起動とレコード管理
+- [x] libp2p-kad DHT ノード起動とレコード管理
 - [ ] Rendezvous サーバ同期処理 (`probe.rs`, `push.rs`) のネットワーク実装
 - [ ] SETTINGS フレーム双方向同期・ホットリロード
 

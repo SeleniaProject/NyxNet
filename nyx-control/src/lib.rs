@@ -97,21 +97,21 @@ pub async fn spawn_dht() -> DhtHandle {
     let id_keys = identity::Keypair::generate_ed25519();
     let peer_id = PeerId::from(id_keys.public());
 
-    // Build TCP+Noise+Yamux transport manually (tokio backend)
-    let transport = libp2p::tcp::tokio::Transport::new(libp2p::tcp::Config::default())
-        .upgrade(libp2p::core::upgrade::Version::V1)
-        .authenticate(libp2p::noise::NoiseAuthenticated::xx(&id_keys).unwrap())
-        .multiplex(libp2p::yamux::YamuxConfig::default())
-        .boxed();
+    // Use convenience helper for typical TCP/Noise/Yamux transport (tokio backend)
+    let transport = libp2p::tokio_development_transport(id_keys.clone()).unwrap();
 
     let store = MemoryStore::new(peer_id);
     let behaviour = Kademlia::new(peer_id, store);
 
-    let mut swarm = libp2p::swarm::SwarmBuilder::with_tokio_executor(transport, behaviour, peer_id)
-        .build();
+    let mut swarm = libp2p::Swarm::new(transport, behaviour, peer_id);
 
     let (tx, mut rx) = mpsc::channel::<DhtCmd>(32);
     let mut pending_get: HashMap<libp2p::kad::QueryId, oneshot::Sender<Option<Vec<u8>>>> = HashMap::new();
+
+    // Start listening before moving swarm into task.
+    use libp2p::Multiaddr;
+    let listen_addr: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();
+    swarm.listen_on(listen_addr.clone()).expect("listen");
 
     tokio::spawn(async move {
         loop {
@@ -145,11 +145,6 @@ pub async fn spawn_dht() -> DhtHandle {
             }
         }
     });
-
-    // Start listening on random local TCP port.
-    use libp2p::Multiaddr;
-    let listen_addr: Multiaddr = "/ip4/127.0.0.1/tcp/0".parse().unwrap();
-    swarm.listen_on(listen_addr.clone()).expect("listen");
 
     DhtHandle { tx, listen_addr }
 }
