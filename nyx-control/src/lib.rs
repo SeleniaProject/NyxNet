@@ -24,6 +24,18 @@ pub struct ControlManager {
 pub async fn init_control(cfg: &NyxConfig) -> ControlManager {
     let dht = spawn_dht().await;
     let push = cfg.push.clone().map(spawn_push_service);
+
+    // If rendezvous endpoint configured in env NYX_RENDEZVOUS_URL
+    if let Ok(url) = std::env::var("NYX_RENDEZVOUS_URL") {
+        // Use node_id from config or fallback random.
+        let bytes = cfg.node_id.as_ref()
+            .and_then(|s| hex::decode(s).ok())
+            .unwrap_or(vec![0u8;32]);
+        let mut id = [0u8;32];
+        id.copy_from_slice(&bytes[..32]);
+        let client = rendezvous::RendezvousClient::new(url, id, dht.listen_addr().clone(), dht.clone());
+        client.spawn();
+    }
     ControlManager { dht, push }
 }
 
@@ -31,6 +43,7 @@ pub mod settings;
 pub mod probe;
 pub mod push;
 pub use push::{PushHandle, spawn_push_service};
+pub mod rendezvous;
 
 /// Control messages for the DHT event loop.
 #[cfg(feature = "dht")]
