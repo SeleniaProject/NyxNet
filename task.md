@@ -22,7 +22,7 @@
 - [x] PATH_VALIDATION_FAILED (0x05) エラー処理全層対応
 
 ## Plugin Framework
-- [ ] Frame Type 0x50–0x5F パーサ & ディスパッチ
+- [x] Frame Type 0x50–0x5F パーサ & ディスパッチ
 - [ ] CBOR Capability Negotiation ハンドシェイク実装
 - [ ] Sandbox 分離 & Permission Enforcement 強化
 - [ ] Plugin ライフサイクル API (load/unload, version check)
