@@ -40,8 +40,8 @@
 - [x] SETTINGS フレーム双方向同期・ホットリロード
 
 ## 8. プラグインフレーム & サンドボックス
+- [x] Plugin IPC (tokio mpsc → Unix Domain Socket / NamedPipe) 実装
 - [ ] Cross-platform サンドボックス (macOS システム拡張、Windows Job Object)
-- [ ] Plugin IPC (tokio mpsc → Unix Domain Socket / NamedPipe) 実装
 - [ ] `dynamic_plugin` フィーチャのビルド・テストワークフロー追加
 
 ## 9. モバイル低電力モード
