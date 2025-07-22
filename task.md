@@ -53,9 +53,9 @@
 - [x] PodSecurityContext/ seccomp-bpf プロファイル強化
 
 ## CLI / SDK
-- [ ] `nyx-cli key rotate` コマンド実装
-- [ ] `nyx-cli quarantine <node>` 機能実装
-- [ ] CLI/SDK 新規メッセージ i18n (ja, en, zh) 完全対応
+- [x] `nyx-cli key rotate` コマンド実装
+- [x] `nyx-cli quarantine <node>` 機能実装
+- [x] CLI/SDK 新規メッセージ i18n (ja, en, zh) 完全対応
 
 ## Documentation
 - [ ] v1.0 仕様差分の Rustdoc & MkDocs 反映
