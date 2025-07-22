@@ -18,7 +18,12 @@ pub enum PushProvider {
     /// Firebase Cloud Messaging – uses legacy server key authentication.
     Fcm { server_key: String },
     /// Apple Push Notification Service – uses JWT authentication token.
-    Apns { auth_token: String },
+    Apns {
+        team_id: String,
+        key_id: String,
+        /// Raw contents of the `.p8` private key (BEGIN PRIVATE KEY ...).
+        key_p8: String,
+    },
 }
 
 /// Primary configuration structure shared across Nyx components.
