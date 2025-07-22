@@ -31,7 +31,7 @@
 ## FEC Layer
 - [x] RaptorQ エンコーダ/デコーダ統合 (`nyx-fec`)
 - [x] 冗長率アダプティブ制御ロジック
-- [ ] SIMD 強化 Reed-Solomon 最適化
+- [x] SIMD 強化 Reed-Solomon 最適化
 
 ## Transport Adapter
 - [ ] QUIC DATAGRAM サポート (quinn datagram 拡張)

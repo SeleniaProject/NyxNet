@@ -22,7 +22,8 @@ rayon = { version = "1.10", optional = true }
 rayon = { version = "1.10" }
 
 [features]
-# Enable C/assembly SIMD acceleration in reed-solomon-erasure when available.
+default = []
+# Enable SIMD-accelerated C backend of reed-solomon-erasure (requires cc).
 simd = ["reed-solomon-erasure/simd-accel"]
 raptorq = []
 
