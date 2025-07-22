@@ -33,9 +33,9 @@
 use std::fs;
 use std::io::{Read, Write};
 use std::path::Path;
-use age::secrecy::Secret;
-use age::{Encryptor, Decryptor};
 use age::armor::{ArmoredWriter, ArmoredReader, Format};
+use age::secrecy::SecretString;
+use age::Encryptor;
 use zeroize::Zeroizing;
 use thiserror::Error;
 use std::time::{SystemTime, Duration};
@@ -46,7 +46,9 @@ pub enum KeystoreError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
     #[error("age encryption error: {0}")]
-    Age(#[from] age::Error),
+    Encrypt(#[from] age::EncryptError),
+    #[error("age decryption error: {0}")]
+    Decrypt(#[from] age::DecryptError),
     #[error("decryption failed (incorrect passphrase or corrupt file)")]
     DecryptFailed,
 }
@@ -60,14 +62,15 @@ pub fn encrypt_and_store<P: AsRef<Path>>(secret: &Zeroizing<Vec<u8>>, path: P, p
 
     // Writer → armor → file.
     let file = fs::File::create(&path)?;
-    let armor = ArmoredWriter::wrap_output(file, Format::Age)
+    let armor = ArmoredWriter::wrap_output(file, Format::AsciiArmor)
         .map_err(|e| KeystoreError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
 
-    let mut encryptor = Encryptor::with_user_passphrase(Secret::new(passphrase.to_owned()))
-        .expect("always ok").wrap_output(armor)?;
+    let pass = SecretString::from(passphrase.to_owned());
+    let encryptor = Encryptor::with_user_passphrase(pass);
+    let mut writer = encryptor.wrap_output(armor)?;
 
-    encryptor.write_all(&*secret)?;
-    encryptor.finish()?; // flush + close
+    writer.write_all(&*secret)?;
+    writer.finish()?; // flush + close
     Ok(())
 }
 
@@ -75,12 +78,11 @@ pub fn encrypt_and_store<P: AsRef<Path>>(secret: &Zeroizing<Vec<u8>>, path: P, p
 pub fn load_and_decrypt<P: AsRef<Path>>(path: P, passphrase: &str) -> Result<Zeroizing<Vec<u8>>, KeystoreError> {
     let file = fs::File::open(&path)?;
     let mut armor = ArmoredReader::new(file);
-    let decryptor = match Decryptor::new(&mut armor)? {
-        Decryptor::Passphrase(d) => d,
-        _ => return Err(KeystoreError::DecryptFailed),
-    };
+    let decryptor = age::Decryptor::new(&mut armor)?;
 
-    let mut reader = decryptor.decrypt(&Secret::new(passphrase.to_owned()), None)?;
+    let pass = SecretString::from(passphrase.to_owned());
+    let identity = age::scrypt::Identity::new(pass);
+    let mut reader = decryptor.decrypt(std::iter::once(&identity as &dyn age::Identity))?;
     let mut buf = Zeroizing::new(Vec::new());
     reader.read_to_end(&mut buf)?;
     Ok(buf)
@@ -139,7 +141,7 @@ mod tests {
         encrypt_and_store(&secret, &path, "pass1").unwrap();
         let err = load_and_decrypt(&path, "wrongpass").unwrap_err();
         match err {
-            KeystoreError::DecryptFailed | KeystoreError::Age(_) => {},
+            KeystoreError::DecryptFailed | KeystoreError::Encrypt(_) | KeystoreError::Decrypt(_) => {},
             _ => panic!("unexpected error type"),
         }
         fs::remove_file(&path).unwrap();
