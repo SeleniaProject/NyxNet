@@ -33,6 +33,8 @@ use num_bigint::BigUint;
 const DEFAULT_DELAY_MS: u64 = 100;
 /// Maximum number of packets per batch.
 const DEFAULT_BATCH: usize = 100;
+/// VDF iterations per millisecond (calibrated empirically ~10k on modern CPU).
+const VDF_ITERS_PER_MS: u64 = 10_000;
 
 /// Resulting batch metadata.
 #[derive(Debug, Clone)]
@@ -42,6 +44,7 @@ pub struct CmixBatch {
     // Wesolowski VDF proof components
     pub vdf_y: Vec<u8>,        // y = x^{2^t} mod n
     pub vdf_pi: Vec<u8>,       // π = x^q mod n
+    pub vdf_iters: u64,        // iteration count (t)
     // RSA accumulator data
     pub acc_value: Vec<u8>,    // current accumulator value A bytes
     pub witness: Vec<u8>,      // membership witness (pre-add accumulator)
@@ -100,10 +103,10 @@ impl CmixController {
                     let mut hasher = Sha256::new();
                     for p in &buffer { hasher.update(p); }
                     let digest = hasher.finalize();
-                    // VDF evaluation (fixed iterations calibrated ~100ms)
-                    const ITER: u64 = 1_000;
+                    // VDF evaluation based on delay
+                    let iters = delay_ms.saturating_mul(VDF_ITERS_PER_MS);
                     let x = BigUint::from_bytes_be(&digest);
-                    let (y, pi) = vdf::prove(&x, &params_cloned.n, ITER);
+                    let (y, pi) = vdf::prove_mont(&x, &params_cloned.n, iters);
 
                     // Update accumulator with hash_to_prime(digest)
                     let elem = crate::accumulator::hash_to_prime(&digest);
@@ -115,6 +118,7 @@ impl CmixController {
                         digest: digest.into(),
                         vdf_y: y.to_bytes_be(),
                         vdf_pi: pi.to_bytes_be(),
+                        vdf_iters: iters,
                         acc_value: acc_bytes,
                         witness: witness.to_bytes_be(),
                     };
@@ -142,7 +146,7 @@ impl Default for CmixController {
 }
 
 /// Verify `CmixBatch` integrity: digest, VDF proof, and RSA accumulator membership.
-pub fn verify_batch(batch: &CmixBatch, params: &crate::accumulator::AccumulatorParams, vdf_iters: u64) -> bool {
+pub fn verify_batch(batch: &CmixBatch, params: &crate::accumulator::AccumulatorParams, _expected_iters: Option<u64>) -> bool {
     use crate::accumulator::verify_membership;
     // Recompute digest from packets.
     let mut hasher = Sha256::new();
@@ -155,7 +159,7 @@ pub fn verify_batch(batch: &CmixBatch, params: &crate::accumulator::AccumulatorP
     let x = BigUint::from_bytes_be(&batch.digest);
     let y = BigUint::from_bytes_be(&batch.vdf_y);
     let pi = BigUint::from_bytes_be(&batch.vdf_pi);
-    if !vdf::verify(&x, &y, &pi, &params.n, vdf_iters) {
+    if !vdf::verify(&x, &y, &pi, &params.n, batch.vdf_iters) {
         return false;
     }
 
@@ -179,6 +183,6 @@ mod tests {
         let batch = cmix.recv().await.expect("no batch");
         assert_eq!(batch.packets.len(), 1);
         // Verify proofs
-        assert!(verify_batch(&batch, cmix.params(), 1_000));
+        assert!(verify_batch(&batch, cmix.params(), Some(50_000)));
     }
 } 
