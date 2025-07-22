@@ -17,6 +17,7 @@ pub use noise::bike;
 #[cfg(feature = "kyber")]
 pub use noise::kyber;
 pub mod aead;
+pub mod keystore;
 
 pub use kdf::KdfLabel;
 

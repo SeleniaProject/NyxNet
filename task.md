@@ -6,7 +6,7 @@
 ## Core Cryptography
 - [x] Hybrid Post-Quantum Handshake (X25519 + Kyber) 実装 (`nyx-crypto/hybrid.rs` 完全化)
 - [x] HPKE レイヤ導入と Stream 層統合
-- [ ] age 形式でのキーストア暗号化 & zeroization 徹底監査
+- [x] age 形式でのキーストア暗号化 & zeroization 徹底監査
 
 ## cMix / VDF
 - [ ] Wesolowski VDF 実装 (最適化 Montgomery 乗算)
