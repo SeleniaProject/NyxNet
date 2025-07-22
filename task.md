@@ -34,9 +34,9 @@
 - [x] SIMD 強化 Reed-Solomon 最適化
 
 ## Transport Adapter
-- [ ] QUIC DATAGRAM サポート (quinn datagram 拡張)
-- [ ] TCP フォールバック実装 & ポリシー
-- [ ] IPv6 Teredo トンネリング最終化 (Windows 対応)
+- [x] QUIC DATAGRAM サポート (quinn datagram 拡張)
+- [x] TCP フォールバック実装 & ポリシー
+- [x] IPv6 Teredo トンネリング最終化 (Windows 対応)
 
 ## Low Power Mode / Mobile
 - [ ] 電源状態フック実装 (Android/iOS) と cover_ratio スケーリング
