@@ -57,7 +57,7 @@ pub struct TcpEncapListener {
 }
 
 impl TcpEncapListener {
-    #[instrument(name = "tcp_listener_bind", skip(port), fields(local_port = port))]
+    #[instrument(name="tcp_listener_bind", skip(port), fields(local_port = port))]
     pub async fn bind(port: u16) -> std::io::Result<Self> {
         let listener = TcpListener::bind(("0.0.0.0", port)).await?;
         let (tx, rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>(1024);
@@ -65,6 +65,10 @@ impl TcpEncapListener {
             loop {
                 match listener.accept().await {
                     Ok((mut stream, addr)) => {
+                        // Enable low-latency mode and keepalive so that middleboxes
+                        // don't silently drop the long-lived fallback connection.
+                        let _ = stream.set_nodelay(true);
+                        let _ = stream.set_keepalive(Some(std::time::Duration::from_secs(30)));
                         info!("tcp_fallback: connection from {}", addr);
                         let tx_clone = tx.clone();
                         tokio::spawn(async move {
@@ -101,6 +105,8 @@ impl TcpEncapConnection {
     #[instrument(name="tcp_client_connect", skip(addr), fields(server=%addr))]
     pub async fn connect(addr: &str) -> std::io::Result<Self> {
         let stream = TcpStream::connect(addr).await?;
+        let _ = stream.set_nodelay(true);
+        let _ = stream.set_keepalive(Some(std::time::Duration::from_secs(30)));
         let peer = stream.peer_addr()?;
         Ok(Self { stream: tokio::sync::Mutex::new(stream), peer })
     }
@@ -130,8 +136,18 @@ mod tests {
         let listener = TcpEncapListener::bind(4480).await.unwrap();
         let conn = TcpEncapConnection::connect("127.0.0.1:4480").await.unwrap();
         conn.send(&[1,2,3]).await.unwrap();
+        // First packet
         if let Some((_, pkt)) = listener.incoming.recv().await {
             assert_eq!(pkt, vec![1,2,3]);
         } else { panic!("no packet"); }
+
+        // Wait to ensure keepalive prevents closure and NAT idle drop.
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+
+        // Second packet after idle period.
+        conn.send(&[9,8,7]).await.unwrap();
+        if let Some((_, pkt)) = listener.incoming.recv().await {
+            assert_eq!(pkt, vec![9,8,7]);
+        } else { panic!("no packet 2"); }
     }
 } 
