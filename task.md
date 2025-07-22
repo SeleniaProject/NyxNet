@@ -13,9 +13,9 @@
 - [x] Loss/RTT サンプリング、CongestionCtrl へのフィード
 
 ## 3. Multipath 拡張
-- [ ] PathID 付きヘッダの送受信実運用コード
-- [ ] Weighted Round-Robin スケジューラの実装とテレメトリ計測
-- [ ] 新経路 Path Validation (PATH_CHALLENGE/RESPONSE) の実装
+- [x] PathID 付きヘッダの送受信実運用コード
+- [x] Weighted Round-Robin スケジューラの実装とテレメトリ計測
+- [x] 新経路 Path Validation (PATH_CHALLENGE/RESPONSE) の実装
 
 ## 4. FEC / オブフスケーション
 - [ ] RaptorQ エンジンの実装と適応冗長率制御
