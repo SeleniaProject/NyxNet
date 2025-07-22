@@ -3,71 +3,21 @@
 
 最終更新: 2025-07-21
 
-## Core Cryptography
-- [x] Hybrid Post-Quantum Handshake (X25519 + Kyber) 実装 (`nyx-crypto/hybrid.rs` 完全化)
-- [x] HPKE レイヤ導入と Stream 層統合
-- [x] age 形式でのキーストア暗号化 & zeroization 徹底監査
-
-## cMix / VDF
-- [x] Wesolowski VDF 実装 (最適化 Montgomery 乗算)
-- [x] マルチノード RSA Accumulator キーセレモニー & 証明生成
-- [x] cMix コントローラのミキサーパイプライン統合
-- [x] cMix コンフォーマンステスト & Fuzz コーパス拡充
-
-## Multipath / Routing
-- [x] RTT 逆数重み付け WRR スケジューラ本番統合
-- [x] MPR 冗長率の動的調整アルゴリズム
-- [x] LARMix++ 遅延感応ルートビルダ (動的 Hop 3–7)
-- [x] 経路差分に応じたリオーダバッファサイズ自動化
-- [x] PATH_VALIDATION_FAILED (0x05) エラー処理全層対応
-
-## Plugin Framework
-- [x] Frame Type 0x50–0x5F パーサ & ディスパッチ
-- [x] CBOR Capability Negotiation ハンドシェイク実装
-- [x] Sandbox 分離 & Permission Enforcement 強化
-- [x] Plugin ライフサイクル API (load/unload, version check)
-- [x] 必須/任意 Plugin Capability テストケース
-
-## FEC Layer
-- [x] RaptorQ エンコーダ/デコーダ統合 (`nyx-fec`)
-- [x] 冗長率アダプティブ制御ロジック
-- [x] SIMD 強化 Reed-Solomon 最適化
-
-## Transport Adapter
-- [x] QUIC DATAGRAM サポート (quinn datagram 拡張)
-- [x] TCP フォールバック実装 & ポリシー
-- [x] IPv6 Teredo トンネリング最終化 (Windows 対応)
-
-## Low Power Mode / Mobile
-- [x] 電源状態フック実装 (Android/iOS) と cover_ratio スケーリング
-- [x] Push Gateway (FCM/APNS) 経由ウェイクアップロジック
-- [x] 低電力モード E2E シナリオテスト
-
-## Telemetry & Observability
-- [x] OpenTelemetry Span 追加 (全 async task)
-- [x] Prometheus メトリクス拡充 (新モジュール対応)
-- [x] Grafana ダッシュボード v1.0 メトリクス反映
-
-## Deployment / Kubernetes
-- [x] Helm Chart: HPA (nyx_bytes_sent_total & CPU) 定義
-- [x] PodSecurityContext/ seccomp-bpf プロファイル強化
-
-## CLI / SDK
-- [x] `nyx-cli key rotate` コマンド実装
-- [x] `nyx-cli quarantine <node>` 機能実装
-- [x] CLI/SDK 新規メッセージ i18n (ja, en, zh) 完全対応
-
-## Documentation
-- [x] v1.0 仕様差分の Rustdoc & MkDocs 反映
-- [x] gRPC API 自動生成ドキュメントパイプライン
-
-## Testing & CI
-- [x] Multipath スケジューラ & RaptorQ リカバリのプロパティテスト
-- [x] Plugin パーサ, VDF 証明検証用 Fuzz ターゲット追加
-- [x] `nyx-sdk-wasm` 用 WASM ビルド CI マトリクス
-
-## Security Hardening
-- [x] Linux seccomp プロファイル生成 & 適用
-- [x] OpenBSD pledge/unveil バインディング実装
-- [x] systemd panic=abort リカバリ & コアダンプ連携
 ---
+- [x] `nyx-mix/src/cmix.rs` で VDF 証明をネットワーク I/O と統合し、現状の疑似ディレイ／プレースホルダを置き換える
+- [ ] プラグイン実行環境を seccomp + PID/UTS 名前空間で完全分離 (`dynamic_plugin` feature) し、強隔離を実現する
+- [ ] `nyx-transport/src/teredo.rs` の IPv6 Teredo fallback をフル実装し、E2E テストを追加する
+- [ ] `nyx-transport/src/tcp_fallback.rs` の TCP フォールバック実装を完成させ、接続維持テストを整備する
+- [ ] ハイブリッド X25519 + Kyber ハンドシェイクの秘密共有統合ロジックを実装（`nyx-crypto/src/noise.rs` L126 付近の TODO）
+- [ ] `nyx-stream/src/congestion.rs` の BBRv2 アルゴリズムを最小実装から完全実装へ拡充する
+- [ ] `nyx-transport/src/ice.rs` および `nyx-transport/src/stun_server.rs` の STUN/BINDING メッセージ構築プレースホルダを正式仕様準拠に置換する
+- [ ] `nyx-control/src/push.rs` の APNS Push 実装を HTTP/2 + JWT 認証含めて完成させる
+- [ ] `nyx-core/src/sandbox.rs` の seccomp フィルタを全システムコール網羅に更新し、最小セットコメントを除去する
+- [ ] `nyx-transport/src/teredo.rs` の interface identifier プレースホルダを正式アルゴリズムで算出する
+- [ ] `src/empty.rs` プレースホルダクレートを削除するか実用途のユーティリティクレートへ置換する
+- [ ] `nyx-stream/src/management.rs` CLOSE コード 0x07 (UNSUPPORTED_CAP) ハンドリングを追加し、Capability Negotiation エラーを適切に伝播する
+- [ ] v1.0 仕様書最終稿とコードコメントの差分を確認し、ドキュメントを同期する
+- [ ] `nyx-mix/src/lib.rs` の `PathBuilder` (uniform random) を `WeightedPathBuilder` ベースへ置き換え、レイテンシ／帯域メトリクスを活用する
+- [ ] `nyx-crypto/src/keystore.rs` に永続ストレージ I/O 実装（age-encrypt ファイル保存）とキー定期ローテーション機能を追加する
+
+
