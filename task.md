@@ -18,9 +18,9 @@
 - [x] 新経路 Path Validation (PATH_CHALLENGE/RESPONSE) の実装
 
 ## 4. FEC / オブフスケーション
-- [ ] RaptorQ エンジンの実装と適応冗長率制御
-- [ ] タイミング平滑化 (±σ ランダムディレイ) 送信キュー
-- [ ] 固定 1280B パディング I/O パイプラインへの統合
+- [x] RaptorQ エンジンの実装と適応冗長率制御
+- [x] タイミング平滑化 (±σ ランダムディレイ) 送信キュー
+- [x] 固定 1280B パディング I/O パイプラインへの統合
 
 ## 5. Mix Routing / cMix
 - [ ] Wesolowski VDF 高速化 (Montgomery + 並列化)
@@ -67,26 +67,4 @@
 ## 13. テスト & CI/CD
 - [ ] `nyx-conformance` 全 120 ケースを Green にする
 - [ ] fuzz target 強化: Stream パーサ, PathBuilder, VDF プルーフ
-- [ ] GitHub Actions: wasm32 / Windows / macOS / Linux matrix, `cargo deny`, `cargo audit`
-- [ ] nightly ビルドで `-Z minimal-versions` を定期検証
-
-## 14. デプロイ & オーケストレーション
-- [ ] Docker multi-arch (linux/amd64, arm64, riscv64) イメージ生成
-- [ ] Helm chart を v1.0 Capability 用に更新 (ConfigMap, HPA)
-- [ ] systemd service `nyxd.service` / OpenBSD rc.d スクリプト
-
-## 15. 形式検証 / フォーマル
-- [ ] TLA+ モデルを v1.0 Hybrid Handshake まで拡張し TLC で検証
-- [ ] Rust proptest による State Machine Property Test 追加
-
-## 16. ドキュメント / ガイド
-- [ ] docs/ja & docs/en へ API 使用例、Plugin 開発ガイド拡充
-- [ ] MkDocs → GitHub Pages パイプライン自動化
-- [ ] CONTRIBUTING.md にコード規約 & PR テンプレート追加
-
----
-**備考**: 上記タスクは Nyx Protocol v1.0 “Full” 準拠を目標とした必須作業項目です。進捗に応じて本ファイルを更新してください。
-
-
-
-
+- [ ] GitHub Actions: wasm32 / Windows / macOS / Linux matrix, `

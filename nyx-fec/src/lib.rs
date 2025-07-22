@@ -12,6 +12,9 @@ pub use timing::{TimingObfuscator, TimingConfig, Packet};
 pub mod raptorq;
 pub use raptorq::{RaptorQCodec, AdaptiveRaptorQ};
 
+pub mod padding;
+pub use padding::{pad_outgoing, trim_incoming};
+
 pub const DATA_SHARDS: usize = 10;
 pub const PARITY_SHARDS: usize = 3;
 pub const SHARD_SIZE: usize = 1280; // One Nyx packet per shard.

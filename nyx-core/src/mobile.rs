@@ -43,9 +43,8 @@ pub enum MobilePowerState {
 pub fn subscribe_power_events() -> impl Stream<Item = MobilePowerState> {
     static CHANNEL: OnceCell<watch::Receiver<MobilePowerState>> = OnceCell::new();
 
-    CHANNEL.get_or_init(|| {
+    let rx = CHANNEL.get_or_init(|| {
         let (tx, rx) = watch::channel(MobilePowerState::Foreground);
-        // Spawn monitor task only once.
         tokio::spawn(async move {
             let mut last = MobilePowerState::Foreground;
             loop {
@@ -62,7 +61,8 @@ pub fn subscribe_power_events() -> impl Stream<Item = MobilePowerState> {
             }
         });
         rx
-    }).clone().into()
+    }).clone();
+    WatchStream::new(rx)
 }
 
 #[cfg(target_os = "android")]
