@@ -19,8 +19,11 @@ schemars = { version = "0.8", features=["derive"] }
 jsonschema = "0.17"
 tracing = "0.1"
 nyx-crypto = { path = "../nyx-crypto" }
+semver = { version = "1.0", features = ["serde"] }
+libloading = { version = "0.8", optional = true }
 
 [features]
 default = []
 plugin = []
 mpr_experimental = []
+dynamic_plugin = ["libloading"]

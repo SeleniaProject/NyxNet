@@ -25,7 +25,7 @@
 - [x] Frame Type 0x50–0x5F パーサ & ディスパッチ
 - [x] CBOR Capability Negotiation ハンドシェイク実装
 - [x] Sandbox 分離 & Permission Enforcement 強化
-- [ ] Plugin ライフサイクル API (load/unload, version check)
+- [x] Plugin ライフサイクル API (load/unload, version check)
 - [ ] 必須/任意 Plugin Capability テストケース
 
 ## FEC Layer

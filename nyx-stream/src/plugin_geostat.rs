@@ -14,6 +14,7 @@
 
 use serde::{Serialize, Deserialize};
 use serde_cbor;
+use semver::Version;
 use super::{PluginHeader, PluginInfo, Permission};
 
 /// Assigned plugin ID (0x47454F53 = 'GEOS').
@@ -46,7 +47,12 @@ impl GeoStat {
 /// Return the [`PluginInfo`] metadata required during registration.
 #[must_use]
 pub fn plugin_info() -> PluginInfo {
-    PluginInfo { id: GEO_PLUGIN_ID, name: "GeoStat".into(), permissions: Permission::ACCESS_GEO }
+    PluginInfo {
+        id: GEO_PLUGIN_ID,
+        name: "GeoStat".into(),
+        version: Version::new(1, 0, 0),
+        permissions: Permission::ACCESS_GEO,
+    }
 }
 
 #[cfg(test)]
