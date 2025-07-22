@@ -7,10 +7,10 @@
 - [x] Panic フック・自動再起動戦略(systemd) の統合
 
 ## 2. Stream Layer 完全実装
-- [ ] フロー制御 (BBRv2 派⽣) アルゴリズムの実装
-- [ ] ストリーム状態機械 (Idle/Open/HalfClosed/Closed) と再送・ACK 合算ロジック
-- [ ] ACK フレーム生成・遅延 ACK タイマ
-- [ ] Loss/RTT サンプリング、CongestionCtrl へのフィード
+- [x] フロー制御 (BBRv2 派⽣) アルゴリズムの実装
+- [x] ストリーム状態機械 (Idle/Open/HalfClosed/Closed) と再送・ACK 合算ロジック
+- [x] ACK フレーム生成・遅延 ACK タイマ
+- [x] Loss/RTT サンプリング、CongestionCtrl へのフィード
 
 ## 3. Multipath 拡張
 - [ ] PathID 付きヘッダの送受信実運用コード

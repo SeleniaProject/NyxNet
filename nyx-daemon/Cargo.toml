@@ -12,7 +12,7 @@ prost-types = "0.12"
 tokio = { version = "1.37", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
-tonic = { version = "0.10", features = ["transport", "uds"] }
+tonic = { version = "0.10", features = ["transport"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 
 nyx-core = { path = "../nyx-core" }

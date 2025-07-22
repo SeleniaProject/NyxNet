@@ -6,6 +6,8 @@ pub mod congestion;
 pub mod builder;
 pub mod tx;
 pub mod stream_frame;
+pub mod ack;
+pub mod state;
 #[cfg(feature = "plugin")]
 pub mod plugin;
 pub mod management;
@@ -32,6 +34,8 @@ pub use builder::build_header;
 pub use congestion::CongestionCtrl;
 pub use tx::TxQueue;
 pub use stream_frame::{StreamFrame, build_stream_frame, parse_stream_frame};
+pub use ack::{AckFrame, build_ack_frame, parse_ack_frame, AckGenerator};
+pub use state::{Stream, StreamState};
 pub mod layer;
 pub use layer::StreamLayer;
 mod reorder;
