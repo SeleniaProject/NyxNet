@@ -57,4 +57,15 @@ mod tests {
         // Reason should contain cap_id in big-endian
         assert_eq!(frame.reason, &0xDEADBEEF_u32.to_be_bytes()[..]);
     }
+
+    #[test]
+    fn negotiation_ignores_optional_unknown() {
+        // Remote advertises an optional capability we don't know (0xBEEF)
+        let remote_caps = vec![Capability { id: 0xBEEF, flags: 0, data: Vec::new() }];
+        let buf = encode_caps(&remote_caps);
+        // Should succeed because capability is not required
+        let peer = perform_cap_negotiation(&buf).expect("optional cap allowed");
+        assert_eq!(peer.len(), 1);
+        assert_eq!(peer[0].id, 0xBEEF);
+    }
 } 

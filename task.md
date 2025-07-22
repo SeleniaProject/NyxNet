@@ -26,7 +26,7 @@
 - [x] CBOR Capability Negotiation ハンドシェイク実装
 - [x] Sandbox 分離 & Permission Enforcement 強化
 - [x] Plugin ライフサイクル API (load/unload, version check)
-- [ ] 必須/任意 Plugin Capability テストケース
+- [x] 必須/任意 Plugin Capability テストケース
 
 ## FEC Layer
 - [x] RaptorQ エンコーダ/デコーダ統合 (`nyx-fec`)
