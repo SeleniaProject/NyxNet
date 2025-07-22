@@ -7,6 +7,7 @@ pub mod types;
 pub mod sandbox;
 pub mod i18n;
 pub mod mobile;
+pub mod push;
 pub mod capability;
 pub mod compliance;
 

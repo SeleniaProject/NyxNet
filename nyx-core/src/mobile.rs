@@ -9,6 +9,7 @@
 
 use tokio_stream::{wrappers::WatchStream, Stream};
 use tokio::sync::watch;
+use once_cell::sync::OnceCell;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BatteryState {
@@ -38,12 +39,30 @@ pub enum MobilePowerState {
 }
 
 /// Subscribe to power state changes (stubbed on desktop).
+/// Start background power monitor once and return a stream of events.
 pub fn subscribe_power_events() -> impl Stream<Item = MobilePowerState> {
-    // Desktop platforms: emit a single Foreground and then end.
-    let (tx, rx) = watch::channel(MobilePowerState::Foreground);
-    // Send initial state; no further updates in stub.
-    let _ = tx.send(MobilePowerState::Foreground);
-    WatchStream::new(rx)
+    static CHANNEL: OnceCell<watch::Receiver<MobilePowerState>> = OnceCell::new();
+
+    CHANNEL.get_or_init(|| {
+        let (tx, rx) = watch::channel(MobilePowerState::Foreground);
+        // Spawn monitor task only once.
+        tokio::spawn(async move {
+            let mut last = MobilePowerState::Foreground;
+            loop {
+                let batt = battery_state();
+                let state = match batt {
+                    BatteryState::Charging | BatteryState::Full => MobilePowerState::Charging,
+                    BatteryState::Discharging => MobilePowerState::Discharging,
+                    BatteryState::Unknown => MobilePowerState::Foreground,
+                };
+                if state != last {
+                    if tx.send(state).is_ok() { last = state; }
+                }
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        });
+        rx
+    }).clone().into()
 }
 
 #[cfg(target_os = "android")]

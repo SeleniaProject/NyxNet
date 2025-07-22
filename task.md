@@ -39,9 +39,9 @@
 - [x] IPv6 Teredo トンネリング最終化 (Windows 対応)
 
 ## Low Power Mode / Mobile
-- [ ] 電源状態フック実装 (Android/iOS) と cover_ratio スケーリング
-- [ ] Push Gateway (FCM/APNS) 経由ウェイクアップロジック
-- [ ] 低電力モード E2E シナリオテスト
+- [x] 電源状態フック実装 (Android/iOS) と cover_ratio スケーリング
+- [x] Push Gateway (FCM/APNS) 経由ウェイクアップロジック
+- [x] 低電力モード E2E シナリオテスト
 
 ## Telemetry & Observability
 - [ ] OpenTelemetry Span 追加 (全 async task)

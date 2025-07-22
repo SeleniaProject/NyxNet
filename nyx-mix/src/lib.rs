@@ -11,6 +11,7 @@ pub mod cmix;
 pub use cmix::{CmixController, verify_batch};
 
 pub mod cover;
+pub mod cover_adaptive;
 pub use cover::CoverGenerator;
 pub mod adaptive;
 pub use adaptive::{AdaptiveCoverGenerator, UtilizationEstimator};
