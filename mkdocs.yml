@@ -18,6 +18,7 @@ nav:
   - はじめに: index.md
   - チュートリアル:
       - 最小チャットアプリ: tutorial_chat.md
+  - v1.0 変更点: ja/v1_0_diff.md
 markdown_extensions:
   - admonition
   - codehilite

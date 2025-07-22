@@ -58,8 +58,8 @@
 - [x] CLI/SDK 新規メッセージ i18n (ja, en, zh) 完全対応
 
 ## Documentation
-- [ ] v1.0 仕様差分の Rustdoc & MkDocs 反映
-- [ ] gRPC API 自動生成ドキュメントパイプライン
+- [x] v1.0 仕様差分の Rustdoc & MkDocs 反映
+- [x] gRPC API 自動生成ドキュメントパイプライン
 
 ## Testing & CI
 - [ ] Multipath スケジューラ & RaptorQ リカバリのプロパティテスト

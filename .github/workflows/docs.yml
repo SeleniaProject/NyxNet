@@ -1,30 +1,39 @@
-name: Deploy Docs
+name: docs
 
 on:
   push:
     branches: [ main ]
     paths:
-      - 'docs/**'
-      - 'mkdocs.yml'
-      - '.github/workflows/docs.yml'
+      - "proto/**.proto"
+      - "spec/**"
+      - "docs/**"
+      - "mkdocs.yml"
 
 jobs:
-  build-deploy:
+  build-docs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
         with:
-          python-version: '3.x'
-      - name: Install MkDocs
+          toolchain: stable
+          override: true
+      - name: Install protoc-gen-doc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler-grpc
+      - name: Generate gRPC HTML
         run: |
-          pip install mkdocs-material mkdocs-static-i18n
-      - name: Build site
-        run: |
-          mkdocs build --strict
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+          mkdir -p docs/api
+          for f in $(find proto -name '*.proto'); do
+            protoc -I proto --doc_out=html,api.html:docs/api $f
+          done
+      - name: Build MkDocs site
+        uses: amitsingh-007/markdown-to-html@v3
+        with:
+          input_dir: docs
+          output_dir: site
+      - name: Deploy to Pages
+        uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./site 
+          publish_dir: site 
