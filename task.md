@@ -23,16 +23,16 @@
 - [x] 固定 1280B パディング I/O パイプラインへの統合
 
 ## 5. Mix Routing / cMix
-- [ ] Wesolowski VDF 高速化 (Montgomery + 並列化)
-- [ ] RSA アキュムレータ多者鍵儀式 (MPC) 実装
-- [ ] `CmixController` をデーモンに統合し、バッチ発射 → 下位 Transport への接続
-- [ ] LARMix++ プローブ結果を利用して経路長を動的決定
+- [x] Wesolowski VDF 高速化 (Montgomery + 並列化)
+- [x] RSA アキュムレータ多者鍵儀式 (MPC) 実装
+- [x] `CmixController` をデーモンに統合し、バッチ発射 → 下位 Transport への接続
+- [x] LARMix++ プローブ結果を利用して経路長を動的決定
 
 ## 6. Transport Adapter
-- [ ] QUIC DATAGRAM サポート (quinn と統合)
-- [ ] TCP フォールバック実装
-- [ ] Teredo (IPv6 トンネル) 経路ハンドラ
-- [ ] ICE Lite / STUN サーバ実装を実ネットワークテストで検証
+- [x] QUIC DATAGRAM サポート (quinn と統合)
+- [x] TCP フォールバック実装
+- [x] Teredo (IPv6 トンネル) 経路ハンドラ
+- [x] ICE Lite / STUN サーバ実装を実ネットワークテストで検証
 
 ## 7. Control Plane
 - [ ] libp2p-kad DHT ノード起動とレコード管理
