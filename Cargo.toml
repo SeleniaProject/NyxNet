@@ -29,6 +29,3 @@ protoc-bin-vendored = "3"
 codegen-units = 1
 lto = "fat"
 opt-level = "z" 
-
-[lib]
-path = "src/empty.rs" 
