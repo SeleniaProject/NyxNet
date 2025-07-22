@@ -17,7 +17,7 @@ async fn cmix_verify_rejects_tampered_batch() {
 
     // Flip one bit of the digest – verification must fail.
     batch.digest[0] ^= 0xff;
-    assert!(!verify_batch(&batch, controller.params(), 1_000));
+    assert!(!verify_batch(&batch, controller.params(), None));
 }
 
 #[tokio::test]
@@ -36,5 +36,5 @@ async fn cmix_verify_rejects_invalid_witness() {
     if let Some(b) = batch.witness.get_mut(0) {
         *b ^= 0x55;
     }
-    assert!(!verify_batch(&batch, controller.params(), 1_000));
+    assert!(!verify_batch(&batch, controller.params(), None));
 } 

@@ -25,7 +25,7 @@ fuzz_target!(|data: &[u8]| {
         // execution. If a batch arrives, attempt full cryptographic
         // verification. Any internal panic will be surfaced to libFuzzer.
         if let Ok(Some(batch)) = timeout(Duration::from_millis(5), ctrl.recv()).await {
-            let _ = verify_batch(&batch, ctrl.params(), 1_000);
+            let _ = verify_batch(&batch, ctrl.params(), None);
         }
     });
 }); 

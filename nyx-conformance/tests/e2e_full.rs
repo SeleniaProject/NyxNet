@@ -18,7 +18,7 @@ async fn e2e_full_stack() {
         .await
         .expect("cMix timeout")
         .expect("controller closed");
-    assert!(verify_batch(&batch, cmix.params(), 1_000));
+    assert!(verify_batch(&batch, cmix.params(), None));
 
     // --- Low Power Adaptive Cover ---------------------------------------
     let mut cover = AdaptiveCoverGenerator::new(10.0, 0.3);

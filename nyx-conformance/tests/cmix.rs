@@ -14,5 +14,5 @@ async fn cmix_batch_verification() {
         .await
         .expect("batch timeout")
         .expect("controller closed");
-    assert!(verify_batch(&batch, controller.params(), 1_000));
+    assert!(verify_batch(&batch, controller.params(), None));
 } 

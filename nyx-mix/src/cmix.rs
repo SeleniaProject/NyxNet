@@ -183,6 +183,6 @@ mod tests {
         let batch = cmix.recv().await.expect("no batch");
         assert_eq!(batch.packets.len(), 1);
         // Verify proofs
-        assert!(verify_batch(&batch, cmix.params(), Some(50_000)));
+        assert!(verify_batch(&batch, cmix.params(), None));
     }
 } 
