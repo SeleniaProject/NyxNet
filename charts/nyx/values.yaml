@@ -24,6 +24,12 @@ hpa:
   minReplicas: 2
   maxReplicas: 5
   targetCPUUtilizationPercentage: 75
+  targetBytesPerSecond: "5Mi"
+
+# Pod security context (seccomp)
+podSecurity:
+  # Localhost seccomp profile name mounted via projected volume or node default path
+  seccompProfile: "nyx-seccomp-bpf.json"
 
 # Default resource requests/limits (can be overridden)
 resources:

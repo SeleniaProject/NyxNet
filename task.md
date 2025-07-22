@@ -49,8 +49,8 @@
 - [x] Grafana ダッシュボード v1.0 メトリクス反映
 
 ## Deployment / Kubernetes
-- [ ] Helm Chart: HPA (nyx_bytes_sent_total & CPU) 定義
-- [ ] PodSecurityContext/ seccomp-bpf プロファイル強化
+- [x] Helm Chart: HPA (nyx_bytes_sent_total & CPU) 定義
+- [x] PodSecurityContext/ seccomp-bpf プロファイル強化
 
 ## CLI / SDK
 - [ ] `nyx-cli key rotate` コマンド実装

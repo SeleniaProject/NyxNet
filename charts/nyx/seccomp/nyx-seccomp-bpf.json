@@ -1,0 +1,26 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "archMap": [
+    {
+      "architecture": "SCMP_ARCH_X86_64",
+      "subArchitectures": [
+        "SCMP_ARCH_X86",
+        "SCMP_ARCH_X32"
+      ]
+    }
+  ],
+  "syscalls": [
+    { "names": ["accept","accept4","recvfrom","recvmsg","recvmmsg","sendmsg","sendmmsg","sendto","shutdown","bind","connect","listen","getsockname","getpeername","setsockopt","getsockopt","socket","socketpair","close"], "action": "SCMP_ACT_ALLOW" },
+    { "names": ["read","write","readv","writev","pread64","pwrite64"], "action": "SCMP_ACT_ALLOW" },
+    { "names": ["futex","clock_gettime","clock_nanosleep","nanosleep","poll","ppoll","epoll_wait","epoll_ctl","select","pselect6","ioctl"], "action": "SCMP_ACT_ALLOW" },
+    { "names": ["mmap","mprotect","mremap","munmap","brk","arch_prctl","madvise"], "action": "SCMP_ACT_ALLOW" },
+    { "names": ["rt_sigaction","rt_sigprocmask","rt_sigreturn","sigaltstack"], "action": "SCMP_ACT_ALLOW" },
+    { "names": ["getpid","getppid","getuid","getgid","geteuid","getegid","gettid"], "action": "SCMP_ACT_ALLOW" },
+    { "names": ["setrlimit","prlimit64"], "action": "SCMP_ACT_ALLOW" },
+    { "names": ["prctl"], "action": "SCMP_ACT_ALLOW" },
+    { "names": ["dup","dup2","dup3","fcntl"], "action": "SCMP_ACT_ALLOW" },
+    { "names": ["readlink","stat","fstat","lstat","newfstatat","open","openat","close"], "action": "SCMP_ACT_ALLOW" },
+    { "names": ["getrandom"], "action": "SCMP_ACT_ALLOW" },
+    { "names": ["exit","exit_group"], "action": "SCMP_ACT_ALLOW" }
+  ]
+} 

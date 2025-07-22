@@ -19,4 +19,11 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ .Values.hpa.targetCPUUtilizationPercentage }}
+    - type: Pods
+      pods:
+        metric:
+          name: nyx_bytes_sent_total
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.hpa.targetBytesPerSecond }}
 {{- end }} 
