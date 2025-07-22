@@ -7,7 +7,7 @@
 //! call `UIDevice.batteryState` through the `objc` runtime. Desktop builds
 //! fallback to `Unknown`.
 
-use tokio_stream::{wrappers::ReceiverStream, Stream};
+use tokio_stream::{wrappers::WatchStream, Stream};
 use tokio::sync::watch;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +43,7 @@ pub fn subscribe_power_events() -> impl Stream<Item = MobilePowerState> {
     let (tx, rx) = watch::channel(MobilePowerState::Foreground);
     // Send initial state; no further updates in stub.
     let _ = tx.send(MobilePowerState::Foreground);
-    ReceiverStream::new(rx)
+    WatchStream::new(rx)
 }
 
 #[cfg(target_os = "android")]
