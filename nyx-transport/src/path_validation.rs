@@ -144,6 +144,8 @@ impl PathValidator {
                         // Exhausted attempts.
                         remove = true;
                         e.waker.notify_waiters();
+                        // Record error for telemetry / upper layers.
+                        nyx_core::NyxError::PathValidationFailed(addr).record();
                     } else {
                         maybe_resend = Some(e.token);
                         e.retries_left -= 1;

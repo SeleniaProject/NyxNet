@@ -17,9 +17,9 @@
 ## Multipath / Routing
 - [x] RTT 逆数重み付け WRR スケジューラ本番統合
 - [x] MPR 冗長率の動的調整アルゴリズム
-- [ ] LARMix++ 遅延感応ルートビルダ (動的 Hop 3–7)
+- [x] LARMix++ 遅延感応ルートビルダ (動的 Hop 3–7)
 - [x] 経路差分に応じたリオーダバッファサイズ自動化
-- [ ] PATH_VALIDATION_FAILED (0x05) エラー処理全層対応
+- [x] PATH_VALIDATION_FAILED (0x05) エラー処理全層対応
 
 ## Plugin Framework
 - [ ] Frame Type 0x50–0x5F パーサ & ディスパッチ

@@ -25,6 +25,10 @@ pub enum NyxError {
     /// Required capability not supported by local implementation
     #[error("Unsupported required capability {0}")]
     UnsupportedCap(u32),
+
+    /// Path validation did not succeed within retry budget.
+    #[error("Path validation failed for {0}")]
+    PathValidationFailed(std::net::SocketAddr),
 }
 
 impl NyxError {
@@ -33,6 +37,7 @@ impl NyxError {
     pub fn code(&self) -> u16 {
         match self {
             NyxError::UnsupportedCap(_) => 0x07, // ERR_UNSUPPORTED_CAP
+            NyxError::PathValidationFailed(_) => 0x05, // PATH_VALIDATION_FAILED
             _ => 0x06, // INTERNAL_ERROR by default
         }
     }
