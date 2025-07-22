@@ -29,21 +29,56 @@ pub const DEFAULT_SERVER: &str = "[2001:67c:2b0::4]:3544";
 pub struct TeredoAddr(pub Ipv6Addr);
 
 impl TeredoAddr {
-    /// Build Teredo address according to RFC 4380 §4.2.
-    pub fn from_mapping(ip: Ipv4Addr, port: u16) -> Self {
-        let prefix: [u16; 2] = [0x2001, 0]; // 2001:0000::/32
-        let obsc_port = !port; // ones‐complement
-        let octets = ip.octets();
-        let obsc_ip = [!octets[0], !octets[1], !octets[2], !octets[3]];
-        let addr = Ipv6Addr::new(
-            prefix[0], prefix[1], 0, 0,
-            ((obsc_port >> 8) & 0xff) as u16 | ((obsc_port & 0xff) << 8),
-            ((obsc_ip[0] as u16) << 8) | obsc_ip[1] as u16,
-            ((obsc_ip[2] as u16) << 8) | obsc_ip[3] as u16,
-            0xffff, // interface identifier placeholder
-        );
-        TeredoAddr(addr)
+    /// Construct a complete Teredo IPv6 address from a mapped client
+    /// public IPv4 address/UDP port and the chosen Teredo *server* IPv4
+    /// address. `cone` should be set to `true` when the NAT mapping is
+    /// considered cone-style (RFC 3489) so the C-bit (bit 15) in the
+    /// flags field is asserted. All other flag bits are zero for now.
+    ///
+    /// Layout (RFC 4380 §4):
+    /// `[ 32b prefix | 32b server_ipv4 | 16b flags | 16b ~port | 32b ~client_ipv4 ]`.
+    #[must_use]
+    pub fn new(server_ipv4: Ipv4Addr, client_ipv4: Ipv4Addr, client_port: u16, cone: bool) -> Self {
+        // Prefix 2001:0000::/32
+        let mut segments = [0u16; 8];
+        segments[0] = 0x2001;
+        segments[1] = 0x0000;
+
+        // Server IPv4 occupies next 32 bits (big-endian)
+        let s_oct = server_ipv4.octets();
+        segments[2] = ((s_oct[0] as u16) << 8) | s_oct[1] as u16;
+        segments[3] = ((s_oct[2] as u16) << 8) | s_oct[3] as u16;
+
+        // Flags (only C-bit currently) – see RFC 4380 §4
+        segments[4] = if cone { 0x8000 } else { 0x0000 };
+
+        // Obfuscated port and IP (ones-complement)
+        let obsc_port = !client_port;
+        segments[5] = obsc_port;
+
+        let c_oct = client_ipv4.octets();
+        let obsc_ip = [!c_oct[0], !c_oct[1], !c_oct[2], !c_oct[3]];
+        segments[6] = ((obsc_ip[0] as u16) << 8) | obsc_ip[1] as u16;
+        segments[7] = ((obsc_ip[2] as u16) << 8) | obsc_ip[3] as u16;
+
+        TeredoAddr(Ipv6Addr::new(
+            segments[0], segments[1], segments[2], segments[3],
+            segments[4], segments[5], segments[6], segments[7],
+        ))
     }
+
+    /// Convenience helper for the common case where the server address is
+    /// not required (e.g. when only the mapped values are known). Falls
+    /// back to the *global* Teredo prefix with a zero server IPv4 field
+    /// (equivalent to 0.0.0.0). Flags=C=0.
+    #[must_use]
+    pub fn from_mapping(ip: Ipv4Addr, port: u16) -> Self {
+        Self::new(Ipv4Addr::UNSPECIFIED, ip, port, false)
+    }
+
+    /// Return the underlying IPv6 address.
+    #[must_use]
+    pub fn addr(&self) -> Ipv6Addr { self.0 }
 }
 
 /// Perform Teredo mapping query and return derived IPv6 address.
