@@ -62,3 +62,6 @@ pub use settings::{StreamSettings, settings_watch};
 
 pub use localized::{LocalizedStringFrame, build_localized_string_frame, parse_localized_string_frame};
 pub use scheduler::WeightedRrScheduler;
+
+pub mod hpke_rekey;
+pub use hpke_rekey::{RekeyFrame, build_rekey_frame, parse_rekey_frame, seal_for_rekey, open_rekey};

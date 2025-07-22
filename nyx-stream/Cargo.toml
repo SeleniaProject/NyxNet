@@ -18,6 +18,7 @@ bitflags = "2.4"
 schemars = { version = "0.8", features=["derive"] }
 jsonschema = "0.17"
 tracing = "0.1"
+nyx-crypto = { path = "../nyx-crypto" }
 
 [features]
 default = []
