@@ -11,7 +11,7 @@
 ## cMix / VDF
 - [x] Wesolowski VDF 実装 (最適化 Montgomery 乗算)
 - [x] マルチノード RSA Accumulator キーセレモニー & 証明生成
-- [ ] cMix コントローラのミキサーパイプライン統合
+- [x] cMix コントローラのミキサーパイプライン統合
 - [ ] cMix コンフォーマンステスト & Fuzz コーパス拡充
 
 ## Multipath / Routing
