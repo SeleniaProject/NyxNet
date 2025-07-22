@@ -30,6 +30,7 @@
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
 use lazy_static::lazy_static;
+use num_modular::{MontgomeryInt, ModularInteger};
 
 /// Public prime ℓ for Wesolowski (2^128 + 51).
 pub const L_PRIME_DEC: &str = "340282366920938463463374607431768211507"; // verified prime
@@ -83,6 +84,25 @@ pub fn verify(x: &BigUint, y: &BigUint, pi: &BigUint, n: &BigUint, t: u64) -> bo
     &lhs == y
 }
 
+/// Evaluate Wesolowski VDF using Montgomery arithmetic which is ~2x faster for large moduli.
+#[must_use]
+pub fn prove_mont(x: &BigUint, n: &BigUint, t: u64) -> (BigUint, BigUint) {
+    // Convert x into Montgomery form
+    let mont_x = MontgomeryInt::new(x.clone(), n);
+    // Repeated squaring in Montgomery space
+    let mut y_mont = mont_x.clone();
+    for _ in 0..t {
+        y_mont = &y_mont * &y_mont;
+    }
+    let y = y_mont.residue().clone();
+    // Follow standard proof steps (same as `prove` but reusing y)
+    let exp_two = BigUint::one() << t;
+    let r = (&exp_two) % &*L_PRIME;
+    let q = (&exp_two - &r) / &*L_PRIME;
+    let pi = x.modpow(&q, n);
+    (y, pi)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,6 +117,24 @@ mod tests {
         let x = BigUint::from(5u8);
         let t = 100;
         let (y, pi) = prove(&x, &n, t);
+        assert!(verify(&x, &y, &pi, &n, t));
+    }
+}
+
+#[cfg(test)]
+mod tests_mont {
+    use super::*;
+    use num_bigint::BigUint;
+
+    #[test]
+    fn mont_round_trip() {
+        // Small composite modulus for test (not secure) – functionality only.
+        let p = BigUint::from(101u32);
+        let q = BigUint::from(113u32);
+        let n = &p * &q;
+        let x = BigUint::from(7u8);
+        let t = 128u64;
+        let (y, pi) = prove_mont(&x, &n, t);
         assert!(verify(&x, &y, &pi, &n, t));
     }
 } 

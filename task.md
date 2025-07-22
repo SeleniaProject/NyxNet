@@ -9,7 +9,7 @@
 - [x] age 形式でのキーストア暗号化 & zeroization 徹底監査
 
 ## cMix / VDF
-- [ ] Wesolowski VDF 実装 (最適化 Montgomery 乗算)
+- [x] Wesolowski VDF 実装 (最適化 Montgomery 乗算)
 - [ ] マルチノード RSA Accumulator キーセレモニー & 証明生成
 - [ ] cMix コントローラのミキサーパイプライン統合
 - [ ] cMix コンフォーマンステスト & Fuzz コーパス拡充
