@@ -140,6 +140,26 @@ impl KeyCeremony {
         let n = &p * &q;
         AccumulatorParams { n, g: G_DEFAULT.to_biguint().unwrap() }
     }
+
+    /// Multi-party ceremony (toy). Each of `parts` participants contributes a random
+    /// prime and the modulus is the product of all. Returns `(params, commitments)`
+    /// where `commitments[i] = SHA-256(p_i)` allows post-facto audit without
+    /// revealing the primes. **This is NOT secure for production** but suffices for
+    /// interoperability tests.
+    pub fn multi_party(parts: usize, bits: usize) -> (AccumulatorParams, Vec<[u8;32]>) {
+        assert!(parts >= 2, "at least two participants");
+        assert!(bits / parts >= 128, "per-part prime too small");
+        let mut rng = OsRng;
+        let mut n = BigUint::one();
+        let mut commits = Vec::with_capacity(parts);
+        for _ in 0..parts {
+            let prime = generate_prime(bits / parts, &mut rng);
+            n *= &prime;
+            let hash = Sha256::digest(&prime.to_bytes_be());
+            commits.push(hash.into());
+        }
+        (AccumulatorParams { n, g: G_DEFAULT.to_biguint().unwrap() }, commits)
+    }
 }
 
 /// Generate a random prime of `bits` length using rejection sampling.
@@ -187,5 +207,14 @@ mod tests {
         assert!(acc.verify(&elem2, &w2));
         // elem1 witness no longer valid after second add
         assert!(!acc.verify(&elem1, &w1));
+    }
+
+    #[test]
+    fn multi_party_ceremony() {
+        let (params, commits) = KeyCeremony::multi_party(3, 768);
+        assert_eq!(commits.len(), 3);
+        // Basic sanity: accumulator generator is 2 and n > 2^700
+        assert!(params.n.bits() > 700);
+        assert_eq!(params.g, G_DEFAULT.to_biguint().unwrap());
     }
 } 
