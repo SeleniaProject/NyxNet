@@ -44,6 +44,7 @@ pub mod probe;
 pub mod push;
 pub use push::{PushHandle, spawn_push_service};
 pub mod rendezvous;
+mod settings_sync;
 
 /// Control messages for the DHT event loop.
 #[cfg(feature = "dht")]
