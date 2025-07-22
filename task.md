@@ -17,7 +17,7 @@
 - [x] `src/empty.rs` プレースホルダクレートを削除するか実用途のユーティリティクレートへ置換する
 - [x] `nyx-stream/src/management.rs` CLOSE コード 0x07 (UNSUPPORTED_CAP) ハンドリングを追加し、Capability Negotiation エラーを適切に伝播する
 - [ ] v1.0 仕様書最終稿とコードコメントの差分を確認し、ドキュメントを同期する
-- [ ] `nyx-mix/src/lib.rs` の `PathBuilder` (uniform random) を `WeightedPathBuilder` ベースへ置き換え、レイテンシ／帯域メトリクスを活用する
-- [ ] `nyx-crypto/src/keystore.rs` に永続ストレージ I/O 実装（age-encrypt ファイル保存）とキー定期ローテーション機能を追加する
+- [x] `nyx-mix/src/lib.rs` の `PathBuilder` (uniform random) を `WeightedPathBuilder` ベースへ置き換え、レイテンシ／帯域メトリクスを活用する
+- [x] `nyx-crypto/src/keystore.rs` に永続ストレージ I/O 実装（age-encrypt ファイル保存）とキー定期ローテーション機能を追加する
 
 

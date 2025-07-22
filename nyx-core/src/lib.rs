@@ -1,4 +1,5 @@
-#![forbid(unsafe_code)]
+use std::io::Write;
+extern crate libc;
 
 pub mod config;
 pub mod error;

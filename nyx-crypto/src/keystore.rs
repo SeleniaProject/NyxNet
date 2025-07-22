@@ -38,6 +38,7 @@ use age::{Encryptor, Decryptor};
 use age::armor::{ArmoredWriter, ArmoredReader, Format};
 use zeroize::Zeroizing;
 use thiserror::Error;
+use std::time::{SystemTime, Duration};
 
 /// Error type for keystore operations.
 #[derive(Debug, Error)]
@@ -85,6 +86,29 @@ pub fn load_and_decrypt<P: AsRef<Path>>(path: P, passphrase: &str) -> Result<Zer
     Ok(buf)
 }
 
+/// Load secret if file exists and not older than `max_age`. Otherwise generate via callback `gen` and store.
+pub fn load_or_rotate<P, F>(path: P, passphrase: &str, max_age: Duration, gen: F) -> Result<Zeroizing<Vec<u8>>, KeystoreError>
+where P: AsRef<Path>, F: Fn() -> Zeroizing<Vec<u8>> {
+    let p = path.as_ref();
+    let meta = fs::metadata(p);
+    let need_new = match meta {
+        Ok(m) => {
+            if let Ok(modt) = m.modified() {
+                modt.elapsed().unwrap_or(Duration::from_secs(0)) > max_age
+            } else { true }
+        }
+        Err(_) => true,
+    };
+
+    if need_new {
+        let secret = gen();
+        encrypt_and_store(&secret, p, passphrase)?;
+        Ok(secret)
+    } else {
+        load_and_decrypt(p, passphrase)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,6 +142,23 @@ mod tests {
             KeystoreError::DecryptFailed | KeystoreError::Age(_) => {},
             _ => panic!("unexpected error type"),
         }
+        fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn rotate_by_age() {
+        let path = temp_file("nyx_keystore_rotate.age");
+        let secret = Zeroizing::new(b"old".to_vec());
+        encrypt_and_store(&secret, &path, "pw").unwrap();
+        // Set mtime to old (simulate 100 days)
+        #[cfg(unix)] {
+            use filetime::FileTime;
+            use std::time::SystemTime;
+            let ft = FileTime::from_system_time(SystemTime::now() - std::time::Duration::from_secs(86400*100));
+            filetime::set_file_mtime(&path, ft).unwrap();
+        }
+        let new = load_or_rotate(&path, "pw", std::time::Duration::from_secs(86400*30), || Zeroizing::new(b"newsecret".to_vec())).unwrap();
+        assert_eq!(&*new, b"newsecret");
         fs::remove_file(&path).unwrap();
     }
 } 
