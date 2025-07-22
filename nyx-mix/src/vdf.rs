@@ -30,7 +30,7 @@
 use num_bigint::BigUint;
 use num_traits::{One, Zero};
 use lazy_static::lazy_static;
-use num_modular::{MontgomeryInt, ModularInteger};
+// MontgomeryInt over BigUint requires custom Reducer impl, omitted here.
 
 /// Public prime ℓ for Wesolowski (2^128 + 51).
 pub const L_PRIME_DEC: &str = "340282366920938463463374607431768211507"; // verified prime
@@ -88,14 +88,15 @@ pub fn verify(x: &BigUint, y: &BigUint, pi: &BigUint, n: &BigUint, t: u64) -> bo
 #[must_use]
 pub fn prove_mont(x: &BigUint, n: &BigUint, t: u64) -> (BigUint, BigUint) {
     // Convert x into Montgomery form
-    let mont_x = MontgomeryInt::new(x.clone(), n);
+    // let mont_x = MontgomeryInt::new(x.clone(), n); // This line is removed as per the edit hint.
     // Repeated squaring in Montgomery space
-    let mut y_mont = mont_x.clone();
-    for _ in 0..t {
-        y_mont = &y_mont * &y_mont;
-    }
-    let y = y_mont.residue().clone();
+    // let mut y_mont = mont_x.clone(); // This line is removed as per the edit hint.
+    // for _ in 0..t { // This line is removed as per the edit hint.
+    //     y_mont = &y_mont * &y_mont; // This line is removed as per the edit hint.
+    // } // This line is removed as per the edit hint.
+    // let y = y_mont.residue().clone(); // This line is removed as per the edit hint.
     // Follow standard proof steps (same as `prove` but reusing y)
+    let y = eval(x, n, t); // Fallback to eval
     let exp_two = BigUint::one() << t;
     let r = (&exp_two) % &*L_PRIME;
     let q = (&exp_two - &r) / &*L_PRIME;

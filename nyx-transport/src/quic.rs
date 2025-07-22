@@ -21,7 +21,7 @@ use quinn::{Endpoint, EndpointConfig, TransportConfig, ServerConfig, ClientConfi
 use quinn::crypto::rustls::{TlsAcceptor, TlsConnector};
 use rcgen::{generate_simple_self_signed, KeyPair};
 use tokio::sync::mpsc;
-use tracing::{info, error};
+use tracing::{info, error, instrument, Instrument};
 use futures::StreamExt;
 
 /// Default QUIC idle timeout (10s).
@@ -62,6 +62,7 @@ pub struct QuicEndpoint {
 
 impl QuicEndpoint {
     /// Bind QUIC listener on `0.0.0.0:port`.
+    #[instrument(name = "quic_endpoint_bind", skip(port), fields(local_port = port))]
     pub async fn bind(port: u16) -> anyhow::Result<Self> {
         let (cert, key) = generate_or_load_cert()?;
         let mut server_config = ServerConfig::with_single_cert(vec![cert], key)?;
@@ -89,11 +90,12 @@ impl QuicEndpoint {
                     Err(e) => error!("quic accept error: {e}")
                 }
             }
-        });
+        }.instrument(tracing::info_span!("quic_accept_loop")));
 
         Ok(Self { endpoint, incoming: rx })
     }
 
+    #[instrument(name = "quic_datagram_recv", skip(conn, tx), fields(peer = %conn.remote_address()))]
     async fn recv_task(conn: Connection, tx: mpsc::Sender<(SocketAddr, Vec<u8>)>) {
         loop {
             match conn.read_datagram().await {
@@ -117,6 +119,7 @@ pub struct QuicConnection {
 
 impl QuicConnection {
     /// Connect to `server_addr` (e.g., "127.0.0.1:4433") without certificate verification.
+    #[instrument(name = "quic_client_connect", skip(server_addr), fields(server = %server_addr))]
     pub async fn connect(server_addr: &str) -> anyhow::Result<Self> {
         let mut client_cfg = ClientConfig::with_native_roots();
         // Disable cert verification (Nyx encrypts at higher layer)
@@ -141,6 +144,7 @@ impl QuicConnection {
     }
 
     /// Receive next datagram.
+    #[instrument(name = "quic_client_recv", skip(self))]
     pub async fn recv(&self) -> Option<Result<Vec<u8>, quinn::ReadDatagramError>> {
         match self.connection.read_datagram().await {
             Ok(Some(d)) => Some(Ok(d.to_vec())),

@@ -131,6 +131,45 @@ impl<'a> LARMixPlanner<'a> {
         let builder = WeightedPathBuilder::new(&cands, self.alpha);
         builder.build_path(hops)
     }
+
+    /// Build a mix path with **adaptive hop count** (3–7) based on latency statistics.
+    ///
+    /// The heuristic follows Nyx Design Document §4.4 “LARMix++”: lower median RTT
+    /// permits longer paths without violating the overall latency budget.
+    ///
+    /// Mapping (median RTT → hops):
+    /// * ≤20 ms ⇒ 7 hops  (very fast network)
+    /// * ≤50 ms ⇒ 6 hops
+    /// * ≤100 ms ⇒ 5 hops  (default)
+    /// * ≤150 ms ⇒ 4 hops
+    /// * >150 ms ⇒ 3 hops  (high latency)
+    #[must_use]
+    pub fn build_path_dynamic(&self) -> Vec<NodeId> {
+        let cands = self.prober.candidates();
+        if cands.is_empty() {
+            return Vec::new();
+        }
+
+        // Compute median RTT among candidates.
+        let mut rtts: Vec<f64> = cands.iter().map(|c| c.latency_ms).collect();
+        rtts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let median = rtts[rtts.len() / 2];
+
+        let hops = if median <= 20.0 {
+            7
+        } else if median <= 50.0 {
+            6
+        } else if median <= 100.0 {
+            5
+        } else if median <= 150.0 {
+            4
+        } else {
+            3
+        };
+
+        let builder = WeightedPathBuilder::new(&cands, self.alpha);
+        builder.build_path(hops)
+    }
 }
 
 #[cfg(test)]

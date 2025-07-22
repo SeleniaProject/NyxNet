@@ -65,3 +65,5 @@ pub use scheduler::WeightedRrScheduler;
 
 pub mod hpke_rekey;
 pub use hpke_rekey::{RekeyFrame, build_rekey_frame, parse_rekey_frame, seal_for_rekey, open_rekey};
+
+pub mod plugin_dispatch;

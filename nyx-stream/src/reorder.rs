@@ -7,7 +7,11 @@ use std::collections::BTreeMap;
 
 /// ReorderBuffer collects packets keyed by monotonically increasing sequence numbers
 /// and releases them in-order.
-/// The buffer dynamically grows up to `max_window` and shrinks when reordering is low.
+///
+/// • Auto‐scale up: when the observed gap (highest – expected) nears the current
+///   window size the buffer doubles up to 8192 slots. これは経路 RTT 差で発生する
+///   リオーダ幅に追従する。
+/// • Auto‐shrink: 当面のリオーダが減ったら 1/4 未満で半減。
 pub struct ReorderBuffer<T> {
     next_seq: u64,
     window: BTreeMap<u64, T>,
@@ -27,6 +31,15 @@ impl<T> ReorderBuffer<T> {
             return Vec::new();
         }
         self.window.insert(seq, pkt);
+
+        // Observe current gap between next expected and highest received.
+        if let Some((&high, _)) = self.window.iter().rev().next() {
+            let gap = (high - self.next_seq + 1) as usize;
+            // Up-scale: if gap approaches 80% of current window, double with cap 8192.
+            if gap * 5 / 4 > self.max_window && self.max_window < 8192 {
+                self.max_window = (self.max_window * 2).min(8192);
+            }
+        }
         self.drain_ready()
     }
 

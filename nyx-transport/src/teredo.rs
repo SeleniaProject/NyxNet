@@ -19,6 +19,7 @@
 use tokio::{net::UdpSocket, time::{timeout, Duration}};
 use std::net::{SocketAddr, Ipv6Addr, Ipv4Addr};
 use anyhow::{Result, bail};
+use tracing::instrument;
 
 /// Default Teredo server (`teredo.remlab.net`).
 pub const DEFAULT_SERVER: &str = "[2001:67c:2b0::4]:3544";
@@ -46,6 +47,7 @@ impl TeredoAddr {
 }
 
 /// Perform Teredo mapping query and return derived IPv6 address.
+#[instrument(name = "teredo_discover", skip(server), fields(teredo_server = %server))]
 pub async fn discover(server: &str) -> Result<TeredoAddr> {
     let srv: SocketAddr = server.parse()?;
     // bind ephemeral UDP socket

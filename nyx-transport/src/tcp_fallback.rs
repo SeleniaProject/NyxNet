@@ -22,11 +22,12 @@
 
 use std::net::SocketAddr;
 use tokio::{net::{TcpListener, TcpStream}, io::{AsyncReadExt, AsyncWriteExt}, sync::mpsc};
-use tracing::{info, error};
+use tracing::{info, error, instrument, Instrument};
 
 const MAX_FRAME: usize = 2048; // generous upper bound; Nyx uses 1280
 
 /// Length-prefixed read helper.
+#[instrument(name = "tcp_read_frame", skip(stream))]
 async fn read_frame(stream: &mut TcpStream) -> std::io::Result<Option<Vec<u8>>> {
     let mut len_buf = [0u8; 2];
     match stream.read_exact(&mut len_buf).await {
@@ -42,6 +43,7 @@ async fn read_frame(stream: &mut TcpStream) -> std::io::Result<Option<Vec<u8>>> 
     }
 }
 
+#[instrument(name = "tcp_write_frame", skip(stream, data), fields(bytes = data.len()))]
 async fn write_frame(stream: &mut TcpStream, data: &[u8]) -> std::io::Result<()> {
     if data.len() > MAX_FRAME { return Err(std::io::ErrorKind::InvalidInput.into()); }
     stream.write_all(&(data.len() as u16).to_be_bytes()).await?;
@@ -55,6 +57,7 @@ pub struct TcpEncapListener {
 }
 
 impl TcpEncapListener {
+    #[instrument(name = "tcp_listener_bind", skip(port), fields(local_port = port))]
     pub async fn bind(port: u16) -> std::io::Result<Self> {
         let listener = TcpListener::bind(("0.0.0.0", port)).await?;
         let (tx, rx) = mpsc::channel::<(SocketAddr, Vec<u8>)>(1024);
@@ -77,12 +80,12 @@ impl TcpEncapListener {
                                     }
                                 }
                             }
-                        });
+                        }.instrument(tracing::info_span!("tcp_recv_loop", peer=%addr)));
                     }
                     Err(e) => error!("tcp_fallback accept error: {}", e),
                 }
             }
-        });
+        }.instrument(tracing::info_span!("tcp_accept_loop")));
         Ok(Self { incoming: rx })
     }
 }
@@ -95,17 +98,20 @@ pub struct TcpEncapConnection {
 }
 
 impl TcpEncapConnection {
+    #[instrument(name="tcp_client_connect", skip(addr), fields(server=%addr))]
     pub async fn connect(addr: &str) -> std::io::Result<Self> {
         let stream = TcpStream::connect(addr).await?;
         let peer = stream.peer_addr()?;
         Ok(Self { stream: tokio::sync::Mutex::new(stream), peer })
     }
 
+    #[instrument(name="tcp_client_send", skip(self, data), fields(bytes=data.len()))]
     pub async fn send(&self, data: &[u8]) -> std::io::Result<()> {
         let mut guard = self.stream.lock().await;
         write_frame(&mut *guard, data).await
     }
 
+    #[instrument(name="tcp_client_recv", skip(self))]
     pub async fn recv(&self) -> std::io::Result<Option<Vec<u8>>> {
         let mut guard = self.stream.lock().await;
         read_frame(&mut *guard).await
