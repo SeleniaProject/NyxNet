@@ -9,6 +9,8 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
+honggfuzz = "0.5"
+num-bigint = "0.4"
 
 # Added Nyx crates and Tokio runtime for additional fuzz targets
 nyx-core = { path = ".." }

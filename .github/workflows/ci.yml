@@ -36,3 +36,18 @@ jobs:
             cargo test --all --no-default-features --features "${{ matrix.features }}"
           fi
         shell: bash 
+
+  wasm-build:
+    runs-on: ubuntu-latest
+    name: wasm32 build
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (wasm target)
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+          override: true
+      - name: Build nyx-sdk-wasm
+        run: |
+          cargo build -p nyx-sdk-wasm --target wasm32-unknown-unknown --release 

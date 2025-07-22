@@ -24,6 +24,8 @@ tokio = { version = "1.37", features = ["full"] }
 async-trait = "0.1"
 num-bigint = "0.4"
 prometheus = "0.13"
+proptest = "1.4"
+rand = "0.8"
 
 [features]
 pq = [] 

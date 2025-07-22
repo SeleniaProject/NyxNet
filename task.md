@@ -62,9 +62,9 @@
 - [x] gRPC API 自動生成ドキュメントパイプライン
 
 ## Testing & CI
-- [ ] Multipath スケジューラ & RaptorQ リカバリのプロパティテスト
-- [ ] Plugin パーサ, VDF 証明検証用 Fuzz ターゲット追加
-- [ ] `nyx-sdk-wasm` 用 WASM ビルド CI マトリクス
+- [x] Multipath スケジューラ & RaptorQ リカバリのプロパティテスト
+- [x] Plugin パーサ, VDF 証明検証用 Fuzz ターゲット追加
+- [x] `nyx-sdk-wasm` 用 WASM ビルド CI マトリクス
 
 ## Security Hardening
 - [ ] Linux seccomp プロファイル生成 & 適用
