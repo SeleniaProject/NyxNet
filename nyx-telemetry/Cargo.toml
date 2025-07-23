@@ -7,7 +7,7 @@ description = "Comprehensive telemetry with OpenTelemetry OTLP and Prometheus su
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-prometheus = "0.13"
+prometheus = "0.14"
 hyper = { version = "0.14", features = ["full"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
 tracing = "0.1"
