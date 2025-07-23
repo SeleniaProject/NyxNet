@@ -1,34 +1,37 @@
 #![cfg(target_os = "openbsd")]
-//! Thin wrappers around OpenBSD `pledge(2)` / `unveil(2)` syscalls.
+//! Safe wrappers around OpenBSD `pledge(2)` / `unveil(2)` syscalls using safe Rust crates.
 #![forbid(unsafe_code)]
 
-use std::ffi::CString;
 use anyhow::{Result, anyhow};
-
-extern "C" {
-    fn pledge(promises: *const libc::c_char, execpromises: *const libc::c_char) -> libc::c_int;
-    fn unveil(path: *const libc::c_char, permissions: *const libc::c_char) -> libc::c_int;
-}
+use pledge::{pledge_promises, pledge_execpromises, ToPromiseString, Promise};
+use unveil::unveil;
 
 /// Call `pledge` limiting the process to required promises.
 ///
 /// Example: `install_pledge("stdio inet")`.
 pub fn install_pledge(promises: &str) -> Result<()> {
-    let c_prom = CString::new(promises)?;
-    let ret = unsafe { pledge(c_prom.as_ptr(), std::ptr::null()) };
-    if ret != 0 { return Err(anyhow!("pledge failed: {}", std::io::Error::last_os_error())); }
-    Ok(())
+    pledge_promises(promises)
+        .or_else(pledge::Error::ignore_platform)
+        .map_err(|e| anyhow!("pledge failed: {}", e))
 }
 
 /// Call `unveil` to restrict filesystem view.
 /// Pass `None` for `perm` to lock (`unveil(NULL, NULL)`).
 pub fn unveil_path(path: Option<&str>, perm: Option<&str>) -> Result<()> {
-    let c_path = match path { Some(p) => Some(CString::new(p)?), None => None };
-    let c_perm = match perm { Some(p) => Some(CString::new(p)?), None => None };
-    let ret = unsafe { unveil(c_path.as_ref().map_or(std::ptr::null(), |s| s.as_ptr()),
-                               c_perm.as_ref().map_or(std::ptr::null(), |s| s.as_ptr())) };
-    if ret != 0 { return Err(anyhow!("unveil failed: {}", std::io::Error::last_os_error())); }
-    Ok(())
+    match (path, perm) {
+        (Some(p), Some(perms)) => {
+            unveil(p, perms)
+                .or_else(unveil::Error::ignore_platform)
+                .map_err(|e| anyhow!("unveil failed: {}", e))
+        },
+        (None, None) => {
+            // Lock unveil by calling unveil("", "")
+            unveil("", "")
+                .or_else(unveil::Error::ignore_platform)
+                .map_err(|e| anyhow!("unveil lock failed: {}", e))
+        },
+        _ => Err(anyhow!("Invalid unveil parameters: both path and perm must be Some or both None"))
+    }
 }
 
 /// Get current pledge status by attempting to use restricted functionality

@@ -1,5 +1,4 @@
 use std::io::Write;
-extern crate libc;
 
 pub mod config;
 pub mod error;
@@ -28,9 +27,9 @@ pub use openbsd::{install_pledge, unveil_path};
 pub fn install_panic_abort() {
     std::panic::set_hook(Box::new(|info| {
         eprintln!("panic: {info}");
-        // Flush stderr then abort.
+        // Flush stderr then abort using safe std::process::abort
         std::io::stderr().flush().ok();
-        unsafe { libc::abort(); }
+        std::process::abort();
     }));
 }
 

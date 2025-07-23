@@ -439,6 +439,6 @@ impl AsyncWrite for NyxStream {
     }
 }
 
-// Implement Send + Sync for NyxStream
-unsafe impl Send for NyxStream {}
-unsafe impl Sync for NyxStream {} 
+// NyxStream is automatically Send + Sync because all its fields are Send + Sync
+// Arc<RwLock<_>>, Arc<Mutex<_>>, and other contained types already implement Send + Sync
+// No unsafe implementation needed - the compiler will automatically derive these traits 
