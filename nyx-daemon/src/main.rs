@@ -12,7 +12,9 @@
 //! - Error handling and recovery mechanisms
 
 use std::{sync::Arc, time::{Instant, SystemTime}, collections::HashMap, net::SocketAddr};
+#[cfg(unix)]
 use tokio::net::UnixListener;
+#[cfg(unix)]
 use tokio_stream::wrappers::{ReceiverStream, UnixListenerStream};
 use tracing::{error, info, warn, debug, instrument};
 use tonic::transport::Server;

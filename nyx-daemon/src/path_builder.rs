@@ -18,7 +18,7 @@ use nyx_control::{DhtHandle, ControlManager};
 use nyx_stream::WeightedRrScheduler;
 
 use dashmap::DashMap;
-use geo::{Point, Distance, Haversine};
+use geo::{Point, HaversineDistance};
 use petgraph::{Graph, Undirected, graph::NodeIndex};
 use priority_queue::PriorityQueue;
 use std::collections::{HashMap, HashSet, VecDeque};

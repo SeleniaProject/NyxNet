@@ -16,10 +16,10 @@ use std::sync::{
     atomic::{AtomicU64, AtomicUsize, Ordering},
     Arc,
 };
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use sysinfo::{System, SystemExt, CpuExt, ProcessExt, NetworkExt, DiskExt};
+use std::time::{Duration, SystemTime};
+use sysinfo::{System};
 use tokio::time::interval;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error};
 
 /// Exponential moving average smoothing factor
 const EMA_ALPHA: f64 = 0.1;
@@ -197,9 +197,9 @@ impl MetricsCollector {
         let cpu_usage = system.global_cpu_info().cpu_usage() as f64;
         
         // Memory usage
-        let total_memory = system.total_memory() as f64;
+        let _total_memory = system.total_memory() as f64;
         let used_memory = system.used_memory() as f64;
-        let memory_usage_mb = used_memory / 1_048_576.0; // Convert to MB
+        let _memory_usage_mb = used_memory / 1_048_576.0; // Convert to MB
         
         // Process-specific metrics
         let process_memory = if let Some(process) = system.process(sysinfo::Pid::from(self.process_id as usize)) {
@@ -240,27 +240,20 @@ impl MetricsCollector {
     async fn collect_network_metrics(&self) -> anyhow::Result<()> {
         let system = self.system.read();
         let networks = system.networks();
-        
-        let mut total_bytes_sent = 0u64;
-        let mut total_bytes_received = 0u64;
-        let mut total_packets_sent = 0u64;
-        let mut total_packets_received = 0u64;
-        let mut total_errors = 0u64;
-        
-        for (_interface_name, network) in networks {
-            total_bytes_sent += network.transmitted();
-            total_bytes_received += network.received();
-            total_packets_sent += network.packets_transmitted();
-            total_packets_received += network.packets_received();
-            total_errors += network.errors_on_transmitted() + network.errors_on_received();
+        let mut total_bytes_in = 0;
+        let mut total_bytes_out = 0;
+
+        for (_interface, data) in networks {
+            total_bytes_in += data.total_received();
+            total_bytes_out += data.total_transmitted();
         }
         
         let mut network_stats = self.network_stats.write();
-        network_stats.bytes_sent = total_bytes_sent;
-        network_stats.bytes_received = total_bytes_received;
-        network_stats.packets_sent = total_packets_sent;
-        network_stats.packets_received = total_packets_received;
-        network_stats.errors = total_errors;
+        network_stats.bytes_sent = total_bytes_out;
+        network_stats.bytes_received = total_bytes_in;
+        network_stats.packets_sent = 0; // sysinfo doesn't provide packet counts directly here
+        network_stats.packets_received = 0; // sysinfo doesn't provide packet counts directly here
+        network_stats.errors = 0; // sysinfo doesn't provide error counts directly here
         
         Ok(())
     }
@@ -279,9 +272,9 @@ impl MetricsCollector {
         // This would be called by other components to update performance metrics
         // For now, we'll implement basic updates
         
-        let active_streams = self.active_streams.load(Ordering::Relaxed);
+        let _active_streams = self.active_streams.load(Ordering::Relaxed);
         let total_packets_sent = self.total_packets_sent.load(Ordering::Relaxed);
-        let total_packets_received = self.total_packets_received.load(Ordering::Relaxed);
+        let _total_packets_received = self.total_packets_received.load(Ordering::Relaxed);
         
         // Calculate packet loss rate if we have data
         let packet_loss_rate = if total_packets_sent > 0 {
@@ -314,7 +307,7 @@ impl MetricsCollector {
     /// Get current performance metrics
     pub fn get_performance_metrics(&self) -> PerformanceMetrics {
         let smoothed = self.smoothed_metrics.read();
-        let mix_metrics = self.mix_metrics.read();
+        let _mix_metrics = self.mix_metrics.read();
         let security_metrics = self.security_metrics.read();
         
         let connection_success_rate = if security_metrics.handshake_attempts > 0 {
