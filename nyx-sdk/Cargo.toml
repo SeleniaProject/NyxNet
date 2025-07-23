@@ -1,0 +1,68 @@
+[package]
+name = "nyx-sdk"
+version = "0.1.0"
+edition = "2021"
+
+description = "Nyx SDK for application integration with comprehensive stream API"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+# Core dependencies
+nyx-core = { path = "../nyx-core" }
+nyx-stream = { path = "../nyx-stream" }
+nyx-crypto = { path = "../nyx-crypto" }
+
+# Async runtime and networking
+tokio = { version = "1.37", features = ["full"] }
+tokio-stream = "0.1"
+
+# gRPC client for daemon communication
+tonic = { version = "0.10", features = ["transport"] }
+prost = "0.12"
+prost-types = "0.12"
+
+# Error handling and utilities
+anyhow = "1.0"
+thiserror = "1.0"
+tracing = "0.1"
+
+# Serialization and configuration
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.7"
+
+# Async traits and utilities
+async-trait = "0.1"
+futures-util = "0.3"
+pin-project-lite = "0.2"
+
+# Reconnection and backoff
+backoff = { version = "0.4", features = ["tokio"] }
+humantime-serde = "1.1"
+
+# Stream utilities
+bytes = "1.5"
+futures = "0.3"
+
+# Time and duration utilities
+humantime = "2.1"
+chrono = { version = "0.4", features = ["serde"] }
+
+# Optional features
+uuid = { version = "1.6", features = ["v4", "serde"], optional = true }
+
+[build-dependencies]
+tonic-build = "0.10"
+
+[features]
+default = []
+# Enable stream reconnection with automatic retry
+reconnect = ["backoff", "exponential-backoff", "uuid"]
+# Enable comprehensive error propagation
+error-propagation = ["uuid"]
+# Enable metrics collection
+metrics = ["nyx-core/telemetry"]
+
+[dev-dependencies]
+tempfile = "3.8"
+tokio-test = "0.4" 
