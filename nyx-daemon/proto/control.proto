@@ -3,42 +3,302 @@ syntax = "proto3";
 package nyx.api;
 
 import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/nyxproject/nyx/api";
 
+// Extended NodeInfo with comprehensive daemon status
 message NodeInfo {
   string node_id = 1;
   string version = 2;
   uint32 uptime_sec = 3;
   uint64 bytes_in = 4;
   uint64 bytes_out = 5;
+  
+  // Extended fields for v1.0
+  uint32 pid = 6;
+  uint32 active_streams = 7;
+  uint32 connected_peers = 8;
+  repeated string mix_routes = 9;
+  
+  // Performance metrics
+  PerformanceMetrics performance = 10;
+  
+  // System resource usage
+  ResourceUsage resources = 11;
+  
+  // Network topology info
+  NetworkTopology topology = 12;
 }
 
+// Performance metrics for the daemon
+message PerformanceMetrics {
+  double cover_traffic_rate = 1;        // packets/sec
+  double avg_latency_ms = 2;            // milliseconds
+  double packet_loss_rate = 3;          // 0.0-1.0
+  double bandwidth_utilization = 4;     // 0.0-1.0
+  double cpu_usage = 5;                 // 0.0-1.0
+  double memory_usage_mb = 6;           // megabytes
+  uint64 total_packets_sent = 7;
+  uint64 total_packets_received = 8;
+  uint64 retransmissions = 9;
+  double connection_success_rate = 10;  // 0.0-1.0
+}
+
+// System resource usage
+message ResourceUsage {
+  uint64 memory_rss_bytes = 1;
+  uint64 memory_vms_bytes = 2;
+  double cpu_percent = 3;
+  uint32 open_file_descriptors = 4;
+  uint32 thread_count = 5;
+  uint64 network_bytes_sent = 6;
+  uint64 network_bytes_received = 7;
+}
+
+// Network topology information
+message NetworkTopology {
+  repeated PeerInfo peers = 1;
+  repeated PathInfo paths = 2;
+  uint32 total_nodes_known = 3;
+  uint32 reachable_nodes = 4;
+  string current_region = 5;
+  repeated string available_regions = 6;
+}
+
+// Information about connected peers
+message PeerInfo {
+  string node_id = 1;
+  string address = 2;
+  double latency_ms = 3;
+  double bandwidth_mbps = 4;
+  string status = 5;  // "connected", "connecting", "disconnected"
+  google.protobuf.Timestamp last_seen = 6;
+  uint32 connection_count = 7;
+  string region = 8;
+}
+
+// Information about network paths
+message PathInfo {
+  uint32 path_id = 1;
+  repeated string hops = 2;  // node IDs in order
+  double total_latency_ms = 3;
+  double min_bandwidth_mbps = 4;
+  string status = 5;  // "active", "backup", "failed"
+  uint32 packet_count = 6;
+  double success_rate = 7;
+  google.protobuf.Timestamp created_at = 8;
+}
+
+// Stream management
 message OpenRequest {
   string stream_name = 1;
+  string target_address = 2;
+  StreamOptions options = 3;
+}
+
+message StreamOptions {
+  uint32 buffer_size = 1;
+  uint32 timeout_ms = 2;
+  bool multipath = 3;
+  uint32 max_paths = 4;
+  string path_strategy = 5;  // "latency_weighted", "random", "lowest_latency", "load_balance"
+  bool auto_reconnect = 6;
+  uint32 max_retry_attempts = 7;
+  bool compression = 8;
+  string cipher_suite = 9;
 }
 
 message StreamResponse {
   uint32 stream_id = 1;
   string status = 2;
+  string target_address = 3;
+  StreamStats initial_stats = 4;
 }
 
 message StreamId {
   uint32 id = 1;
 }
 
+// Detailed stream statistics
+message StreamStats {
+  uint32 stream_id = 1;
+  string target_address = 2;
+  string state = 3;  // "idle", "open", "half_closed_local", "half_closed_remote", "closed"
+  google.protobuf.Timestamp created_at = 4;
+  google.protobuf.Timestamp last_activity = 5;
+  
+  // Traffic statistics
+  uint64 bytes_sent = 6;
+  uint64 bytes_received = 7;
+  uint64 packets_sent = 8;
+  uint64 packets_received = 9;
+  uint64 retransmissions = 10;
+  
+  // Performance metrics
+  double avg_rtt_ms = 11;
+  double min_rtt_ms = 12;
+  double max_rtt_ms = 13;
+  double bandwidth_mbps = 14;
+  double packet_loss_rate = 15;
+  
+  // Path information for multipath streams
+  repeated StreamPathStats paths = 16;
+  
+  // Error statistics
+  uint32 connection_errors = 17;
+  uint32 timeout_errors = 18;
+  string last_error = 19;
+  google.protobuf.Timestamp last_error_at = 20;
+}
+
+// Per-path statistics for multipath streams
+message StreamPathStats {
+  uint32 path_id = 1;
+  string status = 2;
+  double rtt_ms = 3;
+  double bandwidth_mbps = 4;
+  uint64 bytes_sent = 5;
+  uint64 bytes_received = 6;
+  uint32 packet_count = 7;
+  double success_rate = 8;
+}
+
+// Event system
 message EventFilter {
-  repeated string types = 1;
+  repeated string types = 1;  // "stream", "connection", "error", "performance", "system"
+  repeated uint32 stream_ids = 2;  // filter by specific stream IDs
+  string severity = 3;  // "debug", "info", "warn", "error"
 }
 
 message Event {
   string type = 1;
   string detail = 2;
+  google.protobuf.Timestamp timestamp = 3;
+  string severity = 4;
+  map<string, string> attributes = 5;
+  
+  // Event-specific data
+  oneof event_data {
+    StreamEvent stream_event = 6;
+    ConnectionEvent connection_event = 7;
+    PerformanceEvent performance_event = 8;
+    SystemEvent system_event = 9;
+  }
 }
 
+message StreamEvent {
+  uint32 stream_id = 1;
+  string action = 2;  // "opened", "closed", "error", "reconnecting", "data_sent", "data_received"
+  string target_address = 3;
+  StreamStats stats = 4;
+}
+
+message ConnectionEvent {
+  string peer_id = 1;
+  string action = 2;  // "connected", "disconnected", "handshake_complete", "authentication_failed"
+  string address = 3;
+  double latency_ms = 4;
+}
+
+message PerformanceEvent {
+  string metric = 1;  // "latency_spike", "bandwidth_drop", "packet_loss_high", "cpu_high"
+  double value = 2;
+  double threshold = 3;
+  string description = 4;
+}
+
+message SystemEvent {
+  string component = 1;  // "daemon", "transport", "crypto", "mix", "fec"
+  string action = 2;     // "started", "stopped", "error", "warning", "config_reload"
+  string message = 3;
+  map<string, string> details = 4;
+}
+
+// Configuration management
+message ConfigUpdate {
+  map<string, string> settings = 1;
+  bool restart_required = 2;
+}
+
+message ConfigResponse {
+  bool success = 1;
+  string message = 2;
+  repeated string validation_errors = 3;
+}
+
+// Real-time statistics streaming
+message StatsRequest {
+  uint32 interval_ms = 1;  // update interval in milliseconds
+  repeated string metrics = 2;  // specific metrics to include
+}
+
+message StatsUpdate {
+  google.protobuf.Timestamp timestamp = 1;
+  NodeInfo node_info = 2;
+  repeated StreamStats stream_stats = 3;
+  map<string, double> custom_metrics = 4;
+}
+
+// Health check
+message HealthRequest {
+  bool include_details = 1;
+}
+
+message HealthResponse {
+  string status = 1;  // "healthy", "degraded", "unhealthy"
+  repeated HealthCheck checks = 2;
+  google.protobuf.Timestamp checked_at = 3;
+}
+
+message HealthCheck {
+  string name = 1;
+  string status = 2;
+  string message = 3;
+  double response_time_ms = 4;
+}
+
+// Path management
+message PathRequest {
+  string target = 1;
+  uint32 hops = 2;
+  string strategy = 3;  // "latency_optimized", "bandwidth_optimized", "reliability_optimized"
+}
+
+message PathResponse {
+  repeated string path = 1;  // ordered list of node IDs
+  double estimated_latency_ms = 2;
+  double estimated_bandwidth_mbps = 3;
+  double reliability_score = 4;
+}
+
+// Service definition with comprehensive API
 service NyxControl {
+  // Basic node information
   rpc GetInfo (google.protobuf.Empty) returns (NodeInfo);
+  rpc GetHealth (HealthRequest) returns (HealthResponse);
+  
+  // Stream management
   rpc OpenStream (OpenRequest) returns (StreamResponse);
   rpc CloseStream (StreamId) returns (google.protobuf.Empty);
+  rpc GetStreamStats (StreamId) returns (StreamStats);
+  rpc ListStreams (google.protobuf.Empty) returns (stream StreamStats);
+  
+  // Event subscription
   rpc SubscribeEvents (EventFilter) returns (stream Event);
+  
+  // Real-time statistics
+  rpc SubscribeStats (StatsRequest) returns (stream StatsUpdate);
+  
+  // Configuration management
+  rpc UpdateConfig (ConfigUpdate) returns (ConfigResponse);
+  rpc ReloadConfig (google.protobuf.Empty) returns (ConfigResponse);
+  
+  // Path management
+  rpc BuildPath (PathRequest) returns (PathResponse);
+  rpc GetPaths (google.protobuf.Empty) returns (stream PathInfo);
+  
+  // Network topology
+  rpc GetTopology (google.protobuf.Empty) returns (NetworkTopology);
+  rpc GetPeers (google.protobuf.Empty) returns (stream PeerInfo);
 } 
