@@ -9,61 +9,41 @@
 //! - Session-based routing and multiplexing
 //! - Session statistics and monitoring
 
+use crate::proto::{self, SessionRequest, SessionResponse, SessionInfo, PeerInfo};
+use anyhow::Result;
 use dashmap::DashMap;
-use nyx_core::NodeId;
+use nyx_core::types::*;
 use nyx_crypto::aead::FrameCrypter;
-use nyx_stream::StreamState;
+use rand::RngCore;
+use hex;
 
 use std::collections::HashMap;
 use std::sync::{
     atomic::{AtomicU32, AtomicU64, Ordering},
     Arc,
 };
-use std::time::{Duration, Instant, SystemTime};
-use tokio::sync::{RwLock, Mutex};
+use std::time::{Duration, SystemTime};
+use tokio::sync::RwLock;
 use tokio::time::interval;
-use tracing::{debug, error, info, warn, instrument};
-use uuid::Uuid;
-use rand::RngCore;
+use tracing::{debug, error, info, warn};
 
 /// 96-bit Connection ID as specified in Nyx Protocol
 pub type ConnectionId = [u8; 12];
 
-/// Session configuration
-#[derive(Debug, Clone)]
-pub struct SessionManagerConfig {
-    pub max_sessions: u32,
-    pub session_timeout_secs: u64,
-    pub cleanup_interval_secs: u64,
-    pub enable_session_persistence: bool,
-    pub max_streams_per_session: u32,
-}
-
-impl Default for SessionManagerConfig {
-    fn default() -> Self {
-        Self {
-            max_sessions: 10000,
-            session_timeout_secs: 3600, // 1 hour
-            cleanup_interval_secs: 300,  // 5 minutes
-            enable_session_persistence: false,
-            max_streams_per_session: 100,
-        }
-    }
-}
-
 /// Session information
 #[derive(Debug, Clone)]
 pub struct Session {
-    pub cid: ConnectionId,
-    pub peer_node_id: Option<NodeId>,
-    pub state: SessionState,
+    pub id: [u8; 12],
+    pub stream_id: u32,
     pub created_at: SystemTime,
     pub last_activity: SystemTime,
+    pub state: SessionState,
+    pub peer_info: Option<PeerInfo>,
+    pub statistics: SessionStatistics,
     pub stream_count: u32,
     pub bytes_sent: u64,
     pub bytes_received: u64,
     pub crypter: Option<Arc<FrameCrypter>>,
-    pub metadata: HashMap<String, String>,
 }
 
 /// Session state
@@ -144,16 +124,25 @@ impl SessionManager {
         
         // Create session
         let session = Session {
-            cid,
-            peer_node_id,
-            state: SessionState::Initializing,
+            id: cid,
+            stream_id: 0, // Placeholder, will be incremented
             created_at: SystemTime::now(),
             last_activity: SystemTime::now(),
+            state: SessionState::Initializing,
+            peer_info: peer_node_id.map(|id| PeerInfo { 
+                node_id: hex::encode(id),
+                address: "unknown".to_string(),
+                latency_ms: 0.0,
+                bandwidth_mbps: 0.0,
+                status: "connecting".to_string(),
+                connection_count: 0,
+                last_seen: None,
+            }),
+            statistics: SessionStatistics::default(),
             stream_count: 0,
             bytes_sent: 0,
             bytes_received: 0,
             crypter: None,
-            metadata: HashMap::new(),
         };
         
         // Store session
@@ -263,7 +252,7 @@ impl SessionManager {
     #[instrument(skip(self), fields(cid = %hex::encode(cid)))]
     pub async fn close_session(&self, cid: &ConnectionId) -> anyhow::Result<()> {
         if let Some(session) = self.sessions.get(cid) {
-            let peer_node_id = session.peer_node_id;
+            let peer_node_id = session.peer_info.as_ref().map(|p| p.node_id);
             
             // Update state to closing
             if let Some(mut session) = self.sessions.get_mut(cid) {
@@ -376,12 +365,13 @@ impl SessionManager {
             let session = entry.value();
             if let Ok(duration) = now.duration_since(session.last_activity) {
                 if duration > timeout {
-                    expired_sessions.push(session.cid);
+                    expired_sessions.push(session.id);
                 }
             }
         }
         
         // Remove expired sessions
+        let expired_count = expired_sessions.len();
         for cid in expired_sessions {
             if let Err(e) = self.close_session(&cid).await {
                 warn!("Failed to close expired session {}: {}", hex::encode(cid), e);
@@ -393,11 +383,11 @@ impl SessionManager {
         // Update statistics
         {
             let mut stats = self.statistics.write().await;
-            stats.expired_sessions += expired_sessions.len() as u64;
+            stats.expired_sessions += expired_count as u64;
         }
         
-        if !expired_sessions.is_empty() {
-            info!("Cleaned up {} expired sessions", expired_sessions.len());
+        if expired_count > 0 {
+            info!("Cleaned up {} expired sessions", expired_count);
         }
         
         Ok(())

@@ -15,7 +15,7 @@
 //! largest-only encoding keeps parsing simple while enabling RTT sampling.
 
 use nom::{number::complete::be_u32, IResult};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 /// Parsed ACK frame.

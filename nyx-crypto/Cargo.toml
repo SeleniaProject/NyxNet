@@ -56,6 +56,9 @@ zeroize = { version = "1.8", features=["zeroize_derive"] }
 thiserror = "1.0"
 age = { version = "0.11", default-features = false, features=["armor"] }
 
+# System dependencies
+rpassword = "7.3"
+
 # metadata serialization for future extensions
 serde = { version = "1", features=["derive"], optional = true }
 serde_json = { version = "1", optional = true }

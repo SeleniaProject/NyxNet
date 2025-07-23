@@ -11,24 +11,25 @@
 //! - Session management with Connection IDs (CID)
 //! - Error handling and recovery mechanisms
 
-use std::{sync::Arc, time::{Instant, SystemTime}, collections::HashMap, net::SocketAddr};
-#[cfg(unix)]
-use tokio::net::UnixListener;
-#[cfg(unix)]
-use tokio_stream::wrappers::{ReceiverStream, UnixListenerStream};
-use tracing::{error, info, warn, debug, instrument};
-use tonic::transport::Server;
-use tokio::sync::{mpsc, RwLock, Mutex, broadcast};
-use tokio::time::{interval, Duration};
-use futures::StreamExt;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
+use std::collections::HashMap;
 
-use nyx_core::{install_panic_abort, NyxConfig, NodeId};
-use nyx_transport::{PacketHandler, Transport};
-use nyx_mix::cmix::CmixController;
-use nyx_control::{init_control, ControlManager};
-use nyx_stream::{StreamLayer, WeightedRrScheduler};
-use nyx_crypto::aead::FrameCrypter;
-use nyx_fec::timing::TimingConfig;
+use anyhow::Result;
+use clap::{Arg, Command};
+use tokio::signal;
+use tokio::sync::{broadcast, RwLock, Mutex};
+use tonic::{transport::Server, Request, Response, Status};
+use tracing::{debug, error, info, warn, instrument};
+use tracing_subscriber::{fmt, EnvFilter};
+
+// Internal modules
+use nyx_core::{types::*, config::NyxConfig, install_panic_abort};
+use nyx_mix::{cmix::*, cover::CoverTrafficGenerator, anonymity::AnonymitySet};
+use nyx_control::{init_control, ControlManager, DhtHandle, rendezvous::RendezvousService};
+use nyx_transport::{Transport, PacketHandler};
+use nyx_telemetry::TelemetryCollector;
 
 // Internal modules
 mod metrics;
@@ -45,7 +46,17 @@ use path_builder::{PathBuilder, PathBuilderConfig};
 use session_manager::{SessionManager, SessionManagerConfig};
 use config_manager::{ConfigManager, DynamicConfig};
 use health_monitor::{HealthMonitor, HealthCheck};
-use event_system::{EventSystem, EventFilter as InternalEventFilter};
+use event_system::EventSystem;
+use crate::proto::EventFilter;
+
+/// Convert SystemTime to proto::Timestamp
+fn system_time_to_proto_timestamp(time: SystemTime) -> proto::Timestamp {
+    let duration = time.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+    proto::Timestamp {
+        seconds: duration.as_secs() as i64,
+        nanos: duration.subsec_nanos() as i32,
+    }
+}
 
 mod proto {
     tonic::include_proto!("nyx.api");
@@ -53,12 +64,11 @@ mod proto {
 
 use proto::nyx_control_server::{NyxControl, NyxControlServer};
 use proto::*;
-use prost_types::Empty;
 
 /// Comprehensive control service implementation
 pub struct ControlService {
     // Core components
-    start_time: Instant,
+    start_time: std::time::Instant,
     node_id: NodeId,
     transport: Arc<Transport>,
     control_manager: ControlManager,
@@ -89,14 +99,14 @@ pub struct ControlService {
 impl ControlService {
     /// Create a new control service with all subsystems
     pub async fn new(config: NyxConfig) -> anyhow::Result<Self> {
-        let start_time = Instant::now();
+        let start_time = std::time::Instant::now();
         let node_id = Self::generate_node_id(&config);
         
         // Initialize transport layer
-        let transport = Transport::start(
+        let transport = Arc::new(Transport::start(
             config.listen_port,
             Arc::new(DaemonPacketHandler::new()),
-        ).await?;
+        ).await?);
         
         // Initialize control plane (DHT, push notifications)
         let control_manager = init_control(&config).await;
@@ -267,7 +277,7 @@ impl ControlService {
         metrics: Arc<MetricsCollector>,
         event_tx: broadcast::Sender<Event>,
     ) {
-        let mut interval = interval(Duration::from_secs(10));
+        let mut interval = tokio::time::interval(Duration::from_secs(10));
         
         loop {
             interval.tick().await;
@@ -280,7 +290,7 @@ impl ControlService {
                 let event = Event {
                     r#type: "performance".to_string(),
                     detail: "High latency detected".to_string(),
-                    timestamp: Some(prost_types::Timestamp::from(SystemTime::now())),
+                    timestamp: Some(system_time_to_proto_timestamp(SystemTime::now())),
                     severity: "warn".to_string(),
                     attributes: HashMap::new(),
                     event_data: Some(event::EventData::PerformanceEvent(PerformanceEvent {
@@ -298,7 +308,7 @@ impl ControlService {
                 let event = Event {
                     r#type: "performance".to_string(),
                     detail: "High packet loss detected".to_string(),
-                    timestamp: Some(prost_types::Timestamp::from(SystemTime::now())),
+                    timestamp: Some(system_time_to_proto_timestamp(SystemTime::now())),
                     severity: "warn".to_string(),
                     attributes: HashMap::new(),
                     event_data: Some(event::EventData::PerformanceEvent(PerformanceEvent {
@@ -320,7 +330,7 @@ impl ControlService {
         config: Arc<RwLock<NyxConfig>>,
         event_tx: broadcast::Sender<Event>,
     ) {
-        let mut interval = interval(Duration::from_secs(5));
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
         
         loop {
             interval.tick().await;
@@ -333,7 +343,7 @@ impl ControlService {
                     let event = Event {
                         r#type: "system".to_string(),
                         detail: "Configuration updated".to_string(),
-                        timestamp: Some(prost_types::Timestamp::from(SystemTime::now())),
+                        timestamp: Some(system_time_to_proto_timestamp(SystemTime::now())),
                         severity: "info".to_string(),
                         attributes: HashMap::new(),
                         event_data: Some(event::EventData::SystemEvent(SystemEvent {
@@ -388,7 +398,7 @@ impl NyxControl for ControlService {
     #[instrument(skip(self))]
     async fn get_info(
         &self,
-        _request: tonic::Request<Empty>,
+        _request: tonic::Request<proto::Empty>,
     ) -> Result<tonic::Response<NodeInfo>, tonic::Status> {
         self.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         
@@ -437,7 +447,7 @@ impl NyxControl for ControlService {
     async fn close_stream(
         &self,
         request: tonic::Request<StreamId>,
-    ) -> Result<tonic::Response<Empty>, tonic::Status> {
+    ) -> Result<tonic::Response<proto::Empty>, tonic::Status> {
         self.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         
         let stream_id = request.into_inner().id;
@@ -445,7 +455,7 @@ impl NyxControl for ControlService {
         match self.stream_manager.close_stream(stream_id).await {
             Ok(()) => {
                 info!("Stream {} closed successfully", stream_id);
-                Ok(tonic::Response::new(Empty {}))
+                Ok(tonic::Response::new(proto::Empty {}))
             }
             Err(e) => {
                 error!("Failed to close stream {}: {}", stream_id, e);
@@ -474,16 +484,16 @@ impl NyxControl for ControlService {
     }
     
     /// List all active streams
-    type ListStreamsStream = ReceiverStream<Result<StreamStats, tonic::Status>>;
+    type ListStreamsStream = tokio_stream::wrappers::ReceiverStream<Result<StreamStats, tonic::Status>>;
     
     #[instrument(skip(self))]
     async fn list_streams(
         &self,
-        _request: tonic::Request<Empty>,
+        _request: tonic::Request<proto::Empty>,
     ) -> Result<tonic::Response<Self::ListStreamsStream>, tonic::Status> {
         self.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         
-        let (tx, rx) = mpsc::channel(100);
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
         
         let stream_manager = Arc::clone(&self.stream_manager);
         tokio::spawn(async move {
@@ -496,11 +506,11 @@ impl NyxControl for ControlService {
             }
         });
         
-        Ok(tonic::Response::new(ReceiverStream::new(rx)))
+        Ok(tonic::Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
     
     /// Subscribe to real-time events
-    type SubscribeEventsStream = ReceiverStream<Result<Event, tonic::Status>>;
+    type SubscribeEventsStream = tokio_stream::wrappers::ReceiverStream<Result<Event, tonic::Status>>;
     
     #[instrument(skip(self))]
     async fn subscribe_events(
@@ -510,7 +520,7 @@ impl NyxControl for ControlService {
         self.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         
         let filter = request.into_inner();
-        let (tx, rx) = mpsc::channel(1000);
+        let (tx, rx) = tokio::sync::mpsc::channel(1000);
         
         // Subscribe to event broadcasts
         let mut event_rx = self.event_tx.subscribe();
@@ -527,11 +537,11 @@ impl NyxControl for ControlService {
             }
         });
         
-        Ok(tonic::Response::new(ReceiverStream::new(rx)))
+        Ok(tonic::Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
     
     /// Subscribe to real-time statistics
-    type SubscribeStatsStream = ReceiverStream<Result<StatsUpdate, tonic::Status>>;
+    type SubscribeStatsStream = tokio_stream::wrappers::ReceiverStream<Result<StatsUpdate, tonic::Status>>;
     
     #[instrument(skip(self))]
     async fn subscribe_stats(
@@ -543,11 +553,11 @@ impl NyxControl for ControlService {
         let req = request.into_inner();
         let interval_ms = if req.interval_ms > 0 { req.interval_ms } else { 1000 };
         
-        let (tx, rx) = mpsc::channel(100);
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
         
         let service = self.clone();
         tokio::spawn(async move {
-            let mut interval = interval(Duration::from_millis(interval_ms as u64));
+            let mut interval = tokio::time::interval(Duration::from_millis(interval_ms as u64));
             
             loop {
                 interval.tick().await;
@@ -556,7 +566,7 @@ impl NyxControl for ControlService {
                 let stream_stats = service.stream_manager.list_streams().await;
                 
                 let stats_update = StatsUpdate {
-                    timestamp: Some(prost_types::Timestamp::from(SystemTime::now())),
+                    timestamp: Some(system_time_to_proto_timestamp(SystemTime::now())),
                     node_info: Some(node_info),
                     stream_stats,
                     custom_metrics: HashMap::new(),
@@ -568,7 +578,7 @@ impl NyxControl for ControlService {
             }
         });
         
-        Ok(tonic::Response::new(ReceiverStream::new(rx)))
+        Ok(tonic::Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
     
     /// Update configuration dynamically
@@ -594,7 +604,7 @@ impl NyxControl for ControlService {
     #[instrument(skip(self))]
     async fn reload_config(
         &self,
-        _request: tonic::Request<Empty>,
+        _request: tonic::Request<proto::Empty>,
     ) -> Result<tonic::Response<ConfigResponse>, tonic::Status> {
         self.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         
@@ -627,16 +637,16 @@ impl NyxControl for ControlService {
     }
     
     /// Get all network paths
-    type GetPathsStream = ReceiverStream<Result<PathInfo, tonic::Status>>;
+    type GetPathsStream = tokio_stream::wrappers::ReceiverStream<Result<PathInfo, tonic::Status>>;
     
     #[instrument(skip(self))]
     async fn get_paths(
         &self,
-        _request: tonic::Request<Empty>,
+        _request: tonic::Request<proto::Empty>,
     ) -> Result<tonic::Response<Self::GetPathsStream>, tonic::Status> {
         self.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         
-        let (tx, rx) = mpsc::channel(100);
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
         
         // This would enumerate all active paths
         tokio::spawn(async move {
@@ -649,20 +659,20 @@ impl NyxControl for ControlService {
                 status: "active".to_string(),
                 packet_count: 1000,
                 success_rate: 0.95,
-                created_at: Some(prost_types::Timestamp::from(SystemTime::now())),
+                created_at: Some(system_time_to_proto_timestamp(SystemTime::now())),
             };
             
             let _ = tx.send(Ok(path_info)).await;
         });
         
-        Ok(tonic::Response::new(ReceiverStream::new(rx)))
+        Ok(tonic::Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
     
     /// Get network topology
     #[instrument(skip(self))]
     async fn get_topology(
         &self,
-        _request: tonic::Request<Empty>,
+        _request: tonic::Request<proto::Empty>,
     ) -> Result<tonic::Response<NetworkTopology>, tonic::Status> {
         self.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         
@@ -680,16 +690,16 @@ impl NyxControl for ControlService {
     }
     
     /// Get all network peers
-    type GetPeersStream = ReceiverStream<Result<PeerInfo, tonic::Status>>;
+    type GetPeersStream = tokio_stream::wrappers::ReceiverStream<Result<PeerInfo, tonic::Status>>;
     
     #[instrument(skip(self))]
     async fn get_peers(
         &self,
-        _request: tonic::Request<Empty>,
+        _request: tonic::Request<proto::Empty>,
     ) -> Result<tonic::Response<Self::GetPeersStream>, tonic::Status> {
         self.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         
-        let (tx, rx) = mpsc::channel(100);
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
         
         // This would enumerate all known peers
         tokio::spawn(async move {
@@ -700,7 +710,7 @@ impl NyxControl for ControlService {
                 latency_ms: 50.0,
                 bandwidth_mbps: 100.0,
                 status: "connected".to_string(),
-                last_seen: Some(prost_types::Timestamp::from(SystemTime::now())),
+                last_seen: Some(system_time_to_proto_timestamp(SystemTime::now())),
                 connection_count: 5,
                 region: "us-west".to_string(),
             };
@@ -708,7 +718,7 @@ impl NyxControl for ControlService {
             let _ = tx.send(Ok(peer_info)).await;
         });
         
-        Ok(tonic::Response::new(ReceiverStream::new(rx)))
+        Ok(tonic::Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
 }
 
@@ -799,9 +809,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(unix)]
     let _ = std::fs::remove_file(DEFAULT_ENDPOINT);
 
-    let listener = UnixListener::bind(DEFAULT_ENDPOINT)?;
-    info!("Control endpoint bound at {}", DEFAULT_ENDPOINT);
-    let incoming = UnixListenerStream::new(listener);
+    // Use TCP listener for Windows compatibility
+    let addr = "127.0.0.1:8080".parse()?;
+    info!("Control endpoint bound at {}", addr);
 
     info!("Nyx daemon fully initialized and ready for connections");
     info!("Node ID: {}", hex::encode(svc.node_id));
@@ -811,7 +821,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start the gRPC server with comprehensive service
     if let Err(e) = Server::builder()
         .add_service(NyxControlServer::new(svc))
-        .serve_with_incoming(incoming)
+        .serve(addr)
         .await
     {
         error!("gRPC server terminated with error: {}", e);

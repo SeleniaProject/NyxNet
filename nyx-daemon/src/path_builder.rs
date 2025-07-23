@@ -9,29 +9,26 @@
 //! - Bandwidth and reliability-based path selection
 //! - Real-time network condition monitoring
 
+use crate::proto::{self, PathRequest, PathResponse};
 use crate::metrics::MetricsCollector;
-use crate::proto::{PathRequest, PathResponse, PeerInfo, PathInfo};
-
-use nyx_core::NodeId;
-use nyx_mix::{WeightedPathBuilder, Candidate, larmix::{Prober, LARMixPlanner}};
-use nyx_control::{DhtHandle, ControlManager};
-use nyx_stream::WeightedRrScheduler;
-
-use dashmap::DashMap;
+use anyhow::Result;
+use nyx_core::types::*;
+use nyx_mix::{Candidate, larmix::{Prober, LARMixPlanner}};
+use nyx_control::DhtHandle;
 use geo::{Point, HaversineDistance};
 use petgraph::{Graph, Undirected, graph::NodeIndex};
-use priority_queue::PriorityQueue;
-use std::collections::{HashMap, HashSet, VecDeque};
+use lru::LruCache;
+
+use std::collections::{HashMap, HashSet};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc,
+    Arc, Mutex,
 };
-use std::time::{Duration, Instant, SystemTime};
-use tokio::sync::{RwLock, Mutex};
+use std::time::{Duration, SystemTime, Instant};
+use tokio::sync::RwLock;
 use tokio::time::interval;
-use tracing::{debug, error, info, warn, instrument};
-use rand::{seq::SliceRandom, thread_rng, Rng};
-use lru::LruCache;
+use tracing::{debug, error, info, instrument};
+use rand::{seq::SliceRandom, thread_rng};
 
 /// Maximum number of candidate nodes to consider for path building
 const MAX_CANDIDATES: usize = 1000;
@@ -65,7 +62,7 @@ pub struct NetworkNode {
 }
 
 /// Path building strategy
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum PathBuildingStrategy {
     LatencyOptimized,
     BandwidthOptimized,
@@ -153,7 +150,7 @@ impl Default for PathBuilderConfig {
 }
 
 /// Path building statistics
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct PathBuildingStats {
     pub total_paths_built: u64,
     pub cache_hits: u64,
@@ -263,7 +260,7 @@ impl PathBuilder {
                 self.cache_path(cache_key, cached_path).await;
                 
                 // Update statistics
-                self.update_build_stats(strategy, build_time, true).await;
+                self.update_build_stats(strategy.clone(), build_time, true).await;
                 
                 info!("Built {} hop path to {} using {:?} strategy in {:.2}ms", 
                       hops.len(), request.target, strategy, build_time);
@@ -271,7 +268,7 @@ impl PathBuilder {
                 Ok(self.build_path_response(hops, quality))
             }
             Err(e) => {
-                self.update_build_stats(strategy, build_time, false).await;
+                self.update_build_stats(strategy.clone(), build_time, false).await;
                 error!("Failed to build path to {}: {}", request.target, e);
                 Err(e)
             }
@@ -294,7 +291,7 @@ impl PathBuilder {
         }
         
         // Use LARMix planner with high latency bias
-        let prober = self.prober.lock().await;
+        let prober = self.prober.lock().unwrap();
         let planner = LARMixPlanner::new(&prober, 0.9); // High latency bias
         
         let mut selected_hops = Vec::new();
@@ -309,9 +306,9 @@ impl PathBuilder {
                 break;
             }
             
-            if !used_nodes.contains(&candidate.id) {
-                selected_hops.push(candidate.id);
-                used_nodes.insert(candidate.id);
+            if !used_nodes.contains(&candidate.node_id) {
+                selected_hops.push(candidate.node_id.clone());
+                used_nodes.insert(candidate.node_id.clone());
             }
         }
         
@@ -350,9 +347,9 @@ impl PathBuilder {
                 break;
             }
             
-            if !used_nodes.contains(&candidate.id) {
-                selected_hops.push(candidate.id);
-                used_nodes.insert(candidate.id);
+            if !used_nodes.contains(&candidate.node_id) {
+                selected_hops.push(candidate.node_id.clone());
+                used_nodes.insert(candidate.node_id.clone());
             }
         }
         
@@ -373,8 +370,8 @@ impl PathBuilder {
         // Select nodes with highest reliability scores
         let mut sorted_candidates = candidates.clone();
         sorted_candidates.sort_by(|a, b| {
-            let score_a = node.reliability_score * node.reputation_score;
-            let score_b = node.reliability_score * node.reputation_score;
+            let score_a = a.reliability_score * a.reputation_score;
+            let score_b = b.reliability_score * b.reputation_score;
             score_b.partial_cmp(&score_a).unwrap()
         });
         
@@ -386,9 +383,9 @@ impl PathBuilder {
                 break;
             }
             
-            if !used_nodes.contains(&candidate.id) {
-                selected_hops.push(candidate.id);
-                used_nodes.insert(candidate.id);
+            if !used_nodes.contains(&candidate.node_id) {
+                selected_hops.push(candidate.node_id.clone());
+                used_nodes.insert(candidate.node_id.clone());
             }
         }
         
@@ -424,7 +421,7 @@ impl PathBuilder {
                 break;
             }
             
-            if used_nodes.contains(&candidate.id) {
+            if used_nodes.contains(&candidate.node_id) {
                 continue;
             }
             
@@ -439,22 +436,22 @@ impl PathBuilder {
             
             // If first node or sufficiently far from existing nodes, select it
             if selected_locations.is_empty() || min_distance >= self.config.geographic_diversity_radius_km {
-                selected_hops.push(candidate.id);
-                used_nodes.insert(candidate.id);
+                selected_hops.push(candidate.node_id.clone());
+                used_nodes.insert(candidate.node_id.clone());
                 selected_locations.push(location);
             }
         }
         
         // If we don't have enough geographically diverse nodes, fill with best available
         if selected_hops.len() < hops as usize {
-            for candidate in candidates {
+            for candidate in &candidates {
                 if selected_hops.len() >= hops as usize {
                     break;
                 }
                 
-                if !used_nodes.contains(&candidate.id) {
-                    selected_hops.push(candidate.id);
-                    used_nodes.insert(candidate.id);
+                if !used_nodes.contains(&candidate.node_id) {
+                    selected_hops.push(candidate.node_id.clone());
+                    used_nodes.insert(candidate.node_id.clone());
                 }
             }
         }
@@ -490,9 +487,9 @@ impl PathBuilder {
                 break;
             }
             
-            if !used_nodes.contains(&candidate.id) {
-                selected_hops.push(candidate.id);
-                used_nodes.insert(candidate.id);
+            if !used_nodes.contains(&candidate.node_id) {
+                selected_hops.push(candidate.node_id.clone());
+                used_nodes.insert(candidate.node_id.clone());
             }
         }
         
@@ -642,7 +639,7 @@ impl PathBuilder {
     
     /// Get cached path if available and not expired
     async fn get_cached_path(&self, cache_key: &str) -> Option<CachedPath> {
-        let mut cache = self.path_cache.lock().await;
+        let mut cache = self.path_cache.lock().unwrap();
         
         if let Some(cached_paths) = cache.get_mut(cache_key) {
             // Find non-expired path with best quality
@@ -665,11 +662,13 @@ impl PathBuilder {
     
     /// Cache a path
     async fn cache_path(&self, cache_key: String, path: CachedPath) {
-        let mut cache = self.path_cache.lock().await;
+        let mut cache = self.path_cache.lock().unwrap();
         
-        cache.entry(cache_key)
-            .or_insert_with(Vec::new)
-            .push(path);
+        if let Some(paths) = cache.get_mut(&cache_key) {
+            paths.push(path);
+        } else {
+            cache.put(cache_key, vec![path]);
+        }
     }
     
     /// Build PathResponse from hops and quality
@@ -794,7 +793,7 @@ impl PathBuilder {
     
     /// Clean up expired cache entries
     async fn cleanup_expired_cache_entries(&self) {
-        let mut cache = self.path_cache.lock().await;
+        let mut cache = self.path_cache.lock().unwrap();
         let now = Instant::now();
         let ttl = Duration::from_secs(self.config.cache_ttl_secs);
         

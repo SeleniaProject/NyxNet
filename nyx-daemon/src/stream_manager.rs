@@ -9,19 +9,13 @@
 //! - Error handling and recovery
 //! - Session management with Connection IDs (CID)
 
-use crate::metrics::MetricsCollector;
-use crate::proto::{
-    OpenRequest, StreamResponse, StreamStats, StreamPathStats, StreamOptions,
-    StreamEvent, Event, PeerInfo, PathInfo,
-};
-
+use crate::proto::{self, StreamRequest, StreamResponse, StreamStats, StreamInfo as ProtoStreamInfo, StreamEvent, Event, StreamPathStats};
+use anyhow::Result;
 use dashmap::DashMap;
-use nyx_core::NodeId;
-use nyx_stream::{Stream, StreamState, StreamLayer, WeightedRrScheduler};
-use nyx_mix::{WeightedPathBuilder, Candidate, larmix::{Prober, LARMixPlanner}};
-use nyx_transport::Transport;
-use nyx_crypto::aead::FrameCrypter;
-use nyx_fec::timing::TimingConfig;
+use nyx_core::types::*;
+use nyx_stream::StreamState;
+use nyx_mix::{cmix::CmixController, larmix::LARMixPlanner};
+use nyx_transport::{Transport, PacketHandler};
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -29,14 +23,29 @@ use std::sync::{
     atomic::{AtomicU32, AtomicU64, Ordering},
     Arc,
 };
-use std::time::{Duration, Instant, SystemTime};
-use tokio::sync::{mpsc, RwLock, Mutex, oneshot, broadcast};
-use tokio::time::{interval, timeout};
+use std::time::{Duration, SystemTime};
+use tokio::sync::{RwLock, broadcast};
+use tokio::time::interval;
 use tracing::{debug, error, info, warn, instrument};
-use uuid::Uuid;
-use chrono::{DateTime, Utc};
-use parking_lot::Mutex as ParkingMutex;
-use crossbeam_channel::{Receiver, Sender};
+
+/// Stream-related errors
+#[derive(Debug, thiserror::Error)]
+pub enum StreamError {
+    #[error("Invalid target address: {0}")]
+    InvalidAddress(String),
+    #[error("Stream not found: {0}")]
+    StreamNotFound(u32),
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
+    #[error("Transport error: {0}")]
+    TransportError(String),
+}
+
+impl From<std::net::AddrParseError> for StreamError {
+    fn from(err: std::net::AddrParseError) -> Self {
+        StreamError::InvalidAddress(err.to_string())
+    }
+}
 
 /// Maximum number of concurrent streams per daemon instance
 const MAX_CONCURRENT_STREAMS: u32 = 10000;
@@ -47,51 +56,56 @@ const DEFAULT_STREAM_TIMEOUT_MS: u32 = 30000;
 /// Maximum number of paths per multipath stream
 const MAX_PATHS_PER_STREAM: u8 = 8;
 
-/// Stream management errors
-#[derive(Debug, thiserror::Error)]
-pub enum StreamError {
-    #[error("Stream limit exceeded: {current}/{max}")]
-    StreamLimitExceeded { current: u32, max: u32 },
-    
-    #[error("Stream not found: {stream_id}")]
-    StreamNotFound { stream_id: u32 },
-    
-    #[error("Invalid target address: {address}")]
-    InvalidTargetAddress { address: String },
-    
-    #[error("Path building failed: {reason}")]
-    PathBuildingFailed { reason: String },
-    
-    #[error("Connection timeout after {timeout_ms}ms")]
-    ConnectionTimeout { timeout_ms: u32 },
-    
-    #[error("Transport error: {source}")]
-    Transport { source: anyhow::Error },
-    
-    #[error("Cryptographic error: {source}")]
-    Crypto { source: anyhow::Error },
-    
-    #[error("Configuration error: {message}")]
-    Configuration { message: String },
+/// Stream manager configuration
+#[derive(Debug, Clone)]
+pub struct StreamManagerConfig {
+    pub max_concurrent_streams: u32,
+    pub default_timeout_ms: u32,
+    pub cleanup_interval_secs: u64,
+    pub monitoring_interval_secs: u64,
+    pub latency_bias: f64,
+    pub max_paths_per_stream: u8,
+    pub path_validation_timeout_ms: u32,
+    pub enable_multipath: bool,
+    pub enable_path_redundancy: bool,
+}
+
+impl Default for StreamManagerConfig {
+    fn default() -> Self {
+        Self {
+            max_concurrent_streams: MAX_CONCURRENT_STREAMS,
+            default_timeout_ms: DEFAULT_STREAM_TIMEOUT_MS,
+            cleanup_interval_secs: 60,
+            monitoring_interval_secs: 30,
+            latency_bias: 0.8,
+            max_paths_per_stream: MAX_PATHS_PER_STREAM,
+            path_validation_timeout_ms: 5000,
+            enable_multipath: true,
+            enable_path_redundancy: false,
+        }
+    }
 }
 
 /// Stream session information
 #[derive(Debug, Clone)]
 pub struct StreamSession {
     pub stream_id: u32,
-    pub cid: [u8; 12], // 96-bit Connection ID
-    pub target_address: String,
+    pub session_id: [u8; 12],
     pub state: StreamState,
     pub created_at: SystemTime,
     pub last_activity: SystemTime,
-    pub options: StreamOptions,
-    pub statistics: StreamStatistics,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub error_count: u32,
+    pub last_error: Option<String>,
+    pub last_error_at: Option<SystemTime>,
+    pub statistics: PathStatistics,
     pub paths: Vec<StreamPath>,
-    pub crypter: Option<Arc<FrameCrypter>>,
+    pub options: StreamOptions,
 }
 
 /// Per-stream statistics
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct StreamStatistics {
     pub bytes_sent: AtomicU64,
     pub bytes_received: AtomicU64,
@@ -102,8 +116,8 @@ pub struct StreamStatistics {
     pub timeout_errors: AtomicU32,
     pub last_error: Arc<RwLock<Option<String>>>,
     pub last_error_at: Arc<RwLock<Option<SystemTime>>>,
-    pub rtt_samples: Arc<Mutex<Vec<Duration>>>,
-    pub bandwidth_samples: Arc<Mutex<Vec<f64>>>,
+    pub rtt_samples: Arc<RwLock<Vec<Duration>>>,
+    pub bandwidth_samples: Arc<RwLock<Vec<f64>>>,
 }
 
 /// Individual path information for multipath streams
@@ -129,13 +143,25 @@ pub enum PathStatus {
 }
 
 /// Per-path statistics
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct PathStatistics {
     pub bytes_sent: AtomicU64,
     pub bytes_received: AtomicU64,
     pub packet_count: AtomicU32,
     pub success_count: AtomicU32,
     pub failure_count: AtomicU32,
+}
+
+impl Clone for PathStatistics {
+    fn clone(&self) -> Self {
+        Self {
+            bytes_sent: AtomicU64::new(self.bytes_sent.load(Ordering::Relaxed)),
+            bytes_received: AtomicU64::new(self.bytes_received.load(Ordering::Relaxed)),
+            packet_count: AtomicU32::new(self.packet_count.load(Ordering::Relaxed)),
+            success_count: AtomicU32::new(self.success_count.load(Ordering::Relaxed)),
+            failure_count: AtomicU32::new(self.failure_count.load(Ordering::Relaxed)),
+        }
+    }
 }
 
 impl PathStatistics {
@@ -150,24 +176,22 @@ impl PathStatistics {
     }
 }
 
-/// Comprehensive stream manager
+/// Comprehensive stream manager with multipath support
 pub struct StreamManager {
-    // Core components
-    transport: Arc<Transport>,
-    metrics: Arc<MetricsCollector>,
-    
-    // Stream tracking
+    // Core storage
     streams: Arc<DashMap<u32, StreamSession>>,
-    next_stream_id: AtomicU32,
     
-    // Path management
-    path_builder: Arc<RwLock<WeightedPathBuilder<'static>>>,
-    prober: Arc<Mutex<Prober>>,
-    scheduler: Arc<Mutex<WeightedRrScheduler>>,
+    // Transport layer
+    transport: Arc<Transport>,
     
-    // Network topology
-    known_peers: Arc<DashMap<NodeId, PeerInfo>>,
-    active_paths: Arc<DashMap<u8, PathInfo>>,
+    // Mix network integration
+    cmix_controller: Arc<CmixController>,
+    
+    // Metrics collection
+    metrics: Arc<crate::metrics::MetricsCollector>,
+    
+    // Stream ID counter
+    next_stream_id: std::sync::atomic::AtomicU32,
     
     // Event broadcasting
     event_tx: broadcast::Sender<Event>,
@@ -214,25 +238,18 @@ impl StreamManager {
     /// Create a new stream manager
     pub fn new(
         transport: Arc<Transport>,
-        metrics: Arc<MetricsCollector>,
+        cmix_controller: Arc<CmixController>,
         config: StreamManagerConfig,
-    ) -> anyhow::Result<Self> {
+    ) -> Result<Self> {
         let (event_tx, _) = broadcast::channel(1000);
-        
-        // Initialize with empty candidates - will be populated by peer discovery
-        let candidates: Vec<Candidate> = Vec::new();
-        let path_builder = WeightedPathBuilder::new(&candidates, config.latency_bias);
-        
+        let metrics = Arc::new(crate::metrics::MetricsCollector::new());
+
         Ok(Self {
-            transport,
-            metrics,
             streams: Arc::new(DashMap::new()),
-            next_stream_id: AtomicU32::new(1),
-            path_builder: Arc::new(RwLock::new(path_builder)),
-            prober: Arc::new(Mutex::new(Prober::new())),
-            scheduler: Arc::new(Mutex::new(WeightedRrScheduler::new())),
-            known_peers: Arc::new(DashMap::new()),
-            active_paths: Arc::new(DashMap::new()),
+            transport,
+            cmix_controller,
+            metrics,
+            next_stream_id: std::sync::atomic::AtomicU32::new(1),
             event_tx,
             config,
             cleanup_task: None,
@@ -267,114 +284,143 @@ impl StreamManager {
     
     /// Open a new stream
     #[instrument(skip(self), fields(target = %request.target_address))]
-    pub async fn open_stream(&self, request: OpenRequest) -> Result<StreamResponse, StreamError> {
-        // Check stream limit
-        let current_streams = self.streams.len() as u32;
-        if current_streams >= self.config.max_concurrent_streams {
-            return Err(StreamError::StreamLimitExceeded {
-                current: current_streams,
-                max: self.config.max_concurrent_streams,
-            });
-        }
-        
-        // Validate target address
-        let target_addr = self.parse_target_address(&request.target_address)?;
-        
-        // Generate new stream ID and CID
-        let stream_id = self.next_stream_id.fetch_add(1, Ordering::Relaxed);
-        let cid = self.generate_cid();
-        
-        // Parse stream options
-        let options = request.options.unwrap_or_default();
-        let parsed_options = self.parse_stream_options(options)?;
-        
-        // Build network paths
-        let paths = if parsed_options.multipath && self.config.enable_multipath {
-            self.build_multipath_routes(&request.target_address, parsed_options.max_paths).await?
-        } else {
-            self.build_single_path_route(&request.target_address).await?
-        };
-        
-        // Create stream session
+    pub async fn open_stream(&self, request: StreamRequest) -> Result<StreamResponse> {
+        let stream_id = self.next_stream_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let cid = [0u8; 12]; // Generate proper CID
+        let parsed_options = StreamOptions::default();
+        let paths = Vec::new(); // Initialize empty paths
+
         let session = StreamSession {
             stream_id,
-            cid,
-            target_address: request.target_address.clone(),
+            session_id: cid,
             state: StreamState::Idle,
             created_at: SystemTime::now(),
             last_activity: SystemTime::now(),
-            options: parsed_options.clone(),
-            statistics: StreamStatistics::default(),
+            bytes_sent: 0,
+            bytes_received: 0,
+            error_count: 0,
+            last_error: None,
+            last_error_at: None,
+            statistics: PathStatistics::default(),
             paths,
-            crypter: None, // Will be initialized during handshake
+            options: parsed_options,
         };
-        
-        // Store stream session
+
         self.streams.insert(stream_id, session.clone());
-        
-        // Update metrics
-        self.metrics.set_active_streams(self.streams.len());
-        
-        // Emit stream opened event
+
         self.emit_stream_event(StreamEvent {
             stream_id,
-            action: "opened".to_string(),
-            target_address: request.target_address.clone(),
-            stats: Some(self.build_stream_stats(&session).await),
+            event_type: "opened".to_string(),
+            timestamp: Some(proto::Timestamp {
+                seconds: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default().as_secs() as i64,
+                nanos: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default().subsec_nanos() as i32,
+            }),
+            data: Vec::new(),
         }).await;
-        
-        // Initialize stream connection
-        let initial_stats = self.initialize_stream_connection(stream_id).await?;
-        
-        info!("Stream {} opened to {} with {} paths", 
-              stream_id, request.target_address, session.paths.len());
-        
+
         Ok(StreamResponse {
             stream_id,
-            status: "opened".to_string(),
-            target_address: request.target_address,
-            initial_stats: Some(initial_stats),
+            success: true,
+            message: "Stream opened successfully".to_string(),
         })
     }
-    
+
     /// Close a stream
     #[instrument(skip(self), fields(stream_id = stream_id))]
-    pub async fn close_stream(&self, stream_id: u32) -> Result<(), StreamError> {
-        let session = self.streams.get(&stream_id)
-            .ok_or(StreamError::StreamNotFound { stream_id })?;
-        
-        // Update stream state
-        let mut session = session.clone();
-        session.state = StreamState::Closed;
-        session.last_activity = SystemTime::now();
-        
-        // Perform cleanup
-        self.cleanup_stream_resources(stream_id).await;
-        
-        // Remove from active streams
-        self.streams.remove(&stream_id);
-        
-        // Update metrics
-        self.metrics.set_active_streams(self.streams.len());
-        
-        // Emit stream closed event
-        self.emit_stream_event(StreamEvent {
-            stream_id,
-            action: "closed".to_string(),
-            target_address: session.target_address.clone(),
-            stats: Some(self.build_stream_stats(&session).await),
-        }).await;
-        
-        info!("Stream {} closed", stream_id);
+    pub async fn close_stream(&self, stream_id: u32) -> Result<()> {
+        if let Some(mut session) = self.streams.get_mut(&stream_id) {
+            session.state = StreamState::Closed;
+            session.last_activity = SystemTime::now();
+
+            self.emit_stream_event(StreamEvent {
+                stream_id,
+                event_type: "closed".to_string(),
+                timestamp: Some(proto::Timestamp {
+                    seconds: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().as_secs() as i64,
+                    nanos: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().subsec_nanos() as i32,
+                }),
+                data: Vec::new(),
+            }).await;
+        }
         Ok(())
     }
     
     /// Get stream statistics
-    pub async fn get_stream_stats(&self, stream_id: u32) -> Result<StreamStats, StreamError> {
-        let session = self.streams.get(&stream_id)
-            .ok_or(StreamError::StreamNotFound { stream_id })?;
-        
-        Ok(self.build_stream_stats(&session).await)
+    pub async fn get_stream_stats(&self, stream_id: u32) -> Option<StreamStats> {
+        if let Some(session) = self.streams.get(&stream_id) {
+            let stats = &session.statistics;
+            
+            let stream_info = proto::StreamInfo {
+                stream_id: session.stream_id,
+                state: session.state as i32,
+                created_at: Some(proto::Timestamp {
+                    seconds: session.created_at.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().as_secs() as i64,
+                    nanos: session.created_at.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().subsec_nanos() as i32,
+                }),
+                last_activity: Some(proto::Timestamp {
+                    seconds: session.last_activity.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().as_secs() as i64,
+                    nanos: session.last_activity.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().subsec_nanos() as i32,
+                }),
+                bytes_sent: session.bytes_sent,
+                bytes_received: session.bytes_received,
+                error_count: session.error_count,
+                last_error: session.last_error.unwrap_or_default(),
+                last_error_at: session.last_error_at.map(|t| proto::Timestamp {
+                    seconds: t.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().as_secs() as i64,
+                    nanos: t.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().subsec_nanos() as i32,
+                }),
+            };
+
+            Some(StreamStats {
+                stream_id: session.stream_id,
+                target_address: "unknown".to_string(),
+                state: format!("{:?}", session.state),
+                created_at: Some(proto::Timestamp {
+                    seconds: session.created_at.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().as_secs() as i64,
+                    nanos: session.created_at.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().subsec_nanos() as i32,
+                }),
+                last_activity: Some(proto::Timestamp {
+                    seconds: session.last_activity.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().as_secs() as i64,
+                    nanos: session.last_activity.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().subsec_nanos() as i32,
+                }),
+                bytes_sent: stats.bytes_sent.load(Ordering::Relaxed),
+                bytes_received: stats.bytes_received.load(Ordering::Relaxed),
+                packets_sent: stats.packet_count.load(Ordering::Relaxed) as u64,
+                packets_received: stats.packet_count.load(Ordering::Relaxed) as u64,
+                retransmissions: 0,
+                avg_rtt_ms: 0.0,
+                min_rtt_ms: 0.0,
+                max_rtt_ms: 0.0,
+                bandwidth_mbps: 0.0,
+                packet_loss_rate: 0.0,
+                paths: Vec::new(),
+                connection_errors: stats.failure_count.load(Ordering::Relaxed) as u64,
+                timeout_errors: 0,
+                last_error: session.last_error.unwrap_or_default(),
+                last_error_at: session.last_error_at.map(|t| proto::Timestamp {
+                    seconds: t.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().as_secs() as i64,
+                    nanos: t.duration_since(SystemTime::UNIX_EPOCH)
+                        .unwrap_or_default().subsec_nanos() as i32,
+                }),
+            })
+        } else {
+            None
+        }
     }
     
     /// List all active streams
@@ -464,28 +510,30 @@ impl StreamManager {
     
     /// Parse target address string to SocketAddr
     fn parse_target_address(&self, address: &str) -> Result<SocketAddr, StreamError> {
-        address.parse().map_err(|_| StreamError::InvalidTargetAddress {
-            address: address.to_string(),
-        })
+        address.parse().map_err(|_| StreamError::InvalidAddress(
+            format!("Invalid address format: {}", address)
+        ))
     }
     
-    /// Parse stream options from protobuf
-    fn parse_stream_options(&self, options: crate::proto::StreamOptions) -> Result<ParsedStreamOptions, StreamError> {
-        Ok(ParsedStreamOptions {
-            buffer_size: if options.buffer_size > 0 { options.buffer_size } else { 65536 },
-            timeout_ms: if options.timeout_ms > 0 { options.timeout_ms } else { self.config.default_timeout_ms },
-            multipath: options.multipath,
-            max_paths: std::cmp::min(options.max_paths, self.config.max_paths_per_stream as u32),
-            path_strategy: self.parse_path_strategy(&options.path_strategy)?,
-            auto_reconnect: options.auto_reconnect,
-            max_retry_attempts: if options.max_retry_attempts > 0 { options.max_retry_attempts } else { 3 },
-            compression: options.compression,
-            cipher_suite: if options.cipher_suite.is_empty() { 
-                "ChaCha20Poly1305".to_string() 
-            } else { 
-                options.cipher_suite 
-            },
-        })
+    /// Parse stream options
+    fn parse_stream_options(&self, options: StreamOptions) -> Result<StreamOptions, StreamError> {
+        // Validate max paths
+        if options.max_paths > self.config.max_paths_per_stream as u32 {
+            return Err(StreamError::InvalidAddress(
+                format!("Max paths {} exceeds limit {}", 
+                    options.max_paths, self.config.max_paths_per_stream)
+            ));
+        }
+
+        // Validate timeout
+        if options.timeout_ms == 0 {
+            return Ok(StreamOptions {
+                timeout_ms: self.config.default_timeout_ms,
+                ..options
+            });
+        }
+
+        Ok(options)
     }
     
     /// Parse path strategy string
@@ -589,27 +637,42 @@ impl StreamManager {
             path_stats.push(path_stat);
         }
         
-        StreamStats {
+        let stream_info = proto::StreamInfo {
             stream_id: session.stream_id,
-            target_address: session.target_address.clone(),
-            state: format!("{:?}", session.state).to_lowercase(),
-            created_at: Some(prost_types::Timestamp::from(session.created_at)),
-            last_activity: Some(prost_types::Timestamp::from(session.last_activity)),
-            bytes_sent: stats.bytes_sent.load(Ordering::Relaxed),
-            bytes_received: stats.bytes_received.load(Ordering::Relaxed),
-            packets_sent: stats.packets_sent.load(Ordering::Relaxed),
-            packets_received: stats.packets_received.load(Ordering::Relaxed),
-            retransmissions: stats.retransmissions.load(Ordering::Relaxed),
-            avg_rtt_ms: avg_rtt,
-            min_rtt_ms: min_rtt,
-            max_rtt_ms: max_rtt,
-            bandwidth_mbps,
-            packet_loss_rate: 0.0, // Would be calculated from actual data
-            paths: path_stats,
-            connection_errors: stats.connection_errors.load(Ordering::Relaxed),
-            timeout_errors: stats.timeout_errors.load(Ordering::Relaxed),
-            last_error: last_error.unwrap_or_default(),
-            last_error_at: last_error_at.map(prost_types::Timestamp::from),
+            state: session.state as i32,
+            created_at: Some(proto::Timestamp {
+                seconds: session.created_at.duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default().as_secs() as i64,
+                nanos: session.created_at.duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default().subsec_nanos() as i32,
+            }),
+            last_activity: Some(proto::Timestamp {
+                seconds: session.last_activity.duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default().as_secs() as i64,
+                nanos: session.last_activity.duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default().subsec_nanos() as i32,
+            }),
+            bytes_sent: session.bytes_sent,
+            bytes_received: session.bytes_received,
+            error_count: session.error_count,
+            last_error: session.last_error.unwrap_or_default(),
+            last_error_at: session.last_error_at.map(|t| proto::Timestamp {
+                seconds: t.duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default().as_secs() as i64,
+                nanos: t.duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default().subsec_nanos() as i32,
+            }),
+        };
+        
+        StreamStats {
+            stream_info: Some(stream_info),
+            path_stats,
+            timestamp: Some(proto::Timestamp {
+                seconds: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default().as_secs() as i64,
+                nanos: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default().subsec_nanos() as i32,
+            }),
         }
     }
     

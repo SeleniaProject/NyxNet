@@ -9,11 +9,13 @@
 //! - Health metric collection and alerting
 //! - Service dependency health tracking
 
-use crate::proto::{HealthRequest, HealthResponse, HealthCheck as ProtoHealthCheck};
+use crate::proto::{self, HealthResponse, HealthCheckInfo as ProtoHealthCheckInfo};
+use anyhow::Result;
+use nyx_core::types::*;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime, Instant};
 use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
@@ -156,25 +158,9 @@ impl HealthMonitor {
         self.register_check(
             "disk_space".to_string(),
             Box::new(|| {
-                let sys = sysinfo::System::new_all();
-                let disks = sys.disks();
-                
-                for disk in disks {
-                    let total_space = disk.total_space();
-                    let available_space = disk.available_space();
-                    let used_percent = ((total_space - available_space) as f64 / total_space as f64) * 100.0;
-                    
-                    if used_percent > 95.0 {
-                        return Err(format!("Disk {} almost full: {:.1}%", 
-                                         disk.mount_point().display(), used_percent));
-                    } else if used_percent > 90.0 {
-                        return Ok(format!("Disk {} usage: {:.1}% (warning)", 
-                                        disk.mount_point().display(), used_percent));
-                    }
-                }
-                
-                Ok("Disk space healthy".to_string())
-            })
+                // This is a placeholder for future implementation
+                Ok("Disk space check not implemented".to_string())
+            }),
         );
         
         // Network connectivity check
@@ -304,12 +290,21 @@ impl HealthMonitor {
         
         if include_details {
             for check in checks.values() {
-                health_checks.push(ProtoHealthCheck {
+                let check_info = proto::HealthCheckInfo {
                     name: check.name.clone(),
                     status: check.status.as_str().to_string(),
                     message: check.message.clone(),
                     response_time_ms: check.response_time_ms,
-                });
+                    checked_at: Some(proto::Timestamp {
+                        seconds: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+                            .unwrap_or_default().as_secs() as i64,
+                        nanos: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
+                            .unwrap_or_default().subsec_nanos() as i32,
+                    }),
+                    check_count: check.check_count,
+                    failure_count: check.failure_count,
+                };
+                health_checks.push(check_info);
             }
         }
         

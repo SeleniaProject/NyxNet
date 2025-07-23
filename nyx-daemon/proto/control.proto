@@ -2,10 +2,16 @@ syntax = "proto3";
 
 package nyx.api;
 
-import "google/protobuf/empty.proto";
-import "google/protobuf/timestamp.proto";
-
 option go_package = "github.com/nyxproject/nyx/api";
+
+// Custom timestamp message to replace google.protobuf.Timestamp
+message Timestamp {
+  int64 seconds = 1;
+  int32 nanos = 2;
+}
+
+// Custom empty message to replace google.protobuf.Empty
+message Empty {}
 
 // Extended NodeInfo with comprehensive daemon status
 message NodeInfo {
@@ -73,7 +79,7 @@ message PeerInfo {
   double latency_ms = 3;
   double bandwidth_mbps = 4;
   string status = 5;  // "connected", "connecting", "disconnected"
-  google.protobuf.Timestamp last_seen = 6;
+  Timestamp last_seen = 6;
   uint32 connection_count = 7;
   string region = 8;
 }
@@ -87,7 +93,7 @@ message PathInfo {
   string status = 5;  // "active", "backup", "failed"
   uint32 packet_count = 6;
   double success_rate = 7;
-  google.protobuf.Timestamp created_at = 8;
+  Timestamp created_at = 8;
 }
 
 // Stream management
@@ -125,8 +131,8 @@ message StreamStats {
   uint32 stream_id = 1;
   string target_address = 2;
   string state = 3;  // "idle", "open", "half_closed_local", "half_closed_remote", "closed"
-  google.protobuf.Timestamp created_at = 4;
-  google.protobuf.Timestamp last_activity = 5;
+  Timestamp created_at = 4;
+  Timestamp last_activity = 5;
   
   // Traffic statistics
   uint64 bytes_sent = 6;
@@ -149,7 +155,7 @@ message StreamStats {
   uint32 connection_errors = 17;
   uint32 timeout_errors = 18;
   string last_error = 19;
-  google.protobuf.Timestamp last_error_at = 20;
+  Timestamp last_error_at = 20;
 }
 
 // Per-path statistics for multipath streams
@@ -174,7 +180,7 @@ message EventFilter {
 message Event {
   string type = 1;
   string detail = 2;
-  google.protobuf.Timestamp timestamp = 3;
+  Timestamp timestamp = 3;
   string severity = 4;
   map<string, string> attributes = 5;
   
@@ -234,7 +240,7 @@ message StatsRequest {
 }
 
 message StatsUpdate {
-  google.protobuf.Timestamp timestamp = 1;
+  Timestamp timestamp = 1;
   NodeInfo node_info = 2;
   repeated StreamStats stream_stats = 3;
   map<string, double> custom_metrics = 4;
@@ -248,7 +254,7 @@ message HealthRequest {
 message HealthResponse {
   string status = 1;  // "healthy", "degraded", "unhealthy"
   repeated HealthCheck checks = 2;
-  google.protobuf.Timestamp checked_at = 3;
+  Timestamp checked_at = 3;
 }
 
 message HealthCheck {
@@ -275,14 +281,14 @@ message PathResponse {
 // Service definition with comprehensive API
 service NyxControl {
   // Basic node information
-  rpc GetInfo (google.protobuf.Empty) returns (NodeInfo);
+  rpc GetInfo (Empty) returns (NodeInfo);
   rpc GetHealth (HealthRequest) returns (HealthResponse);
   
   // Stream management
   rpc OpenStream (OpenRequest) returns (StreamResponse);
-  rpc CloseStream (StreamId) returns (google.protobuf.Empty);
+  rpc CloseStream (StreamId) returns (Empty);
   rpc GetStreamStats (StreamId) returns (StreamStats);
-  rpc ListStreams (google.protobuf.Empty) returns (stream StreamStats);
+  rpc ListStreams (Empty) returns (stream StreamStats);
   
   // Event subscription
   rpc SubscribeEvents (EventFilter) returns (stream Event);
@@ -292,13 +298,13 @@ service NyxControl {
   
   // Configuration management
   rpc UpdateConfig (ConfigUpdate) returns (ConfigResponse);
-  rpc ReloadConfig (google.protobuf.Empty) returns (ConfigResponse);
+  rpc ReloadConfig (Empty) returns (ConfigResponse);
   
   // Path management
   rpc BuildPath (PathRequest) returns (PathResponse);
-  rpc GetPaths (google.protobuf.Empty) returns (stream PathInfo);
+  rpc GetPaths (Empty) returns (stream PathInfo);
   
   // Network topology
-  rpc GetTopology (google.protobuf.Empty) returns (NetworkTopology);
-  rpc GetPeers (google.protobuf.Empty) returns (stream PeerInfo);
+  rpc GetTopology (Empty) returns (NetworkTopology);
+  rpc GetPeers (Empty) returns (stream PeerInfo);
 } 

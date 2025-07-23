@@ -11,7 +11,7 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.7"
 thiserror = "1.0"
 tracing = "0.1"
-tokio = { version = "1", features = ["sync","time", "macros"] }
+tokio = { version = "1", features = ["sync","time", "macros", "rt", "rt-multi-thread"] }
 notify = { version = "6.1" }
 fluent-bundle = { version = "0.15" }
 unic-langid = "0.9"

@@ -16,7 +16,7 @@ pub fn build_header(hdr: FrameHeader) -> [u8; 4] {
 /// Build header with optional PathID. If `path_id` is Some, sets FLAG_HAS_PATH_ID and
 /// appends the additional byte. Returns a Vec<u8> containing the header bytes.
 pub fn build_header_ext(hdr: FrameHeader, path_id: Option<u8>) -> Vec<u8> {
-    let mut header = build_header(hdr);
+    let header = build_header(hdr);
     let mut out = Vec::with_capacity(5);
     out.extend_from_slice(&header);
     if let Some(pid) = path_id {

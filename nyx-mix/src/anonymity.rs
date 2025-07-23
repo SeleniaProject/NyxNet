@@ -11,6 +11,7 @@ pub const DEFAULT_WINDOW_SEC: u64 = 5;
 /// Evaluates entropy of delay distribution to approximate anonymity (0–1).
 /// This is a coarse metric: bucketises delays into 10 bins and computes
 /// Shannon entropy H / H_max.
+#[allow(dead_code)]
 pub struct AnonymityEvaluator {
     window: VecDeque<Duration>,
     window_len: Duration,
@@ -23,7 +24,7 @@ impl AnonymityEvaluator {
 
     /// Record a new observed delay.
     pub fn record_delay(&mut self, d: Duration) {
-        let now = std::time::Instant::now();
+        let _now = std::time::Instant::now();
         // store duration with timestamp via tuple
         self.window.push_back(d);
         // keep size under ~200 samples to bound memory

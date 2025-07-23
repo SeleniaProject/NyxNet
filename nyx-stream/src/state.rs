@@ -31,12 +31,14 @@ struct SentSegment {
 
 /// Reassembly buffer entry.
 #[derive(Debug)]
+#[allow(dead_code)]
 struct RecvSegment {
     offset: u32,
     data: Vec<u8>,
 }
 
 /// Core stream structure bound to a single Connection ID (CID).
+#[allow(dead_code)]
 pub struct Stream {
     pub id: u32,
     state: StreamState,

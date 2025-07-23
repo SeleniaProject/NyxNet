@@ -68,8 +68,8 @@ impl CmixController {
         let params = KeyCeremony::generate(2048);
         let params_cloned = params.clone();
 
-        let delay = Duration::from_millis(delay_ms);
-        let bsize = batch_size.max(1);
+        let _delay = Duration::from_millis(delay_ms);
+        let _bsize = batch_size.max(1);
 
         tokio::spawn(async move {
             // Initialize shared RSA accumulator.

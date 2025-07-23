@@ -5,34 +5,23 @@
 //! Implements connect, status, bench subcommands for interacting with Nyx daemon
 //! via gRPC, with full internationalization support and professional CLI experience.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::{Parser, Subcommand};
-use regex::Regex;
-use rand::rngs::OsRng;
-use rand::RngCore;
-use zeroize::Zeroizing;
-use nyx_crypto::keystore::{encrypt_and_store, KeystoreError};
-use dirs::home_dir;
-use std::fs::{self, OpenOptions};
-use std::io::{Write, BufRead, BufReader};
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use rpassword::prompt_password;
-use tokio::signal;
-use tokio::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::time::sleep;
 use indicatif::{ProgressBar, ProgressStyle};
-use colored::*;
+use console::style;
 use comfy_table::{Table, presets::UTF8_FULL};
 use byte_unit::{Byte, UnitType};
-use humantime::format_duration;
 use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use crossterm::{execute, terminal::{Clear, ClearType}, cursor::MoveTo};
+use std::collections::HashMap;
 
 mod i18n;
-use i18n::tr;
-use fluent_bundle::FluentArgs;
+use i18n::localize;
 
 // Include generated gRPC code
 pub mod proto {
@@ -40,9 +29,8 @@ pub mod proto {
 }
 
 use proto::nyx_control_client::NyxControlClient;
-use proto::{OpenRequest, StreamId, EventFilter};
-use prost_types::Empty;
 use tonic::transport::{Channel, Endpoint};
+use tonic::Request;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -191,6 +179,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+fn default_daemon_endpoint() -> String {
+    "127.0.0.1:8080".to_string()
+}
+
 async fn create_client(cli: &Cli) -> Result<NyxControlClient<Channel>, Box<dyn std::error::Error>> {
     let default_endpoint = default_daemon_endpoint();
     let endpoint_str = cli.endpoint.as_deref().unwrap_or(&default_endpoint);
@@ -212,16 +204,14 @@ async fn cmd_connect(
     interactive: bool,
     connect_timeout: u64,
     stream_name: &str,
-    shutdown: Arc<AtomicBool>,
+    _shutdown: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut client = create_client(cli).await?;
     
     let request = proto::OpenRequest {
-        target: target.to_string(),
         stream_name: stream_name.to_string(),
-        timeout_seconds: connect_timeout,
-        options: None,
         target_address: target.to_string(),
+        options: None,
     };
     
     println!("{}", style(localize(&cli.language, "connecting", None)?).cyan());
@@ -289,16 +279,20 @@ async fn cmd_status(
     let mut client = create_client(cli).await?;
     
     loop {
-        let request = Request::new(());
-        let response = client.get_status(request).await?;
+        let request = Request::new(proto::Empty {});
+        let response = client.get_info(request).await?;
         let status = response.into_inner();
         
         match format {
             "json" => {
-                println!("{}", serde_json::to_string_pretty(&status)?);
+                // TODO: Implement JSON serialization for NodeInfo
+                eprintln!("JSON format not yet implemented for NodeInfo");
+                display_status_table(&status, &cli.language)?;
             }
             "yaml" => {
-                println!("{}", serde_yaml::to_string(&status)?);
+                // TODO: Implement YAML serialization for NodeInfo
+                eprintln!("YAML format not yet implemented for NodeInfo");
+                display_status_table(&status, &cli.language)?;
             }
             "table" | _ => {
                 display_status_table(&status, &cli.language)?;
@@ -318,25 +312,24 @@ async fn cmd_status(
     Ok(())
 }
 
-fn display_status_table(status: &proto::DaemonStatus, language: &str) -> Result<(), Box<dyn std::error::Error>> {
+fn display_status_table(status: &proto::NodeInfo, language: &str) -> Result<(), Box<dyn std::error::Error>> {
     let mut table = Table::new();
     table.load_preset(UTF8_FULL);
     
-    // Basic info
-    let mut args = fluent_bundle::FluentArgs::new();
-    args.set("version", status.version.as_str());
+    let mut args = HashMap::new();
+    args.insert("version", status.version.clone());
     println!("{}", localize(language, "daemon_version", Some(&args))?);
     
-    let mut args = fluent_bundle::FluentArgs::new();
-    args.set("uptime", format_duration(status.uptime_seconds));
+    let mut args = HashMap::new();
+    args.insert("uptime", format_duration(status.uptime_sec as u64));
     println!("{}", localize(language, "uptime", Some(&args))?);
     
-    let mut args = fluent_bundle::FluentArgs::new();
-    args.set("bytes_in", Byte::from_u128(status.network.bytes_in as u128).unwrap().get_appropriate_unit(UnitType::Binary).to_string());
+    let mut args = HashMap::new();
+    args.insert("bytes_in", Byte::from_u128(status.bytes_in as u128).unwrap().get_appropriate_unit(UnitType::Binary).to_string());
     println!("{}", localize(language, "network_bytes_in", Some(&args))?);
     
-    let mut args = fluent_bundle::FluentArgs::new();
-    args.set("bytes_out", Byte::from_u128(status.network.bytes_out as u128).unwrap().get_appropriate_unit(UnitType::Binary).to_string());
+    let mut args = HashMap::new();
+    args.insert("bytes_out", Byte::from_u128(status.bytes_out as u128).unwrap().get_appropriate_unit(UnitType::Binary).to_string());
     println!("{}", localize(language, "network_bytes_out", Some(&args))?);
     
     Ok(())
@@ -354,20 +347,20 @@ async fn cmd_bench(
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", style("Starting benchmark...").cyan());
     
-    let mut args = fluent_bundle::FluentArgs::new();
-    args.set("target", target);
+    let mut args = HashMap::new();
+    args.insert("target", target.to_string());
     println!("{}", localize(&cli.language, "benchmark_target", Some(&args))?);
     
-    let mut args = fluent_bundle::FluentArgs::new();
-    args.set("duration", duration.to_string().as_str());
+    let mut args = HashMap::new();
+    args.insert("duration", duration.to_string());
     println!("{}", localize(&cli.language, "benchmark_duration", Some(&args))?);
     
-    let mut args = fluent_bundle::FluentArgs::new();
-    args.set("connections", connections.to_string().as_str());
+    let mut args = HashMap::new();
+    args.insert("connections", connections.to_string());
     println!("{}", localize(&cli.language, "benchmark_connections", Some(&args))?);
     
-    let mut args = fluent_bundle::FluentArgs::new();
-    args.set("size", Byte::from_u128(payload_size as u128).unwrap().get_appropriate_unit(UnitType::Binary).to_string());
+    let mut args = HashMap::new();
+    args.insert("payload_size", Byte::from_u128(payload_size as u128).unwrap().get_appropriate_unit(UnitType::Binary).to_string());
     println!("{}", localize(&cli.language, "benchmark_payload_size", Some(&args))?);
     
     // Progress bar for benchmark
@@ -418,13 +411,13 @@ async fn cmd_bench(
     table.add_row(vec!["Total Requests", &total_requests.to_string()]);
     table.add_row(vec!["Requests/sec", &format!("{:.2}", avg_rps)]);
     
-    let mut args = fluent_bundle::FluentArgs::new();
-    args.set("rate", Byte::from_u128(total_bytes as u128).unwrap().get_appropriate_unit(UnitType::Binary).to_string());
+    let mut args = HashMap::new();
+    args.insert("total_data", Byte::from_u128(total_bytes as u128).unwrap().get_appropriate_unit(UnitType::Binary).to_string());
     table.add_row(vec!["Total Data", &localize(&cli.language, "benchmark_total_data", Some(&args))?]);
     
-    let mut args = fluent_bundle::FluentArgs::new();
+    let mut args = HashMap::new();
     let throughput_bytes = (total_bytes as f64 / elapsed.as_secs_f64()) as u128;
-    args.set("throughput", Byte::from_u128(throughput_bytes).unwrap().get_appropriate_unit(UnitType::Binary).to_string());
+    args.insert("throughput", Byte::from_u128(throughput_bytes).unwrap().get_appropriate_unit(UnitType::Binary).to_string());
     table.add_row(vec!["Throughput", &localize(&cli.language, "benchmark_throughput", Some(&args))?]);
     
     println!("{}", table);
@@ -433,24 +426,24 @@ async fn cmd_bench(
         println!("\n{}", style("Detailed Statistics:").bold());
         
         // Connection statistics
-        let mut args = fluent_bundle::FluentArgs::new();
-        args.set("successful", total_requests.to_string().as_str());
+        let mut args = HashMap::new();
+        args.insert("successful", total_requests.to_string());
         println!("{}", localize(&cli.language, "benchmark_successful", Some(&args))?);
         
-        let mut args = fluent_bundle::FluentArgs::new();
-        args.set("failed", "0");
+        let mut args = HashMap::new();
+        args.insert("failed", "0".to_string());
         println!("{}", localize(&cli.language, "benchmark_failed", Some(&args))?);
         
-        let mut args = fluent_bundle::FluentArgs::new();
-        args.set("avg_latency", "12.5ms");
+        let mut args = HashMap::new();
+        args.insert("avg_latency", "12.5ms".to_string());
         println!("{}", localize(&cli.language, "benchmark_avg_latency", Some(&args))?);
         
-        let mut args = fluent_bundle::FluentArgs::new();
-        args.set("p95_latency", "25.0ms");
+        let mut args = HashMap::new();
+        args.insert("p95_latency", "25.0ms".to_string());
         println!("{}", localize(&cli.language, "benchmark_p95_latency", Some(&args))?);
         
-        let mut args = fluent_bundle::FluentArgs::new();
-        args.set("p99_latency", "45.0ms");
+        let mut args = HashMap::new();
+        args.insert("p99_latency", "45.0ms".to_string());
         println!("{}", localize(&cli.language, "benchmark_p99_latency", Some(&args))?);
     }
     

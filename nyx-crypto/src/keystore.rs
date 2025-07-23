@@ -304,47 +304,9 @@ impl PassphraseInput {
     
     #[cfg(unix)]
     fn read_password_unix(&self) -> Result<Zeroizing<String>, KeystoreError> {
-        use std::os::unix::io::AsRawFd;
-        use std::io::{self, BufRead};
-        
-        let stdin = io::stdin();
-        let fd = stdin.as_raw_fd();
-        
-        // Get current terminal attributes
-        let mut termios = unsafe { std::mem::zeroed() };
-        if unsafe { libc::tcgetattr(fd, &mut termios) } != 0 {
-            return Err(KeystoreError::Io(io::Error::last_os_error()));
-        }
-        
-        // Disable echo
-        let mut new_termios = termios;
-        new_termios.c_lflag &= !libc::ECHO;
-        
-        if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &new_termios) } != 0 {
-            return Err(KeystoreError::Io(io::Error::last_os_error()));
-        }
-        
-        // Read password
-        let mut line = String::new();
-        let result = stdin.lock().read_line(&mut line);
-        
-        // Restore terminal attributes
-        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &termios) };
-        
-        // Print newline since echo was disabled
-        println!();
-        
-        match result {
-            Ok(_) => {
-                // Remove trailing newline
-                if line.ends_with('\n') {
-                    line.pop();
-                }
-                if line.ends_with('\r') {
-                    line.pop();
-                }
-                Ok(Zeroizing::new(line))
-            },
+        // Use rpassword crate to avoid unsafe code
+        match rpassword::read_password() {
+            Ok(password) => Ok(Zeroizing::new(password)),
             Err(e) => Err(KeystoreError::Io(e)),
         }
     }

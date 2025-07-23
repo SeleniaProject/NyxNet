@@ -9,16 +9,17 @@
 //! - Configuration versioning and rollback
 //! - Environment variable integration
 
-use crate::proto::{ConfigUpdate, ConfigResponse};
-use nyx_core::NyxConfig;
+use crate::proto::{ConfigRequest, ConfigResponse, ConfigUpdate};
+use anyhow::{Context, Result};
+use nyx_core::{config::NyxConfig, error::NyxError};
+use serde::{Deserialize, Serialize};
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::time::{Duration, SystemTime};
 use tokio::fs;
-use tracing::{debug, error, info, warn};
-use serde::{Deserialize, Serialize};
+use tokio::sync::{RwLock, broadcast};
+use tracing::{error, info, warn};
 
 /// Dynamic configuration that can be updated at runtime
 #[derive(Debug, Clone, Serialize, Deserialize)]

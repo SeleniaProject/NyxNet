@@ -19,7 +19,6 @@
 //! responsible for storing negotiated results.
 
 use serde::{Deserialize, Serialize};
-use serde_bytes::ByteBuf;
 
 /// Capability IDs this implementation supports.  These should be kept in
 /// sync with any new features added to the Nyx protocol.
@@ -30,6 +29,7 @@ pub const LOCAL_CAP_IDS: &[u32] = &[0x0001, 0x0002];
 /// Build the list of capabilities this node will advertise in the first
 /// CRYPTO frame during handshake.  Currently all capabilities are exported
 /// as *optional* except the foundational `core` capability (0x0001).
+#[allow(dead_code)]
 pub fn local_caps() -> Vec<Capability> {
     LOCAL_CAP_IDS
         .iter()

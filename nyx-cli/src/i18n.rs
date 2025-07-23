@@ -1,56 +1,100 @@
-//! Simple Fluent-based i18n helper for Nyx CLI.
+//! Simple i18n helper for Nyx CLI.
 #![forbid(unsafe_code)]
 
-use fluent_bundle::{FluentBundle, FluentResource};
-use std::sync::OnceLock;
+use std::collections::HashMap;
 
-static EN_RES: &str = include_str!("../i18n/en.ftl");
-static JA_RES: &str = include_str!("../i18n/ja.ftl");
-static ZH_RES: &str = include_str!("../i18n/zh.ftl");
+static EN_MESSAGES: &[(&str, &str)] = &[
+    ("connecting", "Connecting..."),
+    ("connection_established", "Connection established"),
+    ("daemon_version", "Daemon Version: {version}"),
+    ("uptime", "Uptime: {uptime}"),
+    ("network_bytes_in", "Bytes In: {bytes_in}"),
+    ("network_bytes_out", "Bytes Out: {bytes_out}"),
+    ("benchmark_target", "Target: {target}"),
+    ("benchmark_duration", "Duration: {duration}s"),
+    ("benchmark_connections", "Connections: {connections}"),
+    ("benchmark_payload_size", "Payload Size: {payload_size} bytes"),
+    ("benchmark_total_data", "Total Data: {total_data}"),
+    ("benchmark_throughput", "Throughput: {throughput}"),
+    ("benchmark_successful", "Successful Requests: {successful}"),
+    ("benchmark_failed", "Failed Requests: {failed}"),
+    ("benchmark_avg_latency", "Average Latency: {avg_latency}"),
+    ("benchmark_p95_latency", "95th Percentile Latency: {p95_latency}"),
+    ("benchmark_p99_latency", "99th Percentile Latency: {p99_latency}"),
+];
 
-fn load(locale: &str, content: &str) -> FluentBundle<FluentResource> {
-    let resource = FluentResource::try_new(content.to_string())
-        .expect("Failed to parse FTL string");
-    
-    let mut bundle = FluentBundle::new(vec![locale.parse().expect("Invalid locale")]);
-    bundle.add_resource(resource)
-        .expect("Failed to add resource");
-    
-    bundle
-}
+static JA_MESSAGES: &[(&str, &str)] = &[
+    ("connecting", "接続中..."),
+    ("connection_established", "接続が確立されました"),
+    ("daemon_version", "デーモンバージョン: {version}"),
+    ("uptime", "稼働時間: {uptime}"),
+    ("network_bytes_in", "受信バイト数: {bytes_in}"),
+    ("network_bytes_out", "送信バイト数: {bytes_out}"),
+    ("benchmark_target", "ターゲット: {target}"),
+    ("benchmark_duration", "期間: {duration}秒"),
+    ("benchmark_connections", "接続数: {connections}"),
+    ("benchmark_payload_size", "ペイロードサイズ: {payload_size} バイト"),
+    ("benchmark_total_data", "総データ量: {total_data}"),
+    ("benchmark_throughput", "スループット: {throughput}"),
+    ("benchmark_successful", "成功リクエスト数: {successful}"),
+    ("benchmark_failed", "失敗リクエスト数: {failed}"),
+    ("benchmark_avg_latency", "平均レイテンシ: {avg_latency}"),
+    ("benchmark_p95_latency", "95パーセンタイルレイテンシ: {p95_latency}"),
+    ("benchmark_p99_latency", "99パーセンタイルレイテンシ: {p99_latency}"),
+];
 
-static BUNDLE_EN: OnceLock<FluentBundle<FluentResource>> = OnceLock::new();
-static BUNDLE_JA: OnceLock<FluentBundle<FluentResource>> = OnceLock::new();
-static BUNDLE_ZH: OnceLock<FluentBundle<FluentResource>> = OnceLock::new();
+static ZH_MESSAGES: &[(&str, &str)] = &[
+    ("connecting", "连接中..."),
+    ("connection_established", "连接已建立"),
+    ("daemon_version", "守护进程版本: {version}"),
+    ("uptime", "运行时间: {uptime}"),
+    ("network_bytes_in", "接收字节数: {bytes_in}"),
+    ("network_bytes_out", "发送字节数: {bytes_out}"),
+    ("benchmark_target", "目标: {target}"),
+    ("benchmark_duration", "持续时间: {duration}秒"),
+    ("benchmark_connections", "连接数: {connections}"),
+    ("benchmark_payload_size", "负载大小: {payload_size} 字节"),
+    ("benchmark_total_data", "总数据量: {total_data}"),
+    ("benchmark_throughput", "吞吐量: {throughput}"),
+    ("benchmark_successful", "成功请求数: {successful}"),
+    ("benchmark_failed", "失败请求数: {failed}"),
+    ("benchmark_avg_latency", "平均延迟: {avg_latency}"),
+    ("benchmark_p95_latency", "95百分位延迟: {p95_latency}"),
+    ("benchmark_p99_latency", "99百分位延迟: {p99_latency}"),
+];
 
-fn get_bundle(language: &str) -> &'static FluentBundle<FluentResource> {
-    match language {
-        "ja" => BUNDLE_JA.get_or_init(|| load("ja", JA_RES)),
-        "zh" => BUNDLE_ZH.get_or_init(|| load("zh-CN", ZH_RES)),
-        _ => BUNDLE_EN.get_or_init(|| load("en-US", EN_RES)),
-    }
+fn get_messages(language: &str) -> HashMap<&'static str, &'static str> {
+    let messages = match language {
+        "ja" => JA_MESSAGES,
+        "zh" => ZH_MESSAGES,
+        _ => EN_MESSAGES,
+    };
+    messages.iter().cloned().collect()
 }
 
 pub fn localize(
     language: &str,
     text_id: &str,
-    args: Option<&fluent_bundle::FluentArgs>,
+    args: Option<&HashMap<&str, String>>,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let bundle = get_bundle(language);
+    let messages = get_messages(language);
     
-    let msg = bundle.get_message(text_id)
+    let template = messages.get(text_id)
         .ok_or_else(|| format!("Message '{}' not found", text_id))?;
     
-    let pattern = msg.value()
-        .ok_or_else(|| format!("Message '{}' has no value", text_id))?;
+    let mut result = template.to_string();
     
-    let mut errors = Vec::new();
-    let formatted = bundle
-        .format_pattern(pattern, args, &mut errors);
-    
-    if !errors.is_empty() {
-        eprintln!("Fluent formatting errors: {:?}", errors);
+    if let Some(args) = args {
+        for (key, value) in args {
+            let placeholder = format!("{{{}}}", key);
+            result = result.replace(&placeholder, value);
+        }
     }
     
-    Ok(formatted.into_owned())
+    Ok(result)
+}
+
+// Export function for use in main.rs
+pub fn tr(language: &str, text_id: &str, args: Option<&HashMap<&str, String>>) -> Result<String, Box<dyn std::error::Error>> {
+    localize(language, text_id, args)
 } 

@@ -86,6 +86,7 @@ pub struct CoverTrafficMetrics {
 
 /// Historical data point for traffic analysis.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 struct TrafficSample {
     timestamp: Instant,
     lambda: f64,
@@ -116,7 +117,7 @@ pub struct AdaptiveCoverGenerator {
 
 /// Running statistics for traffic analysis.
 #[derive(Debug, Clone)]
-struct TrafficStats {
+pub struct TrafficStats {
     total_packets: u64,
     total_bytes: u64,
     total_runtime: Duration,
@@ -224,7 +225,7 @@ impl AdaptiveCoverGenerator {
         let config = Arc::clone(&self.config);
         let current_lambda = Arc::clone(&self.current_lambda);
         let metrics = Arc::clone(&self.metrics);
-        let history = Arc::clone(&self.history);
+        let _history = Arc::clone(&self.history);
         let lambda_tx = self.lambda_tx.clone();
         let metrics_tx = self.metrics_tx.clone();
         let stats = Arc::clone(&self.stats);
@@ -478,6 +479,7 @@ impl AdaptiveCoverGenerator {
 }
 
 /// Real-time cover traffic testing framework.
+#[allow(dead_code)]
 pub struct CoverTrafficTester {
     generator: AdaptiveCoverGenerator,
     test_duration: Duration,
@@ -536,7 +538,7 @@ impl CoverTrafficTester {
     /// Run a single test scenario.
     async fn run_scenario(&self, scenario: &TestScenario) -> Result<ScenarioResult, Box<dyn std::error::Error + Send + Sync>> {
         let start_time = Instant::now();
-        let mut lambda_samples = Vec::new();
+        let mut _lambda_samples = Vec::new();
         let mut metrics_rx = self.generator.subscribe_metrics();
         let scenario_duration = scenario.duration;
 
@@ -559,10 +561,10 @@ impl CoverTrafficTester {
         // Wait for scenario duration
         sleep_until(TokioInstant::now() + scenario_duration).await;
 
-        lambda_samples = metrics_task.await.unwrap_or_default();
+        _lambda_samples = metrics_task.await.unwrap_or_default();
 
         // Analyze results
-        let avg_lambda = lambda_samples.iter().sum::<f64>() / lambda_samples.len() as f64;
+        let avg_lambda = _lambda_samples.iter().sum::<f64>() / _lambda_samples.len() as f64;
         let in_range = avg_lambda >= scenario.expected_lambda_range.0 && avg_lambda <= scenario.expected_lambda_range.1;
 
         Ok(ScenarioResult {
@@ -570,7 +572,7 @@ impl CoverTrafficTester {
             duration: scenario_duration,
             average_lambda: avg_lambda,
             expected_range: scenario.expected_lambda_range,
-            lambda_samples,
+            lambda_samples: _lambda_samples,
             success: in_range,
             efficiency: self.calculate_scenario_efficiency(scenario, avg_lambda).await,
         })
