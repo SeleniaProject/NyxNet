@@ -18,7 +18,7 @@ use tracing::warn;
 #[cfg(feature = "dynamic_plugin")]
 use libloading::Library;
 
-#[cfg(all(feature = "dynamic_plugin", target_os = "linux"))]
+#[cfg(all(feature = "dynamic_plugin", any(target_os = "linux", target_os = "windows", target_os = "macos")))]
 use crate::plugin_sandbox::spawn_sandboxed_plugin;
 
 use crate::{plugin_registry::{PluginRegistry, Permission}, plugin::PluginHeader};
@@ -75,18 +75,16 @@ impl PluginDispatcher {
         Ok(())
     }
 
-    #[cfg(all(feature = "dynamic_plugin", target_os = "linux"))]
-    pub fn spawn_and_load_plugin(&mut self, info: PluginInfo, lib_path: &std::path::Path) -> Result<(), ()> {
-        // Spawn in isolated sandbox first.
-        let child = spawn_sandboxed_plugin(lib_path).map_err(|_| ())?;
-        // For IPC a channel can be attached here (left as future work).
-        // For now we treat successful spawn as runtime attached.
-        // Use dummy mpsc to satisfy interface.
+    #[cfg(all(feature = "dynamic_plugin", any(target_os = "windows", target_os = "macos")))]
+    pub fn spawn_and_load_plugin(&mut self, info: PluginInfo, exe_path: &std::path::Path) -> Result<(), ()> {
+        // Launch plugin inside OS-specific sandbox.
+        let child = spawn_sandboxed_plugin(exe_path).map_err(|_| ())?;
+        // Establish mpsc channel placeholder until IPC transport is wired.
         let (tx, _rx) = mpsc::channel::<PluginMessage>(8);
         self.runtimes.insert(info.id, RuntimeHandle { tx, _lib: None });
         self.registry.register(&info)?;
-        // Child handle could be stored for supervision; omitted for brevity.
-        let _ = child; // keep ownership for now.
+        // Keep child in scope for future supervision.
+        let _ = child;
         Ok(())
     }
 

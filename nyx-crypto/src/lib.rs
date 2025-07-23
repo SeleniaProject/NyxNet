@@ -18,6 +18,8 @@ pub use noise::bike;
 pub use noise::kyber;
 pub mod aead;
 pub mod keystore;
+#[cfg(feature = "hpke")]
+pub mod hpke;
 
 pub use kdf::KdfLabel;
 

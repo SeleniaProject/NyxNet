@@ -11,6 +11,7 @@ rand = { version = "0.8", features = ["std"] }
 rand_distr = "0.4"
 nyx-core = { path = "../nyx-core" }
 sha2 = "0.10"
+rayon = "1.9"
 serde = { version = "1", features=["derive"] }
 serde_bytes = "0.11"
 serde_cbor = "0.11"
@@ -23,3 +24,4 @@ num-integer = "0.1"
 num-traits = "0.2"
 tokio = { version = "1.37", features = ["sync", "time", "rt", "macros"] }
 lazy_static = "1"
+tokio-stream = { version = "0.1", features=["sync"] }

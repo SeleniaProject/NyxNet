@@ -5,9 +5,11 @@ use tokio::net::UnixListener;
 use tokio_stream::wrappers::{ReceiverStream, UnixListenerStream};
 use tracing::{error, info};
 use tonic::transport::Server;
+use tokio::sync::mpsc;
 
 use nyx_core::{install_panic_abort, NyxConfig};
 use nyx_transport::{PacketHandler, Transport};
+use nyx_mix::cmix::CmixController;
 
 mod proto {
     tonic::include_proto!("nyx.api");
@@ -72,13 +74,16 @@ impl NyxControl for ControlService {
     }
 }
 
-/// Placeholder packet handler until Stream layer integration.
-struct NullPacketHandler;
+/// Packet handler that forwards inbound datagrams to the cMix controller input channel.
+struct MixPacketHandler {
+    tx: mpsc::Sender<Vec<u8>>, // raw packet bytes → cMix buffer
+}
 
 #[async_trait::async_trait]
-impl PacketHandler for NullPacketHandler {
-    async fn handle_packet(&self, _src: std::net::SocketAddr, _data: &[u8]) {
-        // Intentionally drop all packets.
+impl PacketHandler for MixPacketHandler {
+    async fn handle_packet(&self, _src: std::net::SocketAddr, data: &[u8]) {
+        // Best-effort; drop if channel full.
+        let _ = self.tx.send(data.to_vec()).await;
     }
 }
 
@@ -100,8 +105,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     std::env::set_var("RUST_LOG", &level);
     tracing_subscriber::fmt::init();
 
-    // Start transport layer with a no-op handler.
-    let _transport = Transport::start(cfg.listen_port, Arc::new(NullPacketHandler)).await?;
+    // Spawn cMix controller (batch_size=100, delay=100ms default).
+    let mut cmix = CmixController::default();
+    let cmix_tx = cmix.sender();
+
+    // Transport with packet handler feeding cMix.
+    let transport = Transport::start(cfg.listen_port, Arc::new(MixPacketHandler { tx: cmix_tx })).await?;
+
+    // Task: forward emitted cMix batches to lower transport.
+    let transport_clone = transport.clone();
+    tokio::spawn(async move {
+        while let Some(batch) = cmix.recv().await {
+            for pkt in batch.packets {
+                // TODO: Select next hop address via path builder (placeholder localhost)
+                if let Ok(addr) = "127.0.0.1:43301".parse() {
+                    transport_clone.send(addr, &pkt).await;
+                }
+            }
+        }
+    });
 
     // Prepare the control endpoint.
     #[cfg(unix)]

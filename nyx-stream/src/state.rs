@@ -22,7 +22,7 @@ pub enum StreamState {
 }
 
 /// Sent but unacked segment.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct SentSegment {
     offset: u32,
     len: usize,

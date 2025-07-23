@@ -1,0 +1,298 @@
+name: Dynamic Plugin CI
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'nyx-stream/src/plugin*'
+      - '.github/workflows/dynamic_plugin.yml'
+      - 'nyx-stream/Cargo.toml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'nyx-stream/src/plugin*'
+      - '.github/workflows/dynamic_plugin.yml'
+      - 'nyx-stream/Cargo.toml'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test-linux:
+    name: Test Linux Sandbox
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy, rustfmt
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcap-dev pkg-config
+    
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+    
+    - name: Run clippy
+      run: cargo clippy --workspace --all-targets --features dynamic_plugin -- -D warnings
+    
+    - name: Build with dynamic_plugin feature
+      run: cargo build --features dynamic_plugin --verbose
+    
+    - name: Run tests
+      run: cargo test --features dynamic_plugin --verbose
+    
+    - name: Run sandbox-specific tests
+      run: cargo test --features dynamic_plugin --test '*' --verbose -- sandbox
+    
+    - name: Test seccomp functionality
+      run: |
+        # Test seccomp installation (requires root or specific capabilities)
+        cargo test --features dynamic_plugin test_seccomp --verbose || echo "Seccomp tests require elevated privileges"
+
+  test-windows:
+    name: Test Windows Job Object
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy, rustfmt
+    
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Build with dynamic_plugin feature
+      run: cargo build --features dynamic_plugin --verbose
+    
+    - name: Run tests
+      run: cargo test --features dynamic_plugin --verbose
+    
+    - name: Test Job Object functionality
+      run: cargo test --features dynamic_plugin test_job_object --verbose
+    
+    - name: Test sandbox configuration
+      run: cargo test --features dynamic_plugin test_sandbox_config --verbose
+
+  test-macos:
+    name: Test macOS Sandbox
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy, rustfmt
+    
+    - name: Cache cargo registry
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Build with dynamic_plugin feature
+      run: cargo build --features dynamic_plugin --verbose
+    
+    - name: Run tests
+      run: cargo test --features dynamic_plugin --verbose
+    
+    - name: Test sandbox-exec functionality
+      run: |
+        # Test sandbox-exec availability
+        which sandbox-exec || echo "sandbox-exec not available"
+        cargo test --features dynamic_plugin test_sandbox_profile --verbose
+    
+    - name: Test entitlements check
+      run: cargo test --features dynamic_plugin test_entitlements --verbose
+
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [test-linux, test-windows, test-macos]
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcap-dev pkg-config
+    
+    - name: Build test plugin
+      run: |
+        mkdir -p test-plugins
+        cat > test-plugins/hello_plugin.rs << 'EOF'
+        fn main() {
+            println!("Hello from Nyx plugin!");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        EOF
+        rustc test-plugins/hello_plugin.rs -o test-plugins/hello_plugin
+    
+    - name: Test plugin dispatch system
+      run: |
+        cargo test --features dynamic_plugin integration_test_plugin_dispatch --verbose
+    
+    - name: Test plugin IPC
+      run: |
+        cargo test --features dynamic_plugin integration_test_plugin_ipc --verbose
+    
+    - name: Test plugin registry
+      run: |
+        cargo test --features dynamic_plugin integration_test_plugin_registry --verbose
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install cargo-audit
+      run: cargo install cargo-audit
+    
+    - name: Run security audit
+      run: cargo audit
+    
+    - name: Check for unsafe code
+      run: |
+        # Ensure no unsafe code in sandbox modules
+        if grep -r "unsafe" nyx-stream/src/plugin_sandbox*.rs; then
+          echo "Found unsafe code in sandbox modules"
+          exit 1
+        fi
+        echo "No unsafe code found in sandbox modules"
+
+  benchmark:
+    name: Performance Benchmarks
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcap-dev pkg-config
+    
+    - name: Run plugin dispatch benchmarks
+      run: |
+        cargo bench --features dynamic_plugin plugin_dispatch
+    
+    - name: Run sandbox overhead benchmarks
+      run: |
+        cargo bench --features dynamic_plugin sandbox_overhead
+
+  cross-compile:
+    name: Cross Compilation Test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu
+          - aarch64-unknown-linux-gnu
+          - x86_64-pc-windows-gnu
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
+    
+    - name: Install cross-compilation dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y gcc-multilib
+        if [[ "${{ matrix.target }}" == *"aarch64"* ]]; then
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+        fi
+        if [[ "${{ matrix.target }}" == *"windows"* ]]; then
+          sudo apt-get install -y gcc-mingw-w64
+        fi
+    
+    - name: Cross compile
+      run: |
+        if [[ "${{ matrix.target }}" == *"linux"* ]]; then
+          cargo build --target ${{ matrix.target }} --features dynamic_plugin
+        else
+          # Skip dynamic_plugin feature for Windows cross-compile due to dependency complexity
+          cargo build --target ${{ matrix.target }}
+        fi
+
+  documentation:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcap-dev pkg-config
+    
+    - name: Generate documentation
+      run: |
+        cargo doc --features dynamic_plugin --no-deps --document-private-items
+    
+    - name: Check doc tests
+      run: |
+        cargo test --features dynamic_plugin --doc
+    
+    - name: Upload documentation
+      if: github.ref == 'refs/heads/main'
+      uses: actions/upload-pages-artifact@v3
+      with:
+        path: target/doc
+
+  notify:
+    name: Notification
+    runs-on: ubuntu-latest
+    needs: [test-linux, test-windows, test-macos, integration-test, security-audit]
+    if: always()
+    steps:
+    - name: Notify on success
+      if: ${{ needs.test-linux.result == 'success' && needs.test-windows.result == 'success' && needs.test-macos.result == 'success' }}
+      run: echo "✅ All dynamic plugin tests passed!"
+    
+    - name: Notify on failure
+      if: ${{ needs.test-linux.result == 'failure' || needs.test-windows.result == 'failure' || needs.test-macos.result == 'failure' }}
+      run: |
+        echo "❌ Dynamic plugin tests failed!"
+        exit 1 

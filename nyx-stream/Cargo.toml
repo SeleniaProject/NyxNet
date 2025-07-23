@@ -24,8 +24,16 @@ nyx-crypto = { path = "../nyx-crypto" }
 nyx-telemetry = { path = "../nyx-telemetry" }
 semver = { version = "1.0", features = ["serde"] }
 libloading = { version = "0.8", optional = true }
+
+[target.'cfg(unix)'.dependencies]
 nix = { version = "0.27", optional = true, default-features = false, features = ["sched", "hostname", "fs"] }
 caps = { version = "0.5.5", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.56", features = ["Win32_Foundation","Win32_System_Threading","Win32_System_JobObjects", "Win32_Security"] }
+
+[dev-dependencies]
+tempfile = "3.8"
 
 [features]
 default = []

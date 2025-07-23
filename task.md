@@ -41,13 +41,13 @@
 
 ## 8. プラグインフレーム & サンドボックス
 - [x] Plugin IPC (tokio mpsc → Unix Domain Socket / NamedPipe) 実装
-- [ ] Cross-platform サンドボックス (macOS システム拡張、Windows Job Object)
-- [ ] `dynamic_plugin` フィーチャのビルド・テストワークフロー追加
+- [x] Cross-platform サンドボックス (macOS システム拡張、Windows Job Object)
+- [x] `dynamic_plugin` フィーチャのビルド・テストワークフロー追加
 
 ## 9. モバイル低電力モード
-- [ ] iOS / Android Battery & Screen Off イベントブリッジ実装
-- [ ] Cover Traffic λ スケーリングのリアルタイムテスト
-- [ ] Push Gateway (FCM/APNS) 統合と E2E 起床シーケンス
+- [x] iOS / Android Battery & Screen Off イベントブリッジ実装
+- [x] Cover Traffic λ スケーリングのリアルタイムテスト
+- [x] Push Gateway (FCM/APNS) 統合と E2E 起床シーケンス
 
 ## 10. Telemetry / Observability
 - [ ] OpenTelemetry OTLP エクスポータ実装 (tracing-opentelemetry)

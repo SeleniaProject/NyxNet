@@ -12,7 +12,10 @@ pub mod state;
 pub mod plugin;
 #[cfg(feature = "plugin")]
 mod plugin_ipc;
-#[cfg(all(feature = "dynamic_plugin", target_os = "linux"))]
+#[cfg(feature = "dynamic_plugin")]
+#[cfg_attr(target_os = "linux",   path = "plugin_sandbox.rs")]
+#[cfg_attr(target_os = "windows", path = "plugin_sandbox_windows.rs")]
+#[cfg_attr(target_os = "macos",   path = "plugin_sandbox_macos.rs")]
 pub mod plugin_sandbox;
 pub mod management;
 pub mod settings;
