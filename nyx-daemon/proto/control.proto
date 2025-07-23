@@ -120,6 +120,21 @@ message StreamResponse {
   string status = 2;
   string target_address = 3;
   StreamStats initial_stats = 4;
+  bool success = 5;
+  string message = 6;
+}
+
+message StreamRequest {
+  uint32 stream_id = 1;
+  string action = 2;
+  StreamOptions options = 3;
+}
+
+message StreamInfo {
+  uint32 stream_id = 1;
+  string target_address = 2;
+  string state = 3;
+  Timestamp created_at = 4;
 }
 
 message StreamId {
@@ -156,6 +171,11 @@ message StreamStats {
   uint32 timeout_errors = 18;
   string last_error = 19;
   Timestamp last_error_at = 20;
+  
+  // Additional fields for daemon
+  StreamInfo stream_info = 21;
+  repeated StreamPathStats path_stats = 22;
+  Timestamp timestamp = 23;
 }
 
 // Per-path statistics for multipath streams
@@ -198,6 +218,9 @@ message StreamEvent {
   string action = 2;  // "opened", "closed", "error", "reconnecting", "data_sent", "data_received"
   string target_address = 3;
   StreamStats stats = 4;
+  string event_type = 5;
+  Timestamp timestamp = 6;
+  map<string, string> data = 7;
 }
 
 message ConnectionEvent {
@@ -222,6 +245,11 @@ message SystemEvent {
 }
 
 // Configuration management
+message ConfigRequest {
+  string action = 1;
+  map<string, string> settings = 2;
+}
+
 message ConfigUpdate {
   map<string, string> settings = 1;
   bool restart_required = 2;
@@ -231,6 +259,36 @@ message ConfigResponse {
   bool success = 1;
   string message = 2;
   repeated string validation_errors = 3;
+}
+
+// Session management
+message SessionRequest {
+  string action = 1;
+  string session_id = 2;
+  map<string, string> parameters = 3;
+}
+
+message SessionResponse {
+  bool success = 1;
+  string message = 2;
+  string session_id = 3;
+}
+
+message SessionInfo {
+  string session_id = 1;
+  string state = 2;
+  Timestamp created_at = 3;
+  uint64 bytes_sent = 4;
+  uint64 bytes_received = 5;
+}
+
+// Health monitoring
+message HealthCheckInfo {
+  string name = 1;
+  string status = 2;
+  string message = 3;
+  double response_time_ms = 4;
+  Timestamp last_checked = 5;
 }
 
 // Real-time statistics streaming

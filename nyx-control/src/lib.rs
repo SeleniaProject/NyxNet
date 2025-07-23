@@ -44,6 +44,7 @@ pub mod probe;
 pub mod push;
 pub use push::{PushHandle, spawn_push_service};
 pub mod rendezvous;
+pub use rendezvous::RendezvousClient as RendezvousService;
 mod settings_sync;
 
 /// Control messages for the DHT event loop.

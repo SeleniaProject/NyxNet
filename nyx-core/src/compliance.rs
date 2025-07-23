@@ -49,7 +49,7 @@ pub fn determine(caps: &[Capability]) -> ComplianceLevel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::capability::FLAG_REQUIRED;
+    
 
     #[test]
     fn core_level() {

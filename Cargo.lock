@@ -4127,6 +4127,7 @@ dependencies = [
  "blake3",
  "bytes",
  "chrono",
+ "clap",
  "config",
  "crossbeam-channel",
  "dashmap",

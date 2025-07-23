@@ -14,6 +14,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 tonic = { version = "0.10", features = ["transport"] }
 tokio-stream = { version = "0.1", features = ["net"] }
+clap = { version = "4.0", features = ["derive"] }
 
 # Core Nyx components
 nyx-core = { path = "../nyx-core" }

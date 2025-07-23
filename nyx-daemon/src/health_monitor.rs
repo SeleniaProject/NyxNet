@@ -284,35 +284,34 @@ impl HealthMonitor {
     /// Get current health status
     pub async fn get_health_status(&self, include_details: bool) -> HealthResponse {
         let overall_status = self.overall_status.read().await;
-        let checks = self.checks.read().await;
-        
-        let mut health_checks = Vec::new();
-        
-        if include_details {
+        let health_status = if include_details {
+            let checks = self.checks.read().await;
+            let mut health_checks = Vec::new();
+            
             for check in checks.values() {
-                let check_info = proto::HealthCheckInfo {
+                let health_check = proto::HealthCheck {
                     name: check.name.clone(),
                     status: check.status.as_str().to_string(),
                     message: check.message.clone(),
                     response_time_ms: check.response_time_ms,
-                    checked_at: Some(proto::Timestamp {
-                        seconds: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
-                            .unwrap_or_default().as_secs() as i64,
-                        nanos: SystemTime::now().duration_since(SystemTime::UNIX_EPOCH)
-                            .unwrap_or_default().subsec_nanos() as i32,
-                    }),
-                    check_count: check.check_count,
-                    failure_count: check.failure_count,
                 };
-                health_checks.push(check_info);
+                health_checks.push(health_check);
             }
-        }
+            
+            proto::HealthResponse {
+                status: overall_status.as_str().to_string(),
+                checks: health_checks,
+                checked_at: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+            }
+        } else {
+            proto::HealthResponse {
+                status: overall_status.as_str().to_string(),
+                checks: vec![],
+                checked_at: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+            }
+        };
         
-        HealthResponse {
-            status: overall_status.as_str().to_string(),
-            checks: health_checks,
-            checked_at: Some(prost_types::Timestamp::from(SystemTime::now())),
-        }
+        health_status
     }
     
     /// Get detailed health check information

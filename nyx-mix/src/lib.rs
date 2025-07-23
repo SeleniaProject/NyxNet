@@ -12,6 +12,7 @@ pub use cmix::{CmixController, verify_batch};
 pub mod cover;
 pub mod cover_adaptive;
 pub use cover::CoverGenerator;
+pub use cover_adaptive::AdaptiveCoverGenerator as CoverTrafficGenerator;
 pub mod adaptive;
 pub use adaptive::{AdaptiveCoverGenerator, UtilizationEstimator};
 pub mod larmix;
@@ -21,6 +22,7 @@ pub mod vdf;
 pub mod vdf_calib;
 pub use vdf_calib::calibrate_t;
 pub mod anonymity;
+pub use anonymity::AnonymityEvaluator as AnonymitySet;
 
 /// Candidate node with runtime metrics for weighted selection.
 #[derive(Debug, Clone, Copy)]
