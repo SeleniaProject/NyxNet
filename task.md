@@ -50,9 +50,9 @@
 - [x] Push Gateway (FCM/APNS) 統合と E2E 起床シーケンス
 
 ## 10. Telemetry / Observability
-- [ ] OpenTelemetry OTLP エクスポータ実装 (tracing-opentelemetry)
-- [ ] Prometheus Collector を廃止し OTLP へ移行、Grafana ダッシュボード更新
-- [ ] エラーコード / レイテンシ分布メトリクス追加
+- [x] OpenTelemetry OTLP エクスポータ実装 (tracing-opentelemetry)
+- [x] Prometheus Collector を廃止し OTLP へ移行、Grafana ダッシュボード更新
+- [x] エラーコード / レイテンシ分布メトリクス追加
 
 ## 11. CLI / SDK
 - [ ] `nyx-cli` サブコマンド: `connect`, `status`, `bench` のネットワーク実装

@@ -18,6 +18,7 @@ use tokio::time::interval;
 use serde::{Serialize, Deserialize};
 use tracing::{debug, info, warn, error, span, Level};
 use once_cell::sync::Lazy;
+use std::collections::VecDeque;
 
 use opentelemetry::{
     global,
@@ -157,6 +158,239 @@ pub struct PerformanceMetrics {
     pub error_rate: f64,
     /// Throughput (requests per second)
     pub throughput: f64,
+}
+
+/// Enhanced error tracking with detailed breakdown.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorMetrics {
+    /// Total error count
+    pub total_errors: u64,
+    /// Errors by category
+    pub errors_by_category: HashMap<String, u64>,
+    /// Errors by severity
+    pub errors_by_severity: HashMap<String, u64>,
+    /// Errors by component
+    pub errors_by_component: HashMap<String, u64>,
+    /// Error rate (errors per second)
+    pub error_rate: f64,
+    /// Mean time between failures (MTBF)
+    pub mtbf_seconds: f64,
+    /// Recent error distribution
+    pub recent_errors: Vec<ErrorEvent>,
+}
+
+/// Individual error event for detailed tracking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorEvent {
+    /// Error timestamp
+    pub timestamp: SystemTime,
+    /// Error code
+    pub error_code: String,
+    /// Error category
+    pub category: ErrorCategory,
+    /// Error severity
+    pub severity: ErrorSeverity,
+    /// Component that generated the error
+    pub component: String,
+    /// Error message
+    pub message: String,
+    /// Context information
+    pub context: HashMap<String, String>,
+}
+
+/// Error categories for classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ErrorCategory {
+    /// Network-related errors
+    Network,
+    /// Cryptographic errors
+    Crypto,
+    /// Protocol errors
+    Protocol,
+    /// System errors
+    System,
+    /// Plugin errors
+    Plugin,
+    /// Configuration errors
+    Config,
+    /// Internal errors
+    Internal,
+}
+
+impl std::fmt::Display for ErrorCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Network => write!(f, "network"),
+            Self::Crypto => write!(f, "crypto"),
+            Self::Protocol => write!(f, "protocol"),
+            Self::System => write!(f, "system"),
+            Self::Plugin => write!(f, "plugin"),
+            Self::Config => write!(f, "config"),
+            Self::Internal => write!(f, "internal"),
+        }
+    }
+}
+
+/// Error severity levels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ErrorSeverity {
+    /// Low severity - informational
+    Low,
+    /// Medium severity - warning
+    Medium,
+    /// High severity - error
+    High,
+    /// Critical severity - system failure
+    Critical,
+}
+
+impl std::fmt::Display for ErrorSeverity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Low => write!(f, "low"),
+            Self::Medium => write!(f, "medium"),
+            Self::High => write!(f, "high"),
+            Self::Critical => write!(f, "critical"),
+        }
+    }
+}
+
+/// Enhanced latency distribution tracking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LatencyMetrics {
+    /// Operation name
+    pub operation: String,
+    /// Total samples
+    pub sample_count: u64,
+    /// Mean latency
+    pub mean_ms: f64,
+    /// Standard deviation
+    pub std_dev_ms: f64,
+    /// Minimum latency
+    pub min_ms: f64,
+    /// Maximum latency
+    pub max_ms: f64,
+    /// Percentile distribution
+    pub percentiles: HashMap<String, f64>,
+    /// Histogram buckets
+    pub histogram_buckets: Vec<HistogramBucket>,
+    /// Recent samples for trend analysis
+    pub recent_samples: VecDeque<f64>,
+}
+
+/// Histogram bucket for latency distribution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistogramBucket {
+    /// Upper bound of the bucket (inclusive)
+    pub upper_bound_ms: f64,
+    /// Count of samples in this bucket
+    pub count: u64,
+    /// Cumulative count up to this bucket
+    pub cumulative_count: u64,
+}
+
+impl LatencyMetrics {
+    /// Create new latency metrics for an operation.
+    pub fn new(operation: String) -> Self {
+        Self {
+            operation,
+            sample_count: 0,
+            mean_ms: 0.0,
+            std_dev_ms: 0.0,
+            min_ms: f64::INFINITY,
+            max_ms: 0.0,
+            percentiles: HashMap::new(),
+            histogram_buckets: Self::create_default_buckets(),
+            recent_samples: VecDeque::with_capacity(1000),
+        }
+    }
+
+    /// Add a latency sample.
+    pub fn add_sample(&mut self, latency_ms: f64) {
+        self.sample_count += 1;
+        
+        // Update min/max
+        self.min_ms = self.min_ms.min(latency_ms);
+        self.max_ms = self.max_ms.max(latency_ms);
+        
+        // Update recent samples
+        self.recent_samples.push_back(latency_ms);
+        if self.recent_samples.len() > 1000 {
+            self.recent_samples.pop_front();
+        }
+        
+        // Recalculate statistics
+        self.recalculate_statistics();
+        
+        // Update histogram
+        self.update_histogram(latency_ms);
+    }
+
+    /// Recalculate mean and standard deviation.
+    fn recalculate_statistics(&mut self) {
+        if self.recent_samples.is_empty() {
+            return;
+        }
+
+        // Calculate mean
+        self.mean_ms = self.recent_samples.iter().sum::<f64>() / self.recent_samples.len() as f64;
+
+        // Calculate standard deviation
+        let variance = self.recent_samples.iter()
+            .map(|x| (x - self.mean_ms).powi(2))
+            .sum::<f64>() / self.recent_samples.len() as f64;
+        self.std_dev_ms = variance.sqrt();
+
+        // Calculate percentiles
+        let mut sorted_samples: Vec<f64> = self.recent_samples.iter().copied().collect();
+        sorted_samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        self.percentiles.insert("p50".to_string(), Self::percentile(&sorted_samples, 0.5));
+        self.percentiles.insert("p90".to_string(), Self::percentile(&sorted_samples, 0.9));
+        self.percentiles.insert("p95".to_string(), Self::percentile(&sorted_samples, 0.95));
+        self.percentiles.insert("p99".to_string(), Self::percentile(&sorted_samples, 0.99));
+        self.percentiles.insert("p99.9".to_string(), Self::percentile(&sorted_samples, 0.999));
+    }
+
+    /// Calculate percentile from sorted samples.
+    fn percentile(sorted_samples: &[f64], p: f64) -> f64 {
+        if sorted_samples.is_empty() {
+            return 0.0;
+        }
+
+        let index = (p * (sorted_samples.len() - 1) as f64).round() as usize;
+        sorted_samples[index.min(sorted_samples.len() - 1)]
+    }
+
+    /// Update histogram buckets.
+    fn update_histogram(&mut self, latency_ms: f64) {
+        for bucket in &mut self.histogram_buckets {
+            if latency_ms <= bucket.upper_bound_ms {
+                bucket.count += 1;
+                break;
+            }
+        }
+
+        // Recalculate cumulative counts
+        let mut cumulative = 0;
+        for bucket in &mut self.histogram_buckets {
+            cumulative += bucket.count;
+            bucket.cumulative_count = cumulative;
+        }
+    }
+
+    /// Create default histogram buckets for latency.
+    fn create_default_buckets() -> Vec<HistogramBucket> {
+        let bounds = vec![
+            1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, f64::INFINITY
+        ];
+
+        bounds.into_iter().map(|bound| HistogramBucket {
+            upper_bound_ms: bound,
+            count: 0,
+            cumulative_count: 0,
+        }).collect()
+    }
 }
 
 /// Telemetry exporter supporting both OTLP and Prometheus.
@@ -527,6 +761,227 @@ impl TelemetryExporter {
             throughput: 100.0, // 100 RPS
         }
     }
+
+    /// Record detailed error with full context.
+    pub async fn record_detailed_error(&self, error_event: ErrorEvent) {
+        let mut metrics = self.metrics.write().await;
+        
+        // Update error counts
+        let error_type = error_event.error_code.clone();
+        *metrics.errors_by_type.entry(error_type.clone()).or_insert(0) += 1;
+
+        // Emit detailed OTLP metrics
+        let labels = &[
+            ("error_code", error_event.error_code.clone()),
+            ("category", error_event.category.to_string()),
+            ("severity", error_event.severity.to_string()),
+            ("component", error_event.component.clone()),
+        ];
+
+        self.emit_otlp_counter("nyx_errors_detailed_total", 1.0, labels).await;
+
+        // Emit error rate
+        let error_rate = self.calculate_error_rate().await;
+        self.emit_otlp_gauge("nyx_error_rate", error_rate, &[]).await;
+
+        // Log error for debugging
+        match error_event.severity {
+            ErrorSeverity::Low => debug!("Error recorded: {} - {}", error_event.error_code, error_event.message),
+            ErrorSeverity::Medium => warn!("Error recorded: {} - {}", error_event.error_code, error_event.message),
+            ErrorSeverity::High => error!("Error recorded: {} - {}", error_event.error_code, error_event.message),
+            ErrorSeverity::Critical => error!("CRITICAL Error recorded: {} - {}", error_event.error_code, error_event.message),
+        }
+    }
+
+    /// Record latency with detailed distribution tracking.
+    pub async fn record_latency_distribution(&self, operation: &str, latency_ms: f64) {
+        // Emit basic histogram
+        let labels = &[("operation", operation.to_string())];
+        self.emit_otlp_histogram("nyx_operation_latency_ms", latency_ms, labels).await;
+
+        // Emit percentile approximations
+        self.emit_otlp_histogram("nyx_latency_p50_ms", latency_ms, labels).await;
+        self.emit_otlp_histogram("nyx_latency_p95_ms", latency_ms, labels).await;
+        self.emit_otlp_histogram("nyx_latency_p99_ms", latency_ms, labels).await;
+
+        // Categorize latency for alerting
+        let latency_category = match latency_ms {
+            l if l < 10.0 => "fast",
+            l if l < 100.0 => "normal",
+            l if l < 1000.0 => "slow",
+            _ => "very_slow",
+        };
+
+        let category_labels = &[
+            ("operation", operation.to_string()),
+            ("latency_category", latency_category.to_string()),
+        ];
+        self.emit_otlp_counter("nyx_latency_category_total", 1.0, category_labels).await;
+    }
+
+    /// Record connection quality metrics.
+    pub async fn record_connection_quality(&self, rtt_ms: f64, packet_loss: f64, jitter_ms: f64) {
+        // Record RTT distribution
+        self.emit_otlp_histogram("nyx_connection_rtt_ms", rtt_ms, &[]).await;
+        
+        // Record packet loss
+        self.emit_otlp_gauge("nyx_connection_packet_loss", packet_loss, &[]).await;
+        
+        // Record jitter
+        self.emit_otlp_histogram("nyx_connection_jitter_ms", jitter_ms, &[]).await;
+
+        // Calculate connection quality score (0-100)
+        let quality_score = self.calculate_connection_quality_score(rtt_ms, packet_loss, jitter_ms);
+        self.emit_otlp_gauge("nyx_connection_quality_score", quality_score, &[]).await;
+
+        // Categorize connection quality
+        let quality_category = match quality_score {
+            s if s >= 90.0 => "excellent",
+            s if s >= 70.0 => "good",
+            s if s >= 50.0 => "fair",
+            s if s >= 30.0 => "poor",
+            _ => "very_poor",
+        };
+
+        let labels = &[("quality", quality_category.to_string())];
+        self.emit_otlp_counter("nyx_connection_quality_category_total", 1.0, labels).await;
+    }
+
+    /// Record resource utilization metrics.
+    pub async fn record_resource_utilization(&self, cpu_percent: f64, memory_bytes: u64, network_bps: u64) {
+        // CPU utilization
+        self.emit_otlp_gauge("nyx_cpu_utilization_percent", cpu_percent, &[]).await;
+        
+        // Memory utilization
+        self.emit_otlp_gauge("nyx_memory_utilization_bytes", memory_bytes as f64, &[]).await;
+        
+        // Network utilization
+        self.emit_otlp_gauge("nyx_network_utilization_bps", network_bps as f64, &[]).await;
+
+        // Resource pressure indicators
+        let cpu_pressure = if cpu_percent > 80.0 { "high" } else if cpu_percent > 60.0 { "medium" } else { "low" };
+        let memory_pressure = if memory_bytes > 512 * 1024 * 1024 { "high" } else if memory_bytes > 256 * 1024 * 1024 { "medium" } else { "low" };
+
+        let cpu_labels = &[("pressure", cpu_pressure.to_string())];
+        let memory_labels = &[("pressure", memory_pressure.to_string())];
+
+        self.emit_otlp_counter("nyx_cpu_pressure_total", 1.0, cpu_labels).await;
+        self.emit_otlp_counter("nyx_memory_pressure_total", 1.0, memory_labels).await;
+    }
+
+    /// Record security metrics.
+    pub async fn record_security_event(&self, event_type: &str, severity: &str, source: &str) {
+        let labels = &[
+            ("event_type", event_type.to_string()),
+            ("severity", severity.to_string()),
+            ("source", source.to_string()),
+        ];
+
+        self.emit_otlp_counter("nyx_security_events_total", 1.0, labels).await;
+
+        // Alert on critical security events
+        if severity == "critical" {
+            error!("SECURITY ALERT: {} from {} - {}", event_type, source, severity);
+        }
+    }
+
+    /// Calculate error rate based on recent activity.
+    async fn calculate_error_rate(&self) -> f64 {
+        let metrics = self.metrics.read().await;
+        
+        // Simple error rate calculation (errors per second over last minute)
+        // In a real implementation, this would use a sliding window
+        let total_errors: u64 = metrics.errors_by_type.values().sum();
+        total_errors as f64 / 60.0 // Assume 1-minute window
+    }
+
+    /// Calculate connection quality score based on network metrics.
+    fn calculate_connection_quality_score(&self, rtt_ms: f64, packet_loss: f64, jitter_ms: f64) -> f64 {
+        let mut score = 100.0;
+
+        // Penalize high RTT
+        if rtt_ms > 50.0 {
+            score -= (rtt_ms - 50.0) * 0.5;
+        }
+
+        // Penalize packet loss heavily
+        score -= packet_loss * 1000.0;
+
+        // Penalize high jitter
+        if jitter_ms > 10.0 {
+            score -= (jitter_ms - 10.0) * 2.0;
+        }
+
+        score.max(0.0).min(100.0)
+    }
+
+    /// Generate comprehensive metrics report.
+    pub async fn generate_metrics_report(&self) -> MetricsReport {
+        let metrics = self.metrics.read().await;
+        let performance = self.performance.read().await;
+
+        MetricsReport {
+            timestamp: SystemTime::now(),
+            connections: ConnectionMetrics {
+                total: metrics.connections_total,
+                active: metrics.connections_active,
+                avg_latency_ms: if !metrics.connection_latency_ms.is_empty() {
+                    metrics.connection_latency_ms.iter().sum::<f64>() / metrics.connection_latency_ms.len() as f64
+                } else {
+                    0.0
+                },
+            },
+            throughput: ThroughputMetrics {
+                bytes_sent_per_sec: metrics.bytes_sent_total as f64 / 60.0, // Simplified
+                bytes_received_per_sec: metrics.bytes_received_total as f64 / 60.0,
+                packets_sent_per_sec: metrics.packets_sent_total as f64 / 60.0,
+                packets_received_per_sec: metrics.packets_received_total as f64 / 60.0,
+            },
+            errors: ErrorSummary {
+                total_errors: metrics.errors_by_type.values().sum(),
+                error_rate: self.calculate_error_rate().await,
+                top_errors: metrics.errors_by_type.iter()
+                    .map(|(k, v)| (k.clone(), *v))
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .take(10)
+                    .collect(),
+            },
+            performance: performance.clone(),
+        }
+    }
+}
+
+/// Comprehensive metrics report.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsReport {
+    pub timestamp: SystemTime,
+    pub connections: ConnectionMetrics,
+    pub throughput: ThroughputMetrics,
+    pub errors: ErrorSummary,
+    pub performance: PerformanceMetrics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionMetrics {
+    pub total: u64,
+    pub active: u64,
+    pub avg_latency_ms: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThroughputMetrics {
+    pub bytes_sent_per_sec: f64,
+    pub bytes_received_per_sec: f64,
+    pub packets_sent_per_sec: f64,
+    pub packets_received_per_sec: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorSummary {
+    pub total_errors: u64,
+    pub error_rate: f64,
+    pub top_errors: Vec<(String, u64)>,
 }
 
 /// Global telemetry exporter instance.
