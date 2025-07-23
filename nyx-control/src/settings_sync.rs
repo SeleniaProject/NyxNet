@@ -34,12 +34,12 @@ pub fn spawn_settings_sync(
         let mut peers: Vec<mpsc::Sender<Vec<u8>>> = Vec::new();
         // build initial frame
         let mut current = (*local_rx.borrow()).clone();
-        let mut frame_bytes = build_settings_frame(&SettingsFrame::from(&current));
+        let mut frame_bytes = build_settings_frame(&current.to_frame().settings);
         loop {
             tokio::select! {
                 _ = local_rx.changed() => {
                     current = (*local_rx.borrow()).clone();
-                    frame_bytes = build_settings_frame(&SettingsFrame::from(&current));
+                    frame_bytes = build_settings_frame(&current.to_frame().settings);
                     // push to all peers
                     peers.retain(|tx| tx.try_send(frame_bytes.clone()).is_ok());
                 }
@@ -47,15 +47,15 @@ pub fn spawn_settings_sync(
                     SettingsCmd::Inbound(bytes) => {
                         if let Ok((_rem, frame)) = parse_settings_frame(&bytes) {
                             // merge by overriding only provided settings
-                            current.apply(&frame.settings);
+                            current.apply(&frame);
                             let _ = local_rx
                                 .borrow_and_update(); // wake receivers
                         }
                     }
                     SettingsCmd::RegisterTx(tx) => {
-                        peers.push(tx);
                         // send latest frame upon registration
                         let _ = tx.try_send(frame_bytes.clone());
+                        peers.push(tx);
                     }
                 }
             }

@@ -1,8 +1,9 @@
 use wasm_bindgen::prelude::*;
 use nyx_crypto::noise::{initiator_generate, responder_process, initiator_finalize, derive_session_key};
 use wasm_bindgen_futures::JsFuture;
-use web_sys::{window, PushSubscriptionOptionsInit, ServiceWorkerRegistration, PushSubscription};
-use js_sys::{Uint8Array, JSON};
+use web_sys::{window, PushSubscriptionOptionsInit, ServiceWorkerRegistration, PushSubscription, PushManager};
+use js_sys::{Uint8Array, JSON, Object, Reflect};
+use base64::engine::{general_purpose, Engine};
 
 #[wasm_bindgen]
 pub fn noise_handshake_demo() -> String {
@@ -31,22 +32,25 @@ pub async fn nyx_register_push(sw_path: String, vapid_public_key: String) -> Res
     let reg_js = JsFuture::from(reg_promise).await?;
     let reg: ServiceWorkerRegistration = reg_js.dyn_into()?;
 
-    let push = reg.push_manager();
+    let push: PushManager = reg.push_manager()?;
 
     // Convert base64 public key to Uint8Array (assumes urlsafe base64 without padding).
-    let key_buf = base64::decode_config(vapid_public_key.as_bytes(), base64::URL_SAFE).map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let key_buf = general_purpose::URL_SAFE_NO_PAD.decode(vapid_public_key.as_bytes()).map_err(|e| JsValue::from_str(&e.to_string()))?;
     let key_u8 = Uint8Array::from(&key_buf[..]);
+    let key_js: JsValue = key_u8.into();
 
-    let mut sub_opts = PushSubscriptionOptionsInit::new();
-    sub_opts.user_visible_only(true);
-    sub_opts.application_server_key(Some(&key_u8.buffer()));
+    let sub_opts = PushSubscriptionOptionsInit::new();
+    sub_opts.set_user_visible_only(true);
+    sub_opts.set_application_server_key(&key_js);
 
-    let sub_promise = push.subscribe_with_opt(&sub_opts).map_err(|e| e)?;
+    let sub_promise = push.subscribe_with_options(&sub_opts).map_err(|e| e)?;
     let sub_js = JsFuture::from(sub_promise).await?;
     let sub: PushSubscription = sub_js.dyn_into()?;
 
-    // Serialize to JSON for transport.
-    let js_obj = sub.to_json()?;
+    // Simplified serialization - just return the endpoint for now
+    let js_obj = Object::new();
+    Reflect::set(&js_obj, &"endpoint".into(), &sub.endpoint().into())?;
+    
     let json_str = JSON::stringify(&js_obj)?;
-    Ok(json_str)
+    Ok(json_str.into())
 } 

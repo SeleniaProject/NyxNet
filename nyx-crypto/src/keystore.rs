@@ -31,14 +31,14 @@
 //! written to disk.
 
 use std::fs;
-use std::io::{Read, Write, BufRead, BufReader};
+use std::io::{Read, Write};
 use std::path::Path;
 use age::armor::{ArmoredWriter, ArmoredReader, Format};
 use age::secrecy::SecretString;
 use age::Encryptor;
 use zeroize::Zeroizing;
 use thiserror::Error;
-use std::time::{SystemTime, Duration};
+use std::time::Duration;
 
 /// Error type for keystore operations.
 #[derive(Debug, Error)]
@@ -241,7 +241,7 @@ impl PassphraseInput {
     fn interactive_encrypt_prompt(&self, prompt: &str) -> Result<Zeroizing<String>, KeystoreError> {
         use std::io::{self, Write};
         
-        for attempt in 1..=self.config.max_attempts {
+        for _attempt in 1..=self.config.max_attempts {
             print!("{}: ", prompt);
             io::stdout().flush().map_err(KeystoreError::Io)?;
             

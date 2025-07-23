@@ -14,10 +14,10 @@
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{broadcast, watch, RwLock};
+use tokio::sync::{broadcast, RwLock};
 use tokio::time::interval;
 use serde::{Serialize, Deserialize};
-use tracing::{debug, info, warn, error};
+use tracing::{debug, info};
 
 /// Mobile device power state information.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -77,6 +77,17 @@ impl PowerProfile {
             Self::UltraLowPower => Duration::from_secs(60),
         }
     }
+}
+
+/// Mobile power state for legacy compatibility
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MobilePowerState {
+    /// Foreground active state
+    Foreground,
+    /// Screen off state
+    ScreenOff,
+    /// Battery discharging state
+    Discharging,
 }
 
 /// Application state on mobile platforms.

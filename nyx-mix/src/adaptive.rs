@@ -6,7 +6,6 @@
 use crate::cover::CoverGenerator;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
-use nyx_core::mobile::{battery_state, BatteryState};
 use super::anonymity::{AnonymityEvaluator, DEFAULT_WINDOW_SEC as ANON_WINDOW_SEC};
 
 /// Sliding-window utilization estimator (bytes per second).

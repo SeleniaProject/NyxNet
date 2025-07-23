@@ -33,7 +33,7 @@ pub mod cap {
 pub fn determine(caps: &[Capability]) -> ComplianceLevel {
     let has = |id| caps.iter().any(|c| c.id == id);
 
-    let core_ok = true; // baseline assumed
+    let _core_ok = true; // baseline assumed
     let plus_ok = has(cap::MULTIPATH) && has(cap::HYBRID_PQ);
     let full_ok = plus_ok && has(cap::CMIX) && has(cap::PLUGIN) && has(cap::LOW_POWER);
 

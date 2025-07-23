@@ -23,6 +23,7 @@ anyhow = "1"
 libc = "0.2"
 uuid = { version = "1.6", features = ["v4", "serde"] }
 rand = { version = "0.8", features = ["std"] }
+chrono = { version = "0.4", features = ["serde"] }
 
 # Optional telemetry integration
 nyx-telemetry = { path = "../nyx-telemetry", optional = true }
@@ -31,7 +32,7 @@ nyx-telemetry = { path = "../nyx-telemetry", optional = true }
 nyx-crypto = { path = "../nyx-crypto", optional = true }
 
 # Optional push notification dependencies
-fcm = { version = "0.10", optional = true }
+fcm = { version = "0.9", optional = true }
 a2 = { version = "0.10", optional = true }
 
 [features]
@@ -41,7 +42,7 @@ telemetry = ["nyx-telemetry"]
 # Enable mobile platform integration
 mobile = ["nyx-crypto"]
 # Enable push notification support
-push = ["fcm", "a2", "uuid"]
+push = ["dep:fcm", "dep:a2"]
 # Enable FCM support
 fcm = ["dep:fcm"]
 # Enable APNS support  

@@ -47,7 +47,7 @@ pub struct FrameCrypter {
     send_seq: u64,
     recv_highest: u64,
     // bitmap holding WINDOW_SIZE bits; 1 = seen.  1 048 576 / 8 = 131 072 bytes.
-    bitmap: Box<[u8; (WINDOW_SIZE as usize / 8)]>,
+    bitmap: Box<[u8; WINDOW_SIZE as usize / 8]>,
 }
 
 impl FrameCrypter {

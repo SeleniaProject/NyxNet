@@ -15,12 +15,12 @@ use std::collections::VecDeque;
 use tokio::sync::{RwLock, broadcast, watch};
 use tokio::time::{interval, sleep_until, Instant as TokioInstant};
 use serde::{Serialize, Deserialize};
-use tracing::{debug, info, warn, error, trace};
-use rand::{Rng, thread_rng};
+use tracing::{debug, info, trace};
+use rand::{Rng, SeedableRng};
 use rand_distr::{Poisson, Distribution};
 
-#[cfg(feature = "mobile")]
-use nyx_core::mobile::{mobile_monitor, PowerProfile, PowerState, AppState, NetworkState};
+// Import mobile types
+use nyx_core::mobile::{PowerProfile, NetworkState, AppState};
 
 /// Configuration for adaptive cover traffic generation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,9 +158,10 @@ impl AdaptiveCoverGenerator {
             efficiency: 1.0,
         };
 
+        let base_lambda = config.base_lambda;
         Self {
             config: Arc::new(RwLock::new(config)),
-            current_lambda: Arc::new(RwLock::new(config.base_lambda)),
+            current_lambda: Arc::new(RwLock::new(base_lambda)),
             metrics: Arc::new(RwLock::new(initial_metrics)),
             history: Arc::new(RwLock::new(VecDeque::new())),
             metrics_tx,
@@ -335,7 +336,7 @@ impl AdaptiveCoverGenerator {
         let stats = Arc::clone(&self.stats);
 
         tokio::spawn(async move {
-            let mut rng = thread_rng();
+            let mut rng = rand::rngs::StdRng::from_entropy();
             let start_time = Instant::now();
 
             loop {
@@ -387,7 +388,7 @@ impl AdaptiveCoverGenerator {
 
         #[cfg(feature = "mobile")]
         {
-            if let Some(monitor) = mobile_monitor() {
+            if let Some(monitor) = nyx_core::mobile::mobile_monitor() {
                 let power_state = monitor.power_state().await;
                 return power_state.power_profile.cover_traffic_scale();
             }
@@ -404,7 +405,7 @@ impl AdaptiveCoverGenerator {
 
         #[cfg(feature = "mobile")]
         {
-            if let Some(monitor) = mobile_monitor() {
+            if let Some(monitor) = nyx_core::mobile::mobile_monitor() {
                 let network_state = monitor.network_state().await;
                 return match network_state {
                     NetworkState::WiFi => 1.0,
@@ -447,7 +448,7 @@ impl AdaptiveCoverGenerator {
     async fn get_current_power_profile() -> Option<PowerProfile> {
         #[cfg(feature = "mobile")]
         {
-            if let Some(monitor) = mobile_monitor() {
+            if let Some(monitor) = nyx_core::mobile::mobile_monitor() {
                 let power_state = monitor.power_state().await;
                 return Some(power_state.power_profile);
             }
@@ -537,6 +538,7 @@ impl CoverTrafficTester {
         let start_time = Instant::now();
         let mut lambda_samples = Vec::new();
         let mut metrics_rx = self.generator.subscribe_metrics();
+        let scenario_duration = scenario.duration;
 
         // Simulate scenario conditions
         self.simulate_scenario_conditions(scenario).await;
@@ -544,7 +546,7 @@ impl CoverTrafficTester {
         // Collect metrics during scenario
         let metrics_task = tokio::spawn(async move {
             let mut samples = Vec::new();
-            let end_time = start_time + scenario.duration;
+            let end_time = start_time + scenario_duration;
             
             while Instant::now() < end_time {
                 if let Ok(metrics) = metrics_rx.recv().await {
@@ -555,7 +557,7 @@ impl CoverTrafficTester {
         });
 
         // Wait for scenario duration
-        sleep_until(TokioInstant::now() + scenario.duration).await;
+        sleep_until(TokioInstant::now() + scenario_duration).await;
 
         lambda_samples = metrics_task.await.unwrap_or_default();
 
@@ -565,7 +567,7 @@ impl CoverTrafficTester {
 
         Ok(ScenarioResult {
             name: scenario.name.clone(),
-            duration: scenario.duration,
+            duration: scenario_duration,
             average_lambda: avg_lambda,
             expected_range: scenario.expected_lambda_range,
             lambda_samples,

@@ -1,70 +1,124 @@
 ---
 # Nyx Project Outstanding Tasks / 未実装タスク一覧
 
-## 1. デーモン・オーケストレーション層
-- [x] `nyx-daemon` クレートを新規作成し、Tokio ランタイム上で Transport / Stream / Mix / Control / Telemetry 各タスクを起動・停止・監視する
-- [x] gRPC Unix Domain Socket サーバを実装し CLI/SDK からの要求を受け付ける
-- [x] Panic フック・自動再起動戦略(systemd) の統合
+## 🔥 高優先度 (デーモン統合)
 
-## 2. Stream Layer 完全実装
-- [x] フロー制御 (BBRv2 派⽣) アルゴリズムの実装
-- [x] ストリーム状態機械 (Idle/Open/HalfClosed/Closed) と再送・ACK 合算ロジック
-- [x] ACK フレーム生成・遅延 ACK タイマ
-- [x] Loss/RTT サンプリング、CongestionCtrl へのフィード
+### デーモン統合 (nyx-daemon)
+- [ ] **ストリーム管理API実装** - `open_stream`, `close_stream` の完全実装
+- [ ] **イベント購読API実装** - `subscribe_events` の完全実装  
+- [ ] **全レイヤー統合** - crypto, stream, mix, fec, transport の完全統合
+- [ ] **DHT統合** - control plane との連携実装
+- [ ] **PathBuilder統合** - 実際のホップ選択ロジック実装 (現在はlocalhost固定)
+- [ ] **セッション管理** - CID ベースのセッション管理実装
+- [ ] **設定管理** - 動的設定変更・reload 機能
+- [ ] **エラーハンドリング** - 包括的エラー処理・復旧機能
 
-## 3. Multipath 拡張
-- [x] PathID 付きヘッダの送受信実運用コード
-- [x] Weighted Round-Robin スケジューラの実装とテレメトリ計測
-- [x] 新経路 Path Validation (PATH_CHALLENGE/RESPONSE) の実装
+### gRPC プロトコル拡張
+- [ ] **NodeInfo拡張** - PID, active_streams, connected_peers, mix_routes 追加
+- [ ] **パフォーマンス情報** - cover_traffic_rate, avg_latency, packet_loss_rate, bandwidth_utilization 追加
+- [ ] **ストリーム詳細情報** - ストリーム毎の統計情報
+- [ ] **リアルタイム統計** - 動的統計情報の gRPC ストリーミング
 
-## 4. FEC / オブフスケーション
-- [x] RaptorQ エンジンの実装と適応冗長率制御
-- [x] タイミング平滑化 (±σ ランダムディレイ) 送信キュー
-- [x] 固定 1280B パディング I/O パイプラインへの統合
+## 🛠️ CLI・SDK (高優先度)
 
-## 5. Mix Routing / cMix
-- [x] Wesolowski VDF 高速化 (Montgomery + 並列化)
-- [x] RSA アキュムレータ多者鍵儀式 (MPC) 実装
-- [x] `CmixController` をデーモンに統合し、バッチ発射 → 下位 Transport への接続
-- [x] LARMix++ プローブ結果を利用して経路長を動的決定
+### CLI機能完成 (nyx-cli)
+- [ ] **ベンチマーク機能完成** - 実際のデータ送受信・統計計算
+- [ ] **詳細統計表示** - レイテンシ分布・パーセンタイル表示
+- [ ] **接続機能完成** - 実際のストリーム確立・データ転送
+- [ ] **エラー統計機能** - Prometheus メトリクス解析機能完成
 
-## 6. Transport Adapter
-- [x] QUIC DATAGRAM サポート (quinn と統合)
-- [x] TCP フォールバック実装
-- [x] Teredo (IPv6 トンネル) 経路ハンドラ
-- [x] ICE Lite / STUN サーバ実装を実ネットワークテストで検証
+### SDK統合 (nyx-sdk)
+- [ ] **実際のデーモン通信** - 現在はシミュレーション、実際のgRPC通信実装
+- [ ] **ストリーム読み書き** - AsyncRead/AsyncWrite の実際のデータ処理
+- [ ] **自動再接続機能** - 完全な再接続ロジック実装
+- [ ] **イベントシステム** - 包括的イベント処理・コールバック
 
-## 7. Control Plane
-- [x] libp2p-kad DHT ノード起動とレコード管理
-- [x] Rendezvous サーバ同期処理 (`probe.rs`, `push.rs`) のネットワーク実装
-- [x] SETTINGS フレーム双方向同期・ホットリロード
+## 🌐 ネットワーク・プロトコル
 
-## 8. プラグインフレーム & サンドボックス
-- [x] Plugin IPC (tokio mpsc → Unix Domain Socket / NamedPipe) 実装
-- [x] Cross-platform サンドボックス (macOS システム拡張、Windows Job Object)
-- [x] `dynamic_plugin` フィーチャのビルド・テストワークフロー追加
+### 形式検証 (formal/)
+- [ ] **TLA+ モデル完成** - 現在は基本モデルのみ、全プロトコル状態のモデル化
+- [ ] **安全性証明** - liveness, safety プロパティの完全証明
+- [ ] **モデルチェック** - TLC での包括的検証
+- [ ] **プロパティテスト** - Rust での property-based testing 拡充
 
-## 9. モバイル低電力モード
-- [x] iOS / Android Battery & Screen Off イベントブリッジ実装
-- [x] Cover Traffic λ スケーリングのリアルタイムテスト
-- [x] Push Gateway (FCM/APNS) 統合と E2E 起床シーケンス
+### NAT穴あけ・ICE
+- [ ] **STUN/TURN完全実装** - 現在は基本機能のみ
+- [ ] **ICE候補収集** - 包括的候補収集・優先順位付け
+- [ ] **IPv6対応強化** - Teredo以外のIPv6トンネリング
+- [ ] **ファイアウォール対応** - 制限的環境での接続確立
 
-## 10. Telemetry / Observability
-- [x] OpenTelemetry OTLP エクスポータ実装 (tracing-opentelemetry)
-- [x] Prometheus Collector を廃止し OTLP へ移行、Grafana ダッシュボード更新
-- [x] エラーコード / レイテンシ分布メトリクス追加
+### 暗号機能
+- [ ] **BIKE実装** - pqcrypto-bike クレート待ち
+- [ ] **VDF実装完成** - 現在はシミュレーション、実際のWesolowski VDF
+- [ ] **RSA accumulator** - cMix での証明検証機能
+- [ ] **鍵管理強化** - 鍵ローテーション・バックアップ機能
 
-## 11. CLI / SDK
-- [ ] `nyx-cli` サブコマンド: `connect`, `status`, `bench` のネットワーク実装
-- [ ] Fluent i18n メッセージ拡充 (en, ja, zh 全 100%)
-- [ ] SDK `NyxStream` にストリーム再接続・エラー伝播 API 追加
+## 📱 モバイル・WASM
 
-## 12. セキュリティ強化
-- [ ] サンドボックス (seccomp / pledge / unveil) テストカバレッジ
-- [ ] age‐encrypted Keystore のパスフレーズリトライ UI (CLI, SDK)
-- [ ] Miri + AddressSanitizer CI ジョブ追加
+### モバイル統合 (nyx-core/mobile)
+- [ ] **iOS FFI実装** - UIKit/Core Foundation との実際の連携
+- [ ] **Android JNI実装** - Android API との実際の連携  
+- [ ] **バッテリー監視** - 実際のプラットフォームAPI連携
+- [ ] **アプリ状態監視** - フォアグラウンド/バックグラウンド検知
+- [ ] **プッシュ通知統合** - FCM/APNS の完全実装
 
-## 13. テスト & CI/CD
-- [ ] `nyx-conformance` 全 120 ケースを Green にする
-- [ ] fuzz target 強化: Stream パーサ, PathBuilder, VDF プルーフ
-- [ ] GitHub Actions: wasm32 / Windows / macOS / Linux matrix, `
+### WASM機能 (nyx-sdk-wasm)
+- [ ] **WebTransport統合** - ブラウザでの実際の通信実装
+- [ ] **Service Worker完成** - プッシュ通知・バックグラウンド処理
+- [ ] **WebRTC統合** - P2P接続での NAT穴あけ
+- [ ] **ブラウザストレージ** - 設定・鍵の永続化
+
+## 🔧 開発・運用
+
+### テスト・品質保証
+- [ ] **Conformance テスト拡充** - 現在120ケース、目標500+ケース
+- [ ] **E2E テスト自動化** - Kubernetes環境での自動テスト
+- [ ] **ファズテスト強化** - cargo-fuzz での包括的テスト
+- [ ] **パフォーマンステスト** - 1Gbps目標の性能検証
+- [ ] **セキュリティ監査** - 外部セキュリティ監査・ペネトレーションテスト
+
+### ドキュメント
+- [ ] **API ドキュメント完成** - 全クレートの包括的ドキュメント
+- [ ] **デプロイガイド** - Kubernetes/Docker での本格運用ガイド
+- [ ] **運用マニュアル** - 監視・トラブルシューティング・インシデント対応
+- [ ] **開発者ガイド** - コントリビューション・アーキテクチャ解説
+- [ ] **多言語ドキュメント** - 英語・中国語版の完成
+
+### CI/CD・インフラ
+- [ ] **GitHub Actions完成** - 包括的CI/CDパイプライン
+- [ ] **Docker最適化** - multi-stage build・セキュリティ強化
+- [ ] **Helm Chart完成** - 本格運用向けKubernetes デプロイ
+- [ ] **監視システム** - Prometheus/Grafana ダッシュボード完成
+- [ ] **ログ集約** - ELK Stack での包括的ログ管理
+
+## 🚀 拡張機能
+
+### プラグインシステム
+- [ ] **プラグインレジストリ** - 中央プラグインレジストリ・検索機能
+- [ ] **サンドボックス強化** - セキュアなプラグイン実行環境
+- [ ] **プラグインAPI拡張** - より多くのシステムAPIへのアクセス
+- [ ] **プラグイン配布** - パッケージ管理・自動更新機能
+
+### 高度な機能
+- [ ] **負荷分散** - 複数デーモンでの負荷分散・フェイルオーバー
+- [ ] **地理的分散** - 複数リージョンでの分散デプロイ
+- [ ] **統計分析** - トラフィック分析・異常検知
+- [ ] **管理UI** - Web ベースの管理インターフェース
+
+## 📊 完成度目安
+
+| カテゴリ | 現在 | 目標 |
+|---------|------|------|
+| プロトコル実装 | 95% | 100% |
+| デーモン統合 | 60% | 100% |
+| CLI/SDK | 70% | 100% |
+| モバイル/WASM | 40% | 100% |
+| テスト・品質 | 75% | 100% |
+| ドキュメント | 80% | 100% |
+| 運用・監視 | 70% | 100% |
+
+**総合完成度: 75% → 目標 100%**
+
+---
+
+> **注記**: 各タスクは優先度順に配列。高優先度タスクの完了により、実用的なNyxネットワークの運用が可能になります。

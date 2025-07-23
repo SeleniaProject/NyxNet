@@ -5,7 +5,6 @@
 //! PathBuilder selects a sequence of NodeId representing mix hops.
 
 use nyx_core::NodeId;
-use rand::{seq::SliceRandom, thread_rng};
 
 pub mod cmix;
 pub use cmix::{CmixController, verify_batch};
@@ -52,7 +51,7 @@ impl<'a> WeightedPathBuilder<'a> {
     /// Build a path with weighted random sampling **without replacement**.
     /// This prevents the same node appearing multiple times.
     pub fn build_path(&self, hops: usize) -> Vec<NodeId> {
-        use rand::{rngs::ThreadRng, Rng};
+        use rand::Rng;
         let mut rng = rand::thread_rng();
 
         // Compute weights.

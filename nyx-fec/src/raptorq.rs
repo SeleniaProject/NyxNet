@@ -53,7 +53,7 @@ impl RaptorQCodec {
         // Prepend a sentinel packet encoding the original data length so the decoder can recover
         // the exact length without guessing. We reserve `source_block_number = 0xFF` and
         // `encoding_symbol_id = 0xFFFFFF` (max 24-bit) for this purpose.
-        let mut len_bytes = (data.len() as u64).to_be_bytes().to_vec();
+        let len_bytes = (data.len() as u64).to_be_bytes().to_vec();
         let sentinel = EncodingPacket::new(PayloadId::new(0xFF, 0xFFFFFF), len_bytes);
         packets.insert(0, sentinel);
 
