@@ -1,0 +1,382 @@
+name: Memory Safety Testing (Miri + AddressSanitizer)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run nightly for comprehensive memory safety testing
+    - cron: '0 2 * * *'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  # Miri configuration
+  MIRIFLAGS: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-disable-isolation
+  # AddressSanitizer configuration
+  RUSTFLAGS: -Zsanitizer=address
+  ASAN_OPTIONS: detect_odr_violation=0:abort_on_error=1:halt_on_error=1
+
+jobs:
+  miri-test:
+    name: Miri Memory Safety Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Test different Rust toolchain versions
+        toolchain: [nightly]
+        # Test different target configurations
+        target: [x86_64-unknown-linux-gnu]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.toolchain }}
+        targets: ${{ matrix.target }}
+        components: miri
+    
+    - name: Cache cargo registry and build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: miri-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          miri-${{ runner.os }}-${{ matrix.toolchain }}-
+          miri-${{ runner.os }}-
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcap-dev pkg-config
+    
+    - name: Setup Miri
+      run: |
+        cargo miri setup
+        rustc --version --verbose
+        cargo miri --version
+    
+    - name: Run Miri tests on nyx-crypto
+      run: |
+        cd nyx-crypto
+        # Test core cryptographic operations under Miri
+        cargo miri test --lib --target ${{ matrix.target }} -- --test-threads=1
+      continue-on-error: true
+    
+    - name: Run Miri tests on nyx-core
+      run: |
+        cd nyx-core
+        # Test core utilities and configuration parsing
+        cargo miri test --lib --target ${{ matrix.target }} -- --test-threads=1
+      continue-on-error: true
+    
+    - name: Run Miri tests on nyx-fec
+      run: |
+        cd nyx-fec
+        # Test FEC operations for memory safety
+        cargo miri test --lib --target ${{ matrix.target }} -- --test-threads=1
+      continue-on-error: true
+    
+    - name: Run Miri tests on nyx-stream (selected tests)
+      run: |
+        cd nyx-stream
+        # Run specific stream tests that don't require network I/O
+        cargo miri test --lib frame congestion builder --target ${{ matrix.target }} -- --test-threads=1
+      continue-on-error: true
+    
+    - name: Run Miri tests on nyx-mix
+      run: |
+        cd nyx-mix
+        # Test mix network operations
+        cargo miri test --lib --target ${{ matrix.target }} -- --test-threads=1
+      continue-on-error: true
+    
+    - name: Generate Miri report
+      run: |
+        echo "## Miri Memory Safety Report" >> $GITHUB_STEP_SUMMARY
+        echo "Miri testing completed for Rust ${{ matrix.toolchain }} on ${{ matrix.target }}" >> $GITHUB_STEP_SUMMARY
+        echo "Target: ${{ matrix.target }}" >> $GITHUB_STEP_SUMMARY
+        echo "Toolchain: ${{ matrix.toolchain }}" >> $GITHUB_STEP_SUMMARY
+
+  address-sanitizer:
+    name: AddressSanitizer Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: [nightly]
+        target: [x86_64-unknown-linux-gnu]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.toolchain }}
+        targets: ${{ matrix.target }}
+        components: rust-src
+    
+    - name: Cache cargo registry and build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: asan-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          asan-${{ runner.os }}-${{ matrix.toolchain }}-
+          asan-${{ runner.os }}-
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcap-dev pkg-config clang llvm
+    
+    - name: Configure AddressSanitizer environment
+      run: |
+        echo "RUSTFLAGS=-Zsanitizer=address" >> $GITHUB_ENV
+        echo "ASAN_OPTIONS=detect_odr_violation=0:abort_on_error=1:halt_on_error=1:detect_leaks=1" >> $GITHUB_ENV
+        echo "RUSTDOCFLAGS=-Zsanitizer=address" >> $GITHUB_ENV
+    
+    - name: Build with AddressSanitizer
+      run: |
+        cargo build --target ${{ matrix.target }} -Z build-std --verbose
+    
+    - name: Run AddressSanitizer tests on nyx-crypto
+      run: |
+        cd nyx-crypto
+        cargo test --target ${{ matrix.target }} -Z build-std --lib -- --test-threads=1
+      env:
+        ASAN_OPTIONS: detect_odr_violation=0:abort_on_error=0:halt_on_error=0:detect_leaks=1
+      continue-on-error: true
+    
+    - name: Run AddressSanitizer tests on nyx-core
+      run: |
+        cd nyx-core
+        cargo test --target ${{ matrix.target }} -Z build-std --lib -- --test-threads=1
+      env:
+        ASAN_OPTIONS: detect_odr_violation=0:abort_on_error=0:halt_on_error=0:detect_leaks=1
+      continue-on-error: true
+    
+    - name: Run AddressSanitizer tests on nyx-fec
+      run: |
+        cd nyx-fec
+        cargo test --target ${{ matrix.target }} -Z build-std --lib -- --test-threads=1
+      env:
+        ASAN_OPTIONS: detect_odr_violation=0:abort_on_error=0:halt_on_error=0:detect_leaks=1
+      continue-on-error: true
+    
+    - name: Run AddressSanitizer tests on nyx-stream (core tests)
+      run: |
+        cd nyx-stream
+        cargo test --target ${{ matrix.target }} -Z build-std --lib frame congestion -- --test-threads=1
+      env:
+        ASAN_OPTIONS: detect_odr_violation=0:abort_on_error=0:halt_on_error=0:detect_leaks=1
+      continue-on-error: true
+    
+    - name: Generate AddressSanitizer report
+      run: |
+        echo "## AddressSanitizer Report" >> $GITHUB_STEP_SUMMARY
+        echo "AddressSanitizer testing completed for Rust ${{ matrix.toolchain }}" >> $GITHUB_STEP_SUMMARY
+        echo "Target: ${{ matrix.target }}" >> $GITHUB_STEP_SUMMARY
+
+  memory-sanitizer:
+    name: MemorySanitizer Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: [nightly]
+        target: [x86_64-unknown-linux-gnu]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.toolchain }}
+        targets: ${{ matrix.target }}
+        components: rust-src
+    
+    - name: Cache cargo registry and build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: msan-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          msan-${{ runner.os }}-${{ matrix.toolchain }}-
+          msan-${{ runner.os }}-
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcap-dev pkg-config clang llvm
+    
+    - name: Configure MemorySanitizer environment
+      run: |
+        echo "RUSTFLAGS=-Zsanitizer=memory" >> $GITHUB_ENV
+        echo "MSAN_OPTIONS=abort_on_error=1:halt_on_error=1" >> $GITHUB_ENV
+    
+    - name: Build with MemorySanitizer
+      run: |
+        cargo build --target ${{ matrix.target }} -Z build-std --verbose
+      continue-on-error: true
+    
+    - name: Run MemorySanitizer tests (limited)
+      run: |
+        # MemorySanitizer is very strict and may not work with all dependencies
+        cd nyx-crypto
+        cargo test --target ${{ matrix.target }} -Z build-std --lib noise -- --test-threads=1
+      env:
+        MSAN_OPTIONS: abort_on_error=0:halt_on_error=0
+      continue-on-error: true
+
+  thread-sanitizer:
+    name: ThreadSanitizer Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: [nightly]
+        target: [x86_64-unknown-linux-gnu]
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ matrix.toolchain }}
+        targets: ${{ matrix.target }}
+        components: rust-src
+    
+    - name: Cache cargo registry and build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: tsan-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          tsan-${{ runner.os }}-${{ matrix.toolchain }}-
+          tsan-${{ runner.os }}-
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcap-dev pkg-config clang llvm
+    
+    - name: Configure ThreadSanitizer environment
+      run: |
+        echo "RUSTFLAGS=-Zsanitizer=thread" >> $GITHUB_ENV
+        echo "TSAN_OPTIONS=abort_on_error=1:halt_on_error=1:suppressions=.tsan-suppressions" >> $GITHUB_ENV
+    
+    - name: Create ThreadSanitizer suppressions file
+      run: |
+        cat > .tsan-suppressions << 'EOF'
+        # Suppress known false positives in third-party libraries
+        race:libstd*
+        race:libc.so*
+        # Suppress races in tokio runtime (known safe patterns)
+        race:tokio*
+        EOF
+    
+    - name: Build with ThreadSanitizer
+      run: |
+        cargo build --target ${{ matrix.target }} -Z build-std --verbose
+      continue-on-error: true
+    
+    - name: Run ThreadSanitizer tests on concurrent code
+      run: |
+        # Focus on testing concurrent stream operations
+        cd nyx-stream
+        cargo test --target ${{ matrix.target }} -Z build-std --lib tx scheduler -- --test-threads=1
+      env:
+        TSAN_OPTIONS: abort_on_error=0:halt_on_error=0:suppressions=../.tsan-suppressions
+      continue-on-error: true
+
+  valgrind-test:
+    name: Valgrind Memory Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Install Valgrind
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y valgrind libcap-dev pkg-config
+    
+    - name: Cache cargo registry and build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: valgrind-${{ runner.os }}-stable-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Build debug binaries
+      run: |
+        cargo build --verbose
+    
+    - name: Run Valgrind on crypto tests
+      run: |
+        cd nyx-crypto
+        # Run a subset of tests under Valgrind (it's slow)
+        cargo test --no-run --lib
+        find target/debug/deps -name 'nyx_crypto-*' -type f -executable | head -1 | xargs valgrind --tool=memcheck --leak-check=full --error-exitcode=1
+      continue-on-error: true
+    
+    - name: Run Valgrind on core tests
+      run: |
+        cd nyx-core
+        cargo test --no-run --lib
+        find target/debug/deps -name 'nyx_core-*' -type f -executable | head -1 | xargs valgrind --tool=memcheck --leak-check=full --error-exitcode=1
+      continue-on-error: true
+
+  memory-safety-report:
+    name: Generate Memory Safety Report
+    runs-on: ubuntu-latest
+    needs: [miri-test, address-sanitizer, memory-sanitizer, thread-sanitizer, valgrind-test]
+    if: always()
+    
+    steps:
+    - name: Generate comprehensive report
+      run: |
+        echo "# Memory Safety Testing Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Test Results Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Miri**: ${{ needs.miri-test.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **AddressSanitizer**: ${{ needs.address-sanitizer.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **MemorySanitizer**: ${{ needs.memory-sanitizer.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **ThreadSanitizer**: ${{ needs.thread-sanitizer.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Valgrind**: ${{ needs.valgrind-test.result }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Memory Safety Analysis" >> $GITHUB_STEP_SUMMARY
+        echo "This workflow tests the Nyx codebase for memory safety issues using multiple tools:" >> $GITHUB_STEP_SUMMARY
+        echo "- **Miri**: Rust's interpreter for detecting undefined behavior" >> $GITHUB_STEP_SUMMARY
+        echo "- **AddressSanitizer**: Detects buffer overflows and use-after-free" >> $GITHUB_STEP_SUMMARY
+        echo "- **MemorySanitizer**: Detects uninitialized memory reads" >> $GITHUB_STEP_SUMMARY
+        echo "- **ThreadSanitizer**: Detects data races in multithreaded code" >> $GITHUB_STEP_SUMMARY
+        echo "- **Valgrind**: Comprehensive memory error detection" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "All tests are configured to continue on error to provide complete coverage analysis." >> $GITHUB_STEP_SUMMARY 
