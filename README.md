@@ -102,56 +102,61 @@ cd NyxNet
 # Build all components
 cargo build --release
 
-# Run tests
+# Run tests (optional)
 cargo test
 
-# Start the daemon
-cargo run --bin nyx-daemon
+# Create basic configuration
+echo 'listen_port = 43300
+node_id = "auto"
+log_level = "info"' > nyx.toml
 
-# Use CLI (in another terminal)
+# Start the daemon (注意: 現在開発中)
+NYX_CONFIG=nyx.toml cargo run --bin nyx-daemon --release
+
+# Use CLI (in another terminal - 現在接続問題あり)
 cargo run --bin nyx-cli -- status
 ```
 
 ### Basic Usage
 
+**注意**: 現在、daemonの起動に問題があります。以下の手順は開発中の機能です。
+
 #### 1. Start the Daemon
 ```bash
-# Start with default configuration
-cargo run --bin nyx-daemon
+# Create configuration file
+echo 'listen_port = 43300
+node_id = "auto"
+log_level = "info"' > nyx.toml
 
-# Or with custom config
-NYX_CONFIG=custom.toml cargo run --bin nyx-daemon
+# Start daemon with debug logging
+NYX_CONFIG=nyx.toml RUST_LOG=info cargo run --bin nyx-daemon --release
 ```
 
-#### 2. Connect to a Target
+#### 2. Check Daemon Status (別のターミナルで)
 ```bash
-# Anonymous connection
-cargo run --bin nyx-cli -- connect example.com:80
-
-# Interactive mode
-cargo run --bin nyx-cli -- connect example.com:80 --interactive
-```
-
-#### 3. Monitor Status
-```bash
-# Show daemon status
+# Show daemon status (デフォルトエンドポイント: http://127.0.0.1:50051)
 cargo run --bin nyx-cli -- status
 
-# Watch mode with auto-refresh
-cargo run --bin nyx-cli -- status --watch
-
-# JSON output
-cargo run --bin nyx-cli -- status --format json
+# カスタムエンドポイントを指定する場合
+cargo run --bin nyx-cli -- --endpoint http://127.0.0.1:8080 status
 ```
 
-#### 4. Performance Benchmarking
+#### 3. トラブルシューティング
 ```bash
-# Basic benchmark
-cargo run --bin nyx-cli -- bench example.com:80
+# プロセス確認
+ps aux | grep nyx-daemon
 
-# Detailed benchmark with multiple connections
-cargo run --bin nyx-cli -- bench example.com:80 --duration 120 --connections 50 --detailed
+# ポート確認
+netstat -an | grep :50051
+
+# ログ確認
+RUST_LOG=debug cargo run --bin nyx-daemon --release
 ```
+
+#### 4. 現在の制限事項
+- gRPCサーバーの起動に問題があります
+- 完全な機能テストは未完了です
+- 本格的な使用前に追加の修正が必要です
 
 ## 📖 Configuration
 

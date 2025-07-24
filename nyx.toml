@@ -1,0 +1,7 @@
+# Nyx Network Configuration
+# Basic network settings
+listen_port = 43300
+node_id = "auto"
+
+# Logging
+log_level = "info" 

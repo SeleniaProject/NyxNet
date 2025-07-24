@@ -28,6 +28,7 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::{RwLock, broadcast};
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
+use rand::RngCore;
 
 /// Path selection strategy
 #[derive(Debug, Clone, PartialEq)]
@@ -302,93 +303,208 @@ impl StreamManager {
         Ok(())
     }
     
-    /// Open a new stream
+    /// Open a new stream with complete implementation
     pub async fn open_stream(&self, request: proto::OpenRequest) -> Result<proto::StreamResponse> {
-        let stream_id = self.next_stream_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        info!("Opening new stream to target: {}", request.target_address);
         
-        // Create initial stats
-        let initial_stats = proto::StreamStats {
+        // Check if we've reached the maximum number of concurrent streams
+        if self.streams.len() >= self.config.max_concurrent_streams as usize {
+            error!("Maximum concurrent streams reached: {}", self.config.max_concurrent_streams);
+            return Ok(proto::StreamResponse {
+                stream_id: 0,
+                status: "error".to_string(),
+                target_address: request.target_address,
+                initial_stats: None,
+                success: false,
+                message: "Maximum concurrent streams reached".to_string(),
+            });
+        }
+        
+        let stream_id = self.next_stream_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let now = SystemTime::now();
+        
+        // Parse and validate target address
+        let target_addr = match request.target_address.parse::<SocketAddr>() {
+            Ok(addr) => addr,
+            Err(e) => {
+                error!("Invalid target address '{}': {}", request.target_address, e);
+                return Ok(proto::StreamResponse {
+                    stream_id,
+                    status: "error".to_string(),
+                    target_address: request.target_address,
+                    initial_stats: None,
+                    success: false,
+                    message: format!("Invalid target address: {}", e),
+                });
+            }
+        };
+        
+        // Generate session ID (CID)
+        let mut session_id = [0u8; 12];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut session_id);
+        
+        // Create stream options from request
+        let options = if let Some(opts) = request.options {
+            StreamOptions {
+                buffer_size: opts.buffer_size.max(1024).min(1024 * 1024), // 1KB to 1MB
+                timeout_ms: opts.timeout_ms.max(1000).min(300000), // 1s to 5min
+                multipath: opts.multipath && self.config.enable_multipath,
+                max_paths: opts.max_paths.min(self.config.max_paths_per_stream as u32),
+                path_strategy: opts.path_strategy,
+                auto_reconnect: opts.auto_reconnect,
+                max_retry_attempts: opts.max_retry_attempts.min(10),
+                compression: opts.compression,
+                cipher_suite: opts.cipher_suite,
+            }
+        } else {
+            StreamOptions {
+                buffer_size: 64 * 1024, // 64KB default
+                timeout_ms: self.config.default_timeout_ms,
+                multipath: self.config.enable_multipath,
+                max_paths: 3,
+                path_strategy: "load_balance".to_string(),
+                auto_reconnect: true,
+                max_retry_attempts: 3,
+                compression: false,
+                cipher_suite: "ChaCha20Poly1305".to_string(),
+            }
+        };
+        
+        // Build network paths for the stream
+        let paths = if options.multipath {
+            match self.build_multipath_routes(&request.target_address, options.max_paths).await {
+                Ok(paths) => paths,
+                Err(e) => {
+                    warn!("Failed to build multipath routes, falling back to single path: {}", e);
+                    vec![self.build_single_path(&target_addr).await?]
+                }
+            }
+        } else {
+            vec![self.build_single_path(&target_addr).await?]
+        };
+        
+        // Create stream session
+        let session = StreamSession {
             stream_id,
-            target_address: request.target_address.clone(),
-            state: "initializing".to_string(),
-            created_at: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
-            last_activity: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+            session_id,
+            state: nyx_stream::StreamState::Idle,
+            created_at: now,
+            last_activity: now,
             bytes_sent: 0,
             bytes_received: 0,
-            packets_sent: 0,
-            packets_received: 0,
-            retransmissions: 0,
-            avg_rtt_ms: 0.0,
-            min_rtt_ms: 0.0,
-            max_rtt_ms: 0.0,
-            bandwidth_mbps: 0.0,
-            packet_loss_rate: 0.0,
-            paths: vec![],
-            connection_errors: 0,
-            timeout_errors: 0,
-            last_error: String::new(),
+            error_count: 0,
+            last_error: None,
             last_error_at: None,
-            stream_info: Some(proto::StreamInfo {
-                stream_id,
-                target_address: request.target_address.clone(),
-                state: "initializing".to_string(),
-                created_at: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
-            }),
-            path_stats: vec![],
-            timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+            statistics: PathStatistics::new(),
+            paths: paths.clone(),
+            options: options.clone(),
         };
+        
+        // Store the session
+        self.streams.insert(stream_id, session.clone());
+        
+        // Update metrics
+        self.metrics.increment_active_streams();
+        
+        // Emit stream opened event
+        let event = proto::Event {
+            r#type: "stream".to_string(),
+            detail: "Stream opened".to_string(),
+            timestamp: Some(crate::system_time_to_proto_timestamp(now)),
+            severity: "info".to_string(),
+            attributes: [
+                ("stream_id".to_string(), stream_id.to_string()),
+                ("target_address".to_string(), request.target_address.clone()),
+                ("session_id".to_string(), hex::encode(session_id)),
+            ].into_iter().collect(),
+            event_data: Some(proto::event::EventData::StreamEvent(proto::StreamEvent {
+                stream_id,
+                action: "opened".to_string(),
+                target_address: request.target_address.clone(),
+                stats: Some(self.build_stream_stats(&session).await),
+                event_type: "stream_opened".to_string(),
+                timestamp: Some(crate::system_time_to_proto_timestamp(now)),
+                data: HashMap::new(),
+            })),
+        };
+        
+        let _ = self.event_tx.send(event);
+        
+        // Create initial stats
+        let initial_stats = self.build_stream_stats(&session).await;
+        
+        info!("Stream {} opened successfully to {}", stream_id, request.target_address);
         
         Ok(proto::StreamResponse {
             stream_id,
-            status: "created".to_string(),
+            status: "opened".to_string(),
             target_address: request.target_address,
             initial_stats: Some(initial_stats),
             success: true,
-            message: "Stream created successfully".to_string(),
+            message: "Stream opened successfully".to_string(),
         })
     }
     
-    /// Close a stream
+    /// Close a stream with complete cleanup
     pub async fn close_stream(&self, stream_id: u32) -> Result<()> {
-        if let Some(_stream) = self.streams.remove(&stream_id) {
-            info!("Stream {} closed", stream_id);
+        info!("Closing stream {}", stream_id);
+        
+        // Remove the stream from active streams
+        if let Some((_, mut session)) = self.streams.remove(&stream_id) {
+            // Update stream state to closed
+            session.state = nyx_stream::StreamState::Closed;
+            session.last_activity = SystemTime::now();
+            
+            // Clean up all paths associated with this stream
+            for path in &session.paths {
+                self.active_paths.remove(&path.path_id);
+            }
+            
+            // Update metrics
+            self.metrics.decrement_active_streams();
+            
+            // Emit stream closed event
+            let event = proto::Event {
+                r#type: "stream".to_string(),
+                detail: "Stream closed".to_string(),
+                timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+                severity: "info".to_string(),
+                attributes: [
+                    ("stream_id".to_string(), stream_id.to_string()),
+                    ("session_id".to_string(), hex::encode(session.session_id)),
+                    ("bytes_sent".to_string(), session.bytes_sent.to_string()),
+                    ("bytes_received".to_string(), session.bytes_received.to_string()),
+                ].into_iter().collect(),
+                event_data: Some(proto::event::EventData::StreamEvent(proto::StreamEvent {
+                    stream_id,
+                    action: "closed".to_string(),
+                    target_address: "".to_string(),
+                    stats: Some(self.build_stream_stats(&session).await),
+                    event_type: "stream_closed".to_string(),
+                    timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+                    data: HashMap::new(),
+                })),
+            };
+            
+            let _ = self.event_tx.send(event);
+            
+            info!("Stream {} closed successfully (sent: {} bytes, received: {} bytes)", 
+                  stream_id, session.bytes_sent, session.bytes_received);
+        } else {
+            warn!("Attempted to close non-existent stream {}", stream_id);
+            return Err(anyhow::anyhow!("Stream {} not found", stream_id));
         }
+        
         Ok(())
     }
     
     /// Get stream statistics
     pub async fn get_stream_stats(&self, stream_id: u32) -> Result<proto::StreamStats> {
-        // Return default stats for now
-        Ok(proto::StreamStats {
-            stream_id,
-            target_address: "unknown".to_string(),
-            state: "unknown".to_string(),
-            created_at: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
-            last_activity: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
-            bytes_sent: 0,
-            bytes_received: 0,
-            packets_sent: 0,
-            packets_received: 0,
-            retransmissions: 0,
-            avg_rtt_ms: 0.0,
-            min_rtt_ms: 0.0,
-            max_rtt_ms: 0.0,
-            bandwidth_mbps: 0.0,
-            packet_loss_rate: 0.0,
-            paths: vec![],
-            connection_errors: 0,
-            timeout_errors: 0,
-            last_error: String::new(),
-            last_error_at: None,
-            stream_info: Some(proto::StreamInfo {
-                stream_id,
-                target_address: "unknown".to_string(),
-                state: "unknown".to_string(),
-                created_at: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
-            }),
-            path_stats: vec![],
-            timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
-        })
+        if let Some(session) = self.streams.get(&stream_id) {
+            Ok(self.build_stream_stats(&session).await)
+        } else {
+            Err(anyhow::anyhow!("Stream {} not found", stream_id))
+        }
     }
     
     /// List all active streams
@@ -433,11 +549,26 @@ impl StreamManager {
     }
     
     /// Build a single network path
-    async fn build_single_path_route(&self, target: &str) -> Result<Vec<StreamPath>, StreamError> {
-        let prober = self.prober.write().await;
-        let planner = LARMixPlanner::new(&*prober, self.config.latency_bias);
+    async fn build_single_path(&self, target_addr: &SocketAddr) -> Result<StreamPath, StreamError> {
+        let path_id = rand::random::<u32>();
         
-        let path = self.build_single_path_with_planner(&planner, target, 0).await?;
+        Ok(StreamPath {
+            path_id,
+            status: PathStatus::Validating,
+            statistics: PathStatistics::new(),
+            last_rtt: None,
+            estimated_bandwidth: 0.0,
+            socket_addr: Some(*target_addr),
+            created_at: SystemTime::now(),
+        })
+    }
+    
+    /// Build a single network path route
+    async fn build_single_path_route(&self, target: &str) -> Result<Vec<StreamPath>, StreamError> {
+        let target_addr: SocketAddr = target.parse()
+            .map_err(|e| StreamError::InvalidAddress(format!("Invalid address {}: {}", target, e)))?;
+        
+        let path = self.build_single_path(&target_addr).await?;
         Ok(vec![path])
     }
     

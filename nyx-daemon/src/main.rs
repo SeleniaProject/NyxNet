@@ -101,13 +101,17 @@ impl ControlService {
         let node_id = Self::generate_node_id(&config);
         
         // Initialize transport layer
+        info!("Initializing transport layer...");
         let transport = Arc::new(Transport::start(
             config.listen_port,
             Arc::new(DaemonPacketHandler::new()),
         ).await?);
+        info!("Transport layer initialized");
         
         // Initialize control plane (DHT, push notifications)
+        info!("Initializing control plane...");
         let control_manager = init_control(&config).await;
+        info!("Control plane initialized");
         
         // Initialize metrics collection
         let metrics = Arc::new(MetricsCollector::new());
@@ -124,36 +128,54 @@ impl ControlService {
         let stream_manager = Arc::new(stream_manager);
         
         // Initialize path builder
+        info!("Initializing path builder...");
         let path_config = PathBuilderConfig::default();
         let path_builder = Arc::new(PathBuilder::new(
             Arc::new(control_manager.dht.clone()),
             Arc::clone(&metrics),
             path_config,
         ));
+        info!("Path builder created, starting...");
         path_builder.start().await?;
+        info!("Path builder started successfully");
         
         // Initialize session manager
+        info!("Initializing session manager...");
         let session_config = SessionManagerConfig::default();
         let mut session_manager = SessionManager::new(session_config);
+        info!("Session manager created, starting...");
         session_manager.start().await?;
+        info!("Session manager started successfully");
         let session_manager = Arc::new(session_manager);
         
         // Initialize configuration manager
+        info!("Initializing configuration manager...");
         let config_manager = Arc::new(ConfigManager::new(config.clone()));
+        info!("Configuration manager initialized");
         
         // Initialize health monitor
+        info!("Initializing health monitor...");
         let health_monitor = Arc::new(HealthMonitor::new());
+        info!("Health monitor created, starting...");
         health_monitor.start().await?;
+        info!("Health monitor started successfully");
         
         // Initialize event system
+        info!("Initializing event system...");
         let event_system = Arc::new(EventSystem::new());
+        info!("Event system initialized");
         
         // Initialize cMix controller
+        info!("Initializing cMix controller...");
         let cmix_controller = Arc::new(Mutex::new(CmixController::default()));
+        info!("cMix controller initialized");
         
         // Event broadcasting
+        info!("Setting up event broadcasting...");
         let (event_tx, _) = broadcast::channel(1000);
+        info!("Event broadcasting setup complete");
         
+        info!("Creating control service instance...");
         let service = Self {
             start_time,
             node_id,
@@ -172,9 +194,12 @@ impl ControlService {
             connection_count: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             total_requests: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         };
+        info!("Control service instance created");
         
         // Start background tasks
+        info!("Starting background tasks...");
         service.start_background_tasks().await?;
+        info!("Background tasks started successfully");
         
         info!("Control service initialized with node ID: {}", hex::encode(node_id));
         Ok(service)
@@ -450,32 +475,14 @@ impl NyxControl for ControlService {
         self.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         
         let (tx, rx) = tokio::sync::mpsc::channel(100);
-        
-        // Return empty stream for now
-        tokio::spawn(async move {
-            // No streams to return for now
-        });
-        
-        Ok(tonic::Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
-    }
-    
-    /// Subscribe to events
-    type SubscribeEventsStream = tokio_stream::wrappers::ReceiverStream<Result<Event, tonic::Status>>;
-    
-    #[instrument(skip(self))]
-    async fn subscribe_events(
-        &self,
-        _request: tonic::Request<EventFilter>,
-    ) -> Result<tonic::Response<Self::SubscribeEventsStream>, tonic::Status> {
-        self.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        
-        let (tx, rx) = tokio::sync::mpsc::channel(100);
-        let mut event_rx = self.event_tx.subscribe();
+        let stream_manager = Arc::clone(&self.stream_manager);
         
         tokio::spawn(async move {
-            while let Ok(event) = event_rx.recv().await {
-                if tx.send(Ok(event)).await.is_err() {
-                    break;
+            let streams = stream_manager.list_streams().await;
+            
+            for stream_stats in streams {
+                if tx.send(Ok(stream_stats)).await.is_err() {
+                    break; // Client disconnected
                 }
             }
         });
@@ -483,34 +490,132 @@ impl NyxControl for ControlService {
         Ok(tonic::Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
     }
     
-    /// Subscribe to statistics
+    /// Subscribe to events with filtering
+    type SubscribeEventsStream = tokio_stream::wrappers::ReceiverStream<Result<Event, tonic::Status>>;
+    
+    #[instrument(skip(self))]
+    async fn subscribe_events(
+        &self,
+        request: tonic::Request<EventFilter>,
+    ) -> Result<tonic::Response<Self::SubscribeEventsStream>, tonic::Status> {
+        self.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        
+        let filter = request.into_inner();
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
+        let mut event_rx = self.event_tx.subscribe();
+        
+        tokio::spawn(async move {
+            while let Ok(event) = event_rx.recv().await {
+                // Apply filters
+                let mut should_send = true;
+                
+                // Filter by event types
+                if !filter.types.is_empty() && !filter.types.contains(&event.r#type) {
+                    should_send = false;
+                }
+                
+                // Filter by severity
+                if !filter.severity.is_empty() && event.severity != filter.severity {
+                    should_send = false;
+                }
+                
+                // Filter by stream IDs (if applicable)
+                if !filter.stream_ids.is_empty() {
+                    if let Some(proto::event::EventData::StreamEvent(ref stream_event)) = event.event_data {
+                        if !filter.stream_ids.contains(&stream_event.stream_id) {
+                            should_send = false;
+                        }
+                    } else if event.r#type == "stream" {
+                        // If it's a stream event but no stream_event data, skip it
+                        should_send = false;
+                    }
+                }
+                
+                if should_send {
+                    if tx.send(Ok(event)).await.is_err() {
+                        break; // Client disconnected
+                    }
+                }
+            }
+        });
+        
+        Ok(tonic::Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+    }
+    
+    /// Subscribe to statistics with real-time updates
     type SubscribeStatsStream = tokio_stream::wrappers::ReceiverStream<Result<StatsUpdate, tonic::Status>>;
     
     #[instrument(skip(self))]
     async fn subscribe_stats(
         &self,
-        _request: tonic::Request<StatsRequest>,
+        request: tonic::Request<StatsRequest>,
     ) -> Result<tonic::Response<Self::SubscribeStatsStream>, tonic::Status> {
         self.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         
+        let stats_request = request.into_inner();
         let (tx, rx) = tokio::sync::mpsc::channel(100);
         
-        // Send periodic stats updates
-        let node_info = self.build_node_info().await;
+        // Clone necessary components for the background task
+        let stream_manager = Arc::clone(&self.stream_manager);
+        let metrics = Arc::clone(&self.metrics);
+        let start_time = self.start_time;
+        let node_id = self.node_id;
+        
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(1));
+            let interval_ms = if stats_request.interval_ms > 0 {
+                stats_request.interval_ms
+            } else {
+                1000 // Default to 1 second
+            };
+            
+            let mut interval = tokio::time::interval(Duration::from_millis(interval_ms as u64));
+            
             loop {
                 interval.tick().await;
                 
+                // Build current node info
+                let performance_metrics = metrics.get_performance_metrics();
+                let resource_usage = metrics.get_resource_usage().unwrap_or_default();
+                
+                let node_info = NodeInfo {
+                    node_id: hex::encode(node_id),
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                    uptime_sec: start_time.elapsed().as_secs() as u32,
+                    bytes_in: performance_metrics.total_packets_received,
+                    bytes_out: resource_usage.network_bytes_sent,
+                    pid: std::process::id(),
+                    active_streams: metrics.get_active_streams_count() as u32,
+                    connected_peers: metrics.get_connected_peers_count() as u32,
+                    mix_routes: vec![], // Would be populated from actual mix routes
+                    performance: Some(performance_metrics),
+                    resources: Some(resource_usage),
+                    topology: Some(NetworkTopology {
+                        peers: Vec::new(),
+                        paths: Vec::new(),
+                        total_nodes_known: 0,
+                        reachable_nodes: 0,
+                        current_region: "unknown".to_string(),
+                        available_regions: Vec::new(),
+                    }),
+                };
+                
+                // Get current stream stats
+                let stream_stats = stream_manager.list_streams().await;
+                
+                // Build custom metrics
+                let mut custom_metrics = HashMap::new();
+                custom_metrics.insert("active_streams".to_string(), stream_stats.len() as f64);
+                custom_metrics.insert("uptime_seconds".to_string(), start_time.elapsed().as_secs() as f64);
+                
                 let stats_update = StatsUpdate {
                     timestamp: Some(system_time_to_proto_timestamp(SystemTime::now())),
-                    node_info: Some(node_info.clone()),
-                    stream_stats: vec![],
-                    custom_metrics: HashMap::new(),
+                    node_info: Some(node_info),
+                    stream_stats,
+                    custom_metrics,
                 };
                 
                 if tx.send(Ok(stats_update)).await.is_err() {
-                    break;
+                    break; // Client disconnected
                 }
             }
         });
@@ -736,14 +841,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Log level: {}", level);
 
     // Initialize the comprehensive control service
+    info!("Initializing control service...");
     let svc = ControlService::new(cfg).await?;
+    info!("Control service initialized successfully");
 
     // Prepare the control endpoint
     #[cfg(unix)]
     let _ = std::fs::remove_file(DEFAULT_ENDPOINT);
 
     // Use TCP listener for Windows compatibility
-    let addr = "127.0.0.1:8080".parse()?;
+    let addr = "127.0.0.1:50051".parse()?;
     info!("Control endpoint bound at {}", addr);
 
     info!("Nyx daemon fully initialized and ready for connections");

@@ -115,4 +115,12 @@ impl MetricsCollector {
     pub fn set_active_streams(&self, count: usize) {
         self.active_connections.store(count as u64, Ordering::Relaxed);
     }
+    
+    pub fn increment_active_streams(&self) {
+        self.active_connections.fetch_add(1, Ordering::Relaxed);
+    }
+    
+    pub fn decrement_active_streams(&self) {
+        self.active_connections.fetch_sub(1, Ordering::Relaxed);
+    }
 } 
