@@ -9,7 +9,7 @@
 //! - Error handling and recovery
 //! - Session management with Connection IDs (CID)
 
-use crate::proto::{self, StreamStats, Event, StreamPathStats, PeerInfo};
+use crate::proto::{self, StreamStats, Event, PeerInfo};
 use anyhow::Result;
 use dashmap::DashMap;
 use nyx_core::types::*;
@@ -30,24 +30,6 @@ use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 use rand::RngCore;
 
-/// Path selection strategy
-#[derive(Debug, Clone, PartialEq)]
-pub enum PathSelectionStrategy {
-    Random,
-    LatencyWeighted,
-    LowestLatency,
-    LoadBalance,
-}
-
-/// Stream event for internal use
-#[derive(Debug, Clone)]
-pub struct StreamEvent {
-    pub stream_id: u32,
-    pub event_type: String,
-    pub timestamp: Option<crate::proto::Timestamp>,
-    pub data: Vec<u8>,
-}
-
 /// Stream-related errors
 #[derive(Debug, thiserror::Error)]
 pub enum StreamError {
@@ -55,10 +37,10 @@ pub enum StreamError {
     InvalidAddress(String),
     #[error("Stream not found: {stream_id}")]
     StreamNotFound { stream_id: u32 },
-    #[error("Connection failed: {0}")]
-    ConnectionFailed(String),
-    #[error("Transport error: {0}")]
-    TransportError(String),
+    // #[error("Connection failed: {0}")]
+    // ConnectionFailed(String),
+    // #[error("Transport error: {0}")]
+    // TransportError(String),
     #[error("Path building failed: {0}")]
     PathBuildingFailed(String),
     #[error("Configuration error: {0}")]
@@ -86,11 +68,11 @@ pub struct StreamManagerConfig {
     pub max_concurrent_streams: u32,
     pub default_timeout_ms: u32,
     pub max_paths_per_stream: u8,
-    pub path_validation_timeout_ms: u32,
+    // pub path_validation_timeout_ms: u32,
     pub cleanup_interval_secs: u64,
     pub monitoring_interval_secs: u64,
     pub enable_multipath: bool,
-    pub enable_path_redundancy: bool,
+    // pub enable_path_redundancy: bool,
     pub latency_bias: f64, // 0.0-1.0, higher values prefer low latency
 }
 
@@ -100,11 +82,11 @@ impl Default for StreamManagerConfig {
             max_concurrent_streams: MAX_CONCURRENT_STREAMS,
             default_timeout_ms: DEFAULT_STREAM_TIMEOUT_MS,
             max_paths_per_stream: MAX_PATHS_PER_STREAM,
-            path_validation_timeout_ms: 5000,
+            // path_validation_timeout_ms: 5000,
             cleanup_interval_secs: 30,
             monitoring_interval_secs: 5,
             enable_multipath: true,
-            enable_path_redundancy: false,
+            // enable_path_redundancy: false,
             latency_bias: 0.7,
         }
     }
@@ -238,17 +220,17 @@ pub struct StreamManager {
     event_tx: broadcast::Sender<Event>,
     
     // Configuration
-    config: StreamManagerConfig,
+    config: Arc<StreamManagerConfig>,
     
     // Background tasks
-    cleanup_task: Option<tokio::task::JoinHandle<()>>,
-    monitoring_task: Option<tokio::task::JoinHandle<()>>,
+    _cleanup_task: Option<tokio::task::JoinHandle<()>>,
+    _monitoring_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 /// Path scheduler for multipath routing
 #[derive(Debug)]
 pub struct PathScheduler {
-    pub strategy: PathSelectionStrategy,
+    pub strategy: PathStrategy,
     pub active_paths: Vec<u32>,
     pub path_weights: HashMap<u32, f64>,
 }
@@ -256,7 +238,7 @@ pub struct PathScheduler {
 impl Default for PathScheduler {
     fn default() -> Self {
         Self {
-            strategy: PathSelectionStrategy::LoadBalance,
+            strategy: PathStrategy::LoadBalance,
             active_paths: Vec::new(),
             path_weights: HashMap::new(),
         }
@@ -265,22 +247,19 @@ impl Default for PathScheduler {
 
 impl StreamManager {
     /// Create a new stream manager
-    pub async fn new(
+    pub fn new(
         transport: Arc<Transport>,
         metrics: Arc<crate::metrics::MetricsCollector>,
         config: StreamManagerConfig,
     ) -> Result<Self> {
         let (event_tx, _) = broadcast::channel(1000);
         
-        // Create a DHT handle
-        let dht_handle = nyx_control::spawn_dht().await;
-        
         Ok(Self {
             streams: Arc::new(DashMap::new()),
             transport,
             cmix_controller: Arc::new(CmixController::default()),
             path_builder: Arc::new(PathBuilder::new(
-                Arc::new(dht_handle),
+                // Arc::new(dht_handle),
                 Arc::clone(&metrics),
                 PathBuilderConfig::default(),
             )),
@@ -291,16 +270,31 @@ impl StreamManager {
             metrics,
             next_stream_id: std::sync::atomic::AtomicU32::new(1),
             event_tx,
-            config,
-            cleanup_task: None,
-            monitoring_task: None,
+            config: Arc::new(config),
+            _cleanup_task: None,
+            _monitoring_task: None,
         })
     }
     
     /// Start the stream manager
-    pub async fn start(&mut self) -> Result<()> {
+    pub async fn start(self: Arc<Self>) {
         info!("Starting stream manager");
-        Ok(())
+
+        let manager_clone = Arc::clone(&self);
+        let cleanup_task = tokio::spawn(async move {
+            manager_clone.cleanup_loop().await;
+        });
+
+        let manager_clone = Arc::clone(&self);
+        let monitoring_task = tokio::spawn(async move {
+            manager_clone.monitoring_loop().await;
+        });
+
+        // We need to store the handles to prevent the tasks from being dropped
+        // But since we are in an Arc<Self> we can't directly mutate.
+        // In a real scenario, you might use a Mutex or other interior mutability pattern
+        // For now, we just let them run.
+        let _ = (cleanup_task, monitoring_task);
     }
     
     /// Open a new stream with complete implementation
@@ -740,28 +734,6 @@ impl StreamManager {
         }
     }
     
-    /// Emit stream event
-    async fn emit_stream_event(&self, stream_event: StreamEvent) {
-        let event = Event {
-            r#type: "stream".to_string(),
-            detail: format!("Stream {} {}", stream_event.stream_id, stream_event.event_type),
-            timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
-            severity: "info".to_string(),
-            attributes: HashMap::new(),
-            event_data: Some(crate::proto::event::EventData::StreamEvent(crate::proto::StreamEvent {
-                stream_id: stream_event.stream_id,
-                action: stream_event.event_type,
-                target_address: "unknown".to_string(),
-                stats: None, // Would be populated with actual stats
-                event_type: "stream".to_string(),
-                timestamp: stream_event.timestamp,
-                data: HashMap::new(),
-            })),
-        };
-        
-        let _ = self.event_tx.send(event);
-    }
-    
     /// Cleanup stream resources
     async fn cleanup_stream_resources(&self, stream_id: u32) {
         // This would clean up any allocated resources for the stream
@@ -829,20 +801,6 @@ impl StreamManager {
             // Update bandwidth utilization, latency measurements, etc.
         }
     }
-}
-
-/// Parsed stream options
-#[derive(Debug, Clone)]
-struct ParsedStreamOptions {
-    pub buffer_size: u32,
-    pub timeout_ms: u32,
-    pub multipath: bool,
-    pub max_paths: u32,
-    pub path_strategy: PathStrategy,
-    pub auto_reconnect: bool,
-    pub max_retry_attempts: u32,
-    pub compression: bool,
-    pub cipher_suite: String,
 }
 
 /// Path selection strategy
