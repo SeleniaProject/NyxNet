@@ -8,7 +8,7 @@
 use crate::config::NyxConfig;
 use crate::error::{NyxError, NyxResult};
 use crate::proto::nyx_control_client::NyxControlClient;
-use crate::proto::{NodeInfo, OpenRequest, StreamId, StreamResponse};
+use crate::proto::{OpenRequest, StreamId, StreamResponse};
 use crate::stream::{NyxStream, StreamOptions};
 use crate::events::{NyxEvent, EventHandler};
 
@@ -19,7 +19,7 @@ use tonic::transport::{Channel, Endpoint};
 use tracing::{debug, error, info, warn};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use prost_types::Empty;
+use crate::proto::Empty;
 
 /// Main daemon connection manager
 pub struct NyxDaemon {
@@ -28,6 +28,36 @@ pub struct NyxDaemon {
     connection_info: Arc<RwLock<ConnectionInfo>>,
     event_handler: Option<Arc<dyn EventHandler>>,
     health_monitor: Arc<HealthMonitor>,
+}
+
+/// Node information from daemon (SDK representation)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NodeInfo {
+    pub node_id: String,
+    pub version: String,
+    pub uptime_sec: u32,
+    pub bytes_in: u64,
+    pub bytes_out: u64,
+    pub pid: u32,
+    pub active_streams: u32,
+    pub connected_peers: u32,
+    pub mix_routes: Vec<String>,
+}
+
+impl From<crate::proto::NodeInfo> for NodeInfo {
+    fn from(proto: crate::proto::NodeInfo) -> Self {
+        Self {
+            node_id: proto.node_id,
+            version: proto.version,
+            uptime_sec: proto.uptime_sec,
+            bytes_in: proto.bytes_in,
+            bytes_out: proto.bytes_out,
+            pid: proto.pid,
+            active_streams: proto.active_streams,
+            connected_peers: proto.connected_peers,
+            mix_routes: proto.mix_routes,
+        }
+    }
 }
 
 /// Information about the current daemon connection
@@ -115,7 +145,7 @@ impl NyxDaemon {
         let endpoint_str = config.daemon_endpoint();
         info!("Connecting to Nyx daemon at {}", endpoint_str);
 
-        let channel = Self::create_channel(&endpoint_str, &config).await?;
+        let channel = Self::create_channel(endpoint_str, &config).await?;
         let client = NyxControlClient::new(channel);
         
         let connection_info = ConnectionInfo {
@@ -148,7 +178,7 @@ impl NyxDaemon {
     }
 
     /// Create gRPC channel based on endpoint configuration
-    async fn create_channel(endpoint_str: &str, config: &NyxConfig) -> NyxResult<Channel> {
+    async fn create_channel(endpoint_str: String, config: &NyxConfig) -> NyxResult<Channel> {
         if endpoint_str.starts_with("unix://") {
             #[cfg(unix)]
             {
@@ -168,7 +198,7 @@ impl NyxDaemon {
                 Err(NyxError::daemon_connection_msg("Unix sockets not supported on Windows"))
             }
         } else {
-            let channel = Endpoint::try_from(endpoint_str)
+            let channel = Endpoint::try_from(endpoint_str.as_str())
                 .map_err(|e| NyxError::daemon_connection("Invalid endpoint", e))?
                 .timeout(config.daemon.connect_timeout)
                 .connect()
@@ -185,11 +215,13 @@ impl NyxDaemon {
         let start = Instant::now();
         let mut client = self.client.lock().await;
         
-        let response = client.get_info(Empty {}).await
-            .map_err(|e| {
+        let response = match client.get_info(Empty {}).await {
+            Ok(response) => response,
+            Err(e) => {
                 self.health_monitor.record_failure().await;
-                NyxError::from(e)
-            })?;
+                return Err(NyxError::from(e));
+            }
+        };
         
         let node_info = response.into_inner();
         let latency = start.elapsed();
@@ -197,7 +229,7 @@ impl NyxDaemon {
         // Update connection info
         {
             let mut info = self.connection_info.write().await;
-            info.node_info = Some(node_info.clone());
+            info.node_info = Some(NodeInfo::from(node_info.clone()));
             info.last_activity = Utc::now();
             info.status = ConnectionStatus::Connected;
             info.stats.requests_sent += 1;
@@ -208,7 +240,7 @@ impl NyxDaemon {
         self.health_monitor.record_success().await;
         debug!("Health check completed successfully in {:?}", latency);
         
-        Ok(node_info)
+        Ok(NodeInfo::from(node_info))
     }
 
     /// Get current daemon status
@@ -237,16 +269,28 @@ impl NyxDaemon {
         
         let request = OpenRequest {
             stream_name: target.to_string(),
+            target_address: target.to_string(),
+            options: Some(options.clone().into()),
         };
         
-        let response = client.open_stream(request).await
-            .map_err(|e| {
+        let response = match client.open_stream(tonic::Request::new(request)).await {
+            Ok(response) => response,
+            Err(e) => {
                 self.record_error().await;
-                NyxError::from(e)
-            })?;
+                return Err(NyxError::from(e));
+            }
+        };
         
         let stream_response = response.into_inner();
         let latency = start.elapsed();
+        
+        // Validate response
+        if !stream_response.success {
+            return Err(NyxError::stream_error(format!(
+                "Failed to open stream: {}", 
+                stream_response.message
+            ), None));
+        }
         
         // Update statistics
         self.record_success(latency).await;
@@ -286,11 +330,13 @@ impl NyxDaemon {
         let mut client = self.client.lock().await;
         let request = StreamId { id: stream_id };
         
-        client.close_stream(request).await
-            .map_err(|e| {
+        match client.close_stream(request).await {
+            Ok(_) => {},
+            Err(e) => {
                 self.record_error().await;
-                NyxError::from(e)
-            })?;
+                return Err(NyxError::from(e));
+            }
+        };
         
         // Decrement active stream count
         {

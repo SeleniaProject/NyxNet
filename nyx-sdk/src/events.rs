@@ -126,7 +126,7 @@ pub enum NyxEvent {
 }
 
 /// Event severity level
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EventSeverity {
     /// Informational event
     Info,
@@ -139,7 +139,7 @@ pub enum EventSeverity {
 }
 
 /// Event category for filtering
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum EventCategory {
     /// Daemon-related events
     Daemon,
@@ -208,7 +208,7 @@ impl NyxEvent {
             NyxEvent::StreamError { .. } => EventCategory::Stream,
             
             #[cfg(feature = "reconnect")]
-            NyxEvent::StreamReconnecting { .. } |
+            NyxEvent::StreamReconnecting { .. } => EventCategory::Stream,
             #[cfg(feature = "reconnect")]
             NyxEvent::StreamReconnected { .. } => EventCategory::Stream,
             
@@ -347,7 +347,7 @@ pub trait EventHandler: Send + Sync {
     async fn handle_event(&self, event: NyxEvent);
     
     /// Check if this handler is interested in the given event
-    fn should_handle(&self, event: &NyxEvent) -> bool {
+    fn should_handle(&self, _event: &NyxEvent) -> bool {
         // Default: handle all events
         true
     }
@@ -489,14 +489,12 @@ impl LoggingEventHandler {
 #[async_trait]
 impl EventHandler for LoggingEventHandler {
     async fn handle_event(&self, event: NyxEvent) {
-        let level = match event.severity() {
-            EventSeverity::Info => tracing::Level::INFO,
-            EventSeverity::Warning => tracing::Level::WARN,
-            EventSeverity::Error => tracing::Level::ERROR,
-            EventSeverity::Critical => tracing::Level::ERROR,
+        match event.severity() {
+            EventSeverity::Info => tracing::info!("{}", event),
+            EventSeverity::Warning => tracing::warn!("{}", event),
+            EventSeverity::Error => tracing::error!("{}", event),
+            EventSeverity::Critical => tracing::error!("{}", event),
         };
-        
-        tracing::event!(level, "{}", event);
     }
     
     fn name(&self) -> &str {
@@ -531,5 +529,123 @@ impl EventHandler for CallbackEventHandler {
     
     fn name(&self) -> &str {
         &self.name
+    }
+}
+
+/// Event manager for handling multiple event handlers
+pub struct EventManager {
+    handlers: Arc<tokio::sync::RwLock<Vec<Arc<dyn EventHandler>>>>,
+    event_queue: Arc<tokio::sync::Mutex<Vec<NyxEvent>>>,
+    stats: Arc<tokio::sync::RwLock<EventStats>>,
+}
+
+/// Event statistics
+#[derive(Debug, Clone, Default)]
+pub struct EventStats {
+    pub total_events: u64,
+    pub events_by_category: std::collections::HashMap<EventCategory, u64>,
+    pub events_by_severity: std::collections::HashMap<EventSeverity, u64>,
+    pub handlers_count: usize,
+    pub last_event_time: Option<DateTime<Utc>>,
+}
+
+impl EventManager {
+    /// Create a new event manager
+    pub fn new() -> Self {
+        Self {
+            handlers: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            event_queue: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            stats: Arc::new(tokio::sync::RwLock::new(EventStats::default())),
+        }
+    }
+    
+    /// Add an event handler
+    pub async fn add_handler(&self, handler: Arc<dyn EventHandler>) {
+        let mut handlers = self.handlers.write().await;
+        handlers.push(handler);
+        
+        // Update stats
+        let mut stats = self.stats.write().await;
+        stats.handlers_count = handlers.len();
+    }
+    
+    /// Remove an event handler by name
+    pub async fn remove_handler(&self, name: &str) -> bool {
+        let mut handlers = self.handlers.write().await;
+        let initial_len = handlers.len();
+        handlers.retain(|h| h.name() != name);
+        
+        let removed = handlers.len() != initial_len;
+        if removed {
+            // Update stats
+            let mut stats = self.stats.write().await;
+            stats.handlers_count = handlers.len();
+        }
+        
+        removed
+    }
+    
+    /// Emit an event to all handlers
+    pub async fn emit(&self, event: NyxEvent) {
+        // Update statistics
+        {
+            let mut stats = self.stats.write().await;
+            stats.total_events += 1;
+            stats.last_event_time = Some(event.timestamp());
+            
+            // Update category stats
+            *stats.events_by_category.entry(event.category()).or_insert(0) += 1;
+            
+            // Update severity stats
+            *stats.events_by_severity.entry(event.severity()).or_insert(0) += 1;
+        }
+        
+        // Send to all handlers
+        let handlers = self.handlers.read().await;
+        let mut tasks = Vec::new();
+        
+        for handler in handlers.iter() {
+            if handler.should_handle(&event) {
+                let handler = Arc::clone(handler);
+                let event = event.clone();
+                
+                let task = tokio::spawn(async move {
+                    handler.handle_event(event).await;
+                });
+                
+                tasks.push(task);
+            }
+        }
+        
+        // Wait for all handlers to complete
+        for task in tasks {
+            let _ = task.await;
+        }
+    }
+    
+    /// Get event statistics
+    pub async fn stats(&self) -> EventStats {
+        self.stats.read().await.clone()
+    }
+    
+    /// Clear all handlers
+    pub async fn clear_handlers(&self) {
+        let mut handlers = self.handlers.write().await;
+        handlers.clear();
+        
+        // Update stats
+        let mut stats = self.stats.write().await;
+        stats.handlers_count = 0;
+    }
+    
+    /// Get the number of registered handlers
+    pub async fn handler_count(&self) -> usize {
+        self.handlers.read().await.len()
+    }
+}
+
+impl Default for EventManager {
+    fn default() -> Self {
+        Self::new()
     }
 } 

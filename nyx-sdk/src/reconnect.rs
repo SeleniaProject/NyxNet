@@ -251,15 +251,29 @@ impl ReconnectionManager {
         
         let request = OpenRequest {
             stream_name: self.target.clone(),
+            target_address: self.target.clone(),
+            options: Some(self.options.clone().into()),
         };
         
         let timeout = self.options.operation_timeout;
-        let response = tokio::time::timeout(timeout, client_guard.open_stream(request))
+        let response = tokio::time::timeout(
+            timeout, 
+            client_guard.open_stream(tonic::Request::new(request))
+        )
             .await
             .map_err(|_| NyxError::timeout(timeout))?
             .map_err(NyxError::from)?;
         
         let stream_response = response.into_inner();
+        
+        // Validate response
+        if !stream_response.success {
+            return Err(NyxError::stream_error(format!(
+                "Failed to reconnect stream: {}", 
+                stream_response.message
+            )));
+        }
+        
         Ok(stream_response.stream_id)
     }
 

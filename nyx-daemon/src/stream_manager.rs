@@ -28,7 +28,6 @@ use std::time::{Duration, SystemTime};
 use tokio::sync::{RwLock, broadcast};
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
-use rand::RngCore;
 
 /// Stream-related errors
 #[derive(Debug, thiserror::Error)]
@@ -247,7 +246,7 @@ impl Default for PathScheduler {
 
 impl StreamManager {
     /// Create a new stream manager
-    pub fn new(
+    pub async fn new(
         transport: Arc<Transport>,
         metrics: Arc<crate::metrics::MetricsCollector>,
         config: StreamManagerConfig,
@@ -259,7 +258,7 @@ impl StreamManager {
             transport,
             cmix_controller: Arc::new(CmixController::default()),
             path_builder: Arc::new(PathBuilder::new(
-                // Arc::new(dht_handle),
+                Arc::new(nyx_control::spawn_dht().await),
                 Arc::clone(&metrics),
                 PathBuilderConfig::default(),
             )),
@@ -779,7 +778,7 @@ impl StreamManager {
             interval.tick().await;
             
             // Update metrics
-            self.metrics.set_active_streams(self.streams.len());
+            self.metrics.set_active_streams(self.streams.len() as u32);
             
             // Monitor stream health
             for entry in self.streams.iter() {

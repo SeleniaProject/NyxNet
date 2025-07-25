@@ -10,15 +10,11 @@
 //! - Structured event logging
 
 use crate::proto::{Event, EventFilter};
-use anyhow::Result;
-use nyx_core::types::*;
-use serde::{Deserialize, Serialize};
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
-use tokio::sync::{broadcast, RwLock};
-use tracing::{debug, error};
+use tokio::sync::RwLock;
+use tracing::debug;
 
 /// Internal event filter for more complex filtering logic
 pub struct InternalEventFilter {

@@ -10,6 +10,7 @@ members = [
     "nyx-control",
     "nyx-cli",
     "nyx-daemon",
+    "nyx-sdk",
     "nyx-sdk-wasm",
     "nyx-conformance",
     "build-protoc",

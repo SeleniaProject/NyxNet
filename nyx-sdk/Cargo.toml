@@ -37,7 +37,7 @@ futures-util = "0.3"
 pin-project-lite = "0.2"
 
 # Reconnection and backoff
-backoff = { version = "0.4", features = ["tokio"] }
+backoff = { version = "0.4", features = ["tokio"], optional = true }
 humantime-serde = "1.1"
 
 # Stream utilities
@@ -57,7 +57,7 @@ tonic-build = "0.10"
 [features]
 default = []
 # Enable stream reconnection with automatic retry
-reconnect = ["backoff", "exponential-backoff", "uuid"]
+reconnect = ["backoff", "uuid"]
 # Enable comprehensive error propagation
 error-propagation = ["uuid"]
 # Enable metrics collection

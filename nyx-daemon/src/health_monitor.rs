@@ -9,9 +9,8 @@
 //! - Health metric collection and alerting
 //! - Service dependency health tracking
 
-use crate::proto::{self, HealthResponse, HealthCheckInfo as ProtoHealthCheckInfo};
+use crate::proto::{self, HealthResponse};
 use anyhow::Result;
-use nyx_core::types::*;
 
 use std::collections::HashMap;
 use std::sync::Arc;

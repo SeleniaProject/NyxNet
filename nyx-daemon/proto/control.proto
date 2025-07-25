@@ -141,6 +141,18 @@ message StreamId {
   uint32 id = 1;
 }
 
+// Data transfer
+message DataRequest {
+  string stream_id = 1;
+  bytes data = 2;
+}
+
+message DataResponse {
+  bool success = 1;
+  string error = 2;
+  uint64 bytes_sent = 3;
+}
+
 // Detailed stream statistics
 message StreamStats {
   uint32 stream_id = 1;
@@ -347,6 +359,7 @@ service NyxControl {
   rpc CloseStream (StreamId) returns (Empty);
   rpc GetStreamStats (StreamId) returns (StreamStats);
   rpc ListStreams (Empty) returns (stream StreamStats);
+  rpc SendData (DataRequest) returns (DataResponse);
   
   // Event subscription
   rpc SubscribeEvents (EventFilter) returns (stream Event);

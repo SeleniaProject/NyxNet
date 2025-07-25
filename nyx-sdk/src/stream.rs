@@ -23,7 +23,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use bytes::{Bytes, BytesMut};
 use futures_util::ready;
-use pin_project_lite::pin_project;
+// use pin_project_lite::pin_project;
 
 #[cfg(feature = "reconnect")]
 use crate::reconnect::ReconnectionManager;
@@ -54,6 +54,22 @@ impl Default for StreamOptions {
             max_reconnect_attempts: 3,
             reconnect_delay: Duration::from_millis(100),
             collect_stats: true,
+        }
+    }
+}
+
+impl Into<crate::proto::StreamOptions> for StreamOptions {
+    fn into(self) -> crate::proto::StreamOptions {
+        crate::proto::StreamOptions {
+            buffer_size: self.buffer_size as u32,
+            timeout_ms: self.operation_timeout.as_millis() as u32,
+            multipath: false,
+            max_paths: 1,
+            path_strategy: "lowest_latency".to_string(),
+            auto_reconnect: self.auto_reconnect,
+            max_retry_attempts: self.max_reconnect_attempts,
+            compression: false,
+            cipher_suite: "chacha20poly1305".to_string(),
         }
     }
 }
@@ -100,31 +116,19 @@ pub struct StreamStats {
     pub avg_latency: Duration,
 }
 
-pin_project! {
-    /// A Nyx network stream implementing AsyncRead + AsyncWrite
-    pub struct NyxStream {
-        /// Stream ID assigned by daemon
-        stream_id: u32,
-        /// Target address
-        target: String,
-        /// gRPC client for daemon communication
-        client: Arc<Mutex<NyxControlClient<Channel>>>,
-        /// Connection information
-        connection_info: Arc<RwLock<ConnectionInfo>>,
-        /// Stream options
-        options: StreamOptions,
-        /// Current stream state
-        state: Arc<RwLock<StreamState>>,
-        /// Stream statistics
-        stats: Arc<RwLock<StreamStats>>,
-        /// Read buffer
-        read_buffer: Arc<Mutex<BytesMut>>,
-        /// Write buffer
-        write_buffer: Arc<Mutex<BytesMut>>,
-        /// Reconnection manager
-        #[cfg(feature = "reconnect")]
-        reconnect_manager: Option<Arc<ReconnectionManager>>,
-    }
+/// A Nyx network stream implementing AsyncRead + AsyncWrite
+pub struct NyxStream {
+    stream_id: u32,
+    target: String,
+    client: Arc<Mutex<NyxControlClient<Channel>>>,
+    connection_info: Arc<RwLock<ConnectionInfo>>,
+    options: StreamOptions,
+    state: Arc<RwLock<StreamState>>,
+    stats: Arc<RwLock<StreamStats>>,
+    read_buffer: Arc<Mutex<BytesMut>>,
+    write_buffer: Arc<Mutex<BytesMut>>,
+    #[cfg(feature = "reconnect")]
+    reconnect_manager: Option<Arc<ReconnectionManager>>,
 }
 
 impl NyxStream {
@@ -257,31 +261,77 @@ impl NyxStream {
             return Ok(());
         }
 
-        // TODO: Implement actual data transmission to daemon
-        // For now, we simulate by clearing the buffer
-        let bytes_written = write_buffer.len();
-        write_buffer.clear();
+        // Send data to daemon via gRPC
+        let data = write_buffer.split().freeze();
+        let bytes_to_send = data.len();
+        
+        let mut client = self.client.lock().await;
+        let request = crate::proto::DataRequest {
+            stream_id: self.stream_id.to_string(),
+            data: data.to_vec(),
+        };
 
-        // Update statistics
-        if self.options.collect_stats {
-            let mut stats = self.stats.write().await;
-            stats.bytes_written += bytes_written as u64;
-            stats.write_ops += 1;
-            stats.last_activity = Utc::now();
+        match client.send_data(tonic::Request::new(request)).await {
+            Ok(response) => {
+                let data_response = response.into_inner();
+                if !data_response.success {
+                    return Err(NyxError::stream_error(
+                        format!("Failed to send data: {}", data_response.error),
+                        Some(self.stream_id)
+                    ));
+                }
+                
+                // Update statistics
+                if self.options.collect_stats {
+                    let mut stats = self.stats.write().await;
+                    stats.bytes_written += bytes_to_send as u64;
+                    stats.write_ops += 1;
+                    stats.last_activity = Utc::now();
+                }
+                
+                debug!("Successfully sent {} bytes on stream {}", bytes_to_send, self.stream_id);
+                Ok(())
+            }
+            Err(e) => {
+                // Put data back in buffer for retry
+                let mut new_buffer = BytesMut::from(data.as_ref());
+                new_buffer.extend_from_slice(&write_buffer);
+                *write_buffer = new_buffer;
+                
+                Err(NyxError::from(e))
+            }
         }
-
-        Ok(())
     }
 
     /// Internal read implementation
     async fn read_internal(&mut self, buf: &mut ReadBuf<'_>) -> NyxResult<()> {
         let mut read_buffer = self.read_buffer.lock().await;
         
-        // TODO: Implement actual data reception from daemon
-        // For now, we simulate by returning empty data
+        // If buffer is empty, try to receive data from daemon
         if read_buffer.is_empty() {
-            // Simulate receiving some data
-            read_buffer.extend_from_slice(b"Hello from Nyx stream!\n");
+            // In a real implementation, this would be a streaming gRPC call
+            // For now, we simulate receiving data
+            let mut client = self.client.lock().await;
+            
+            // Check if there's data available for this stream
+            let request = crate::proto::StreamId {
+                id: self.stream_id,
+            };
+            
+            match client.get_stream_stats(tonic::Request::new(request)).await {
+                Ok(response) => {
+                    let stats = response.into_inner();
+                    // In a real implementation, we would receive actual data here
+                    // For now, simulate some data based on stream activity
+                    if stats.bytes_received > 0 {
+                        read_buffer.extend_from_slice(b"Data from remote peer\n");
+                    }
+                }
+                Err(e) => {
+                    warn!("Failed to check for stream data: {}", e);
+                    // Continue with empty buffer
+                }
+            }
         }
 
         let to_copy = std::cmp::min(buf.remaining(), read_buffer.len());

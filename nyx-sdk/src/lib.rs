@@ -44,7 +44,7 @@ pub mod reconnect;
 
 // Re-export main types
 pub use config::{NyxConfig, ConfigBuilder, NetworkConfig, SecurityConfig};
-pub use daemon::{NyxDaemon, ConnectionInfo, DaemonStatus};
+pub use daemon::{NyxDaemon, ConnectionInfo, DaemonStatus, NodeInfo};
 pub use stream::{NyxStream, StreamOptions, StreamState, StreamStats};
 pub use error::{NyxError, NyxResult, ErrorKind};
 pub use events::{NyxEvent, EventHandler, EventCallback};
@@ -55,7 +55,7 @@ mod proto {
 }
 
 use proto::nyx_control_client::NyxControlClient;
-pub use proto::{NodeInfo, StreamResponse};
+pub use proto::StreamResponse;
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

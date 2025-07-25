@@ -92,9 +92,4 @@ pub fn localize(
     }
     
     Ok(result)
-}
-
-// Export function for use in main.rs
-pub fn tr(language: &str, text_id: &str, args: Option<&HashMap<&str, String>>) -> Result<String, Box<dyn std::error::Error>> {
-    localize(language, text_id, args)
 } 

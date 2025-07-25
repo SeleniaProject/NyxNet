@@ -9,10 +9,10 @@
 //! updates in near-real-time.
 
 use tokio::sync::{watch, mpsc};
-use nyx_stream::{build_settings_frame, parse_settings_frame, Setting, SettingsFrame};
-use tracing::{info, warn};
+use nyx_stream::{build_settings_frame, parse_settings_frame};
 
 /// Command sent to `SettingsSync`.
+#[allow(dead_code)]
 pub enum SettingsCmd {
     /// An inbound SETTINGS frame from peer.
     Inbound(Vec<u8>),
@@ -25,6 +25,7 @@ pub enum SettingsCmd {
 /// * `local_rx` yields locally-mutated [`Settings`](nyx_stream::StreamSettings).
 /// * Returns a [`mpsc::Sender`] that other modules use to forward inbound frames.
 #[must_use]
+#[allow(dead_code)]
 pub fn spawn_settings_sync(
     mut local_rx: watch::Receiver<nyx_stream::StreamSettings>,
 ) -> mpsc::Sender<SettingsCmd> {
