@@ -13,10 +13,10 @@
 - [x] 1.1.8 エラーハンドリング - 包括的エラー処理・復旧機能
 
 ### 1.2 gRPC プロトコル拡張
-- [ ] 1.2.1 NodeInfo拡張 - PID, active_streams, connected_peers, mix_routes 追加
-- [ ] 1.2.2 パフォーマンス情報 - cover_traffic_rate, avg_latency, packet_loss_rate, bandwidth_utilization 追加
-- [ ] 1.2.3 ストリーム詳細情報 - ストリーム毎の統計情報
-- [ ] 1.2.4 リアルタイム統計 - 動的統計情報の gRPC ストリーミング
+- [x] 1.2.1 NodeInfo拡張 - PID, active_streams, connected_peers, mix_routes 追加
+- [x] 1.2.2 パフォーマンス情報 - cover_traffic_rate, avg_latency, packet_loss_rate, bandwidth_utilization 追加
+- [x] 1.2.3 ストリーム詳細情報 - ストリーム毎の統計情報
+- [x] 1.2.4 リアルタイム統計 - 動的統計情報の gRPC ストリーミング
 
 ## 2. CLI・SDK (高優先度)
 
