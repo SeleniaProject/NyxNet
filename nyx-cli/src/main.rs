@@ -25,6 +25,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use sha2::{Sha256, Digest};
 
+
 mod i18n;
 mod benchmark;
 mod latency_collector;
@@ -812,6 +813,28 @@ fn display_connection_test_results(result: &ConnectionTestResult) {
         }
         println!("  Duration: {:.2}ms", result.total_time.as_millis());
     }
+}
+
+/// Display comprehensive real-time dashboard
+async fn display_realtime_dashboard(
+    _monitoring_session: &(),  // Placeholder until we implement real-time monitoring
+    _clear_screen: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Placeholder implementation for real-time dashboard
+    println!("{}", style("🔥 Nyx Network Real-Time Dashboard").bold().cyan());
+    println!("{}", style("Real-time monitoring will be implemented in future tasks").dim());
+    
+
+    
+    Ok(())
+}
+
+/// Display connection quality overview panel
+fn display_connection_quality_overview(_quality: &()) -> Result<(), Box<dyn std::error::Error>> {
+    println!("{}", style("🌟 Connection Quality").bold().green());
+    println!("Connection quality monitoring will be implemented in future tasks");
+    
+    Ok(())
 }
 
 /// Calculate comprehensive file checksums for integrity verification
@@ -2105,4 +2128,183 @@ fn format_duration(seconds: u64) -> String {
     } else {
         format!("{}s", secs)
     }
+}
+
+/// Display performance metrics panel
+fn display_performance_metrics_panel(
+    _metrics: &(),
+    _bandwidth: &(),
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("{}", style("📊 Performance Metrics").bold().blue());
+    println!("Performance metrics monitoring will be implemented in future tasks");
+    
+    Ok(())
+}
+
+/// Display latency monitoring panel
+fn display_latency_monitoring_panel(_latency: &()) -> Result<(), Box<dyn std::error::Error>> {
+    println!("{}", style("⚡ Latency Analysis").bold().yellow());
+    println!("Latency monitoring will be implemented in future tasks");
+    
+    Ok(())
+}
+
+/// Display hop path visualization
+fn display_hop_path_visualization(_path: &[()]) -> Result<(), Box<dyn std::error::Error>> {
+    println!("{}", style("🛤️  Network Path Visualization").bold().magenta());
+    println!("Path visualization will be implemented in future tasks");
+    
+    Ok(())
+}
+
+/// Enhanced monitoring session with real-time updates
+async fn run_enhanced_monitoring_session(
+    _client: &mut NyxControlClient<Channel>,
+    _stream_id: u32,
+    _target_address: String,
+    update_interval: Duration,
+    shutdown: Arc<AtomicBool>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("{}", style("🚀 Starting Enhanced Real-Time Monitoring").bold().cyan());
+    println!("{}", style("Press Ctrl+C to exit monitoring mode").dim());
+    sleep(Duration::from_secs(2)).await;
+    
+    let mut update_counter = 0;
+    
+    while !shutdown.load(Ordering::Relaxed) && update_counter < 5 {
+        // Display placeholder dashboard
+        display_realtime_dashboard(&(), true).await?;
+        
+        // Show control instructions
+        println!();
+        println!("{}", style(format!("💡 Controls: Ctrl+C to exit | Updates every {}s", update_interval.as_secs())).dim());
+        
+        update_counter += 1;
+        sleep(update_interval).await;
+    }
+    
+    println!("\n{}", style("📊 Monitoring session ended").green());
+    
+    Ok(())
+}
+
+/// Helper functions for formatting and status indicators
+fn format_score_indicator(score: f64) -> String {
+    match score {
+        x if x >= 90.0 => "🌟 Excellent".to_string(),
+        x if x >= 70.0 => "✅ Good".to_string(),
+        x if x >= 50.0 => "⚠️ Fair".to_string(),
+        x if x >= 30.0 => "❌ Poor".to_string(),
+        _ => "🚨 Critical".to_string(),
+    }
+}
+
+fn format_bandwidth_status(current: f64, peak: f64) -> String {
+    let percentage = if peak > 0.0 { (current / peak) * 100.0 } else { 0.0 };
+    match percentage {
+        x if x >= 80.0 => "🔥 High".to_string(),
+        x if x >= 50.0 => "📈 Active".to_string(),
+        x if x >= 20.0 => "📊 Moderate".to_string(),
+        _ => "💤 Low".to_string(),
+    }
+}
+
+fn format_throughput_status(bytes_per_sec: f64) -> String {
+    match bytes_per_sec {
+        x if x >= 1_000_000.0 => "🚀 Excellent".to_string(),
+        x if x >= 100_000.0 => "⚡ Good".to_string(),
+        x if x >= 10_000.0 => "📊 Moderate".to_string(),
+        _ => "🐌 Low".to_string(),
+    }
+}
+
+fn format_efficiency_status(efficiency: f64) -> String {
+    match efficiency {
+        x if x >= 95.0 => "🌟 Optimal".to_string(),
+        x if x >= 85.0 => "✅ Good".to_string(),
+        x if x >= 70.0 => "⚠️ Fair".to_string(),
+        _ => "❌ Poor".to_string(),
+    }
+}
+
+fn format_jitter_quality(jitter: f64) -> String {
+    match jitter {
+        x if x < 5.0 => "🌟 Excellent".to_string(),
+        x if x < 15.0 => "✅ Good".to_string(),
+        x if x < 30.0 => "⚠️ Fair".to_string(),
+        _ => "❌ Poor".to_string(),
+    }
+}
+
+fn format_jitter_status(jitter: f64) -> String {
+    match jitter {
+        x if x < 5.0 => "🟢 Low".to_string(),
+        x if x < 15.0 => "🟡 Moderate".to_string(),
+        x if x < 30.0 => "🟠 High".to_string(),
+        _ => "🔴 Critical".to_string(),
+    }
+}
+
+fn format_loss_quality(loss: f64) -> String {
+    match loss {
+        x if x < 0.1 => "🌟 Excellent".to_string(),
+        x if x < 1.0 => "✅ Good".to_string(),
+        x if x < 5.0 => "⚠️ Fair".to_string(),
+        _ => "❌ Poor".to_string(),
+    }
+}
+
+fn format_loss_status(loss: f64) -> String {
+    match loss {
+        x if x < 0.1 => "🟢 Minimal".to_string(),
+        x if x < 1.0 => "🟡 Low".to_string(),
+        x if x < 5.0 => "🟠 Moderate".to_string(),
+        _ => "🔴 High".to_string(),
+    }
+}
+
+fn format_reliability_indicator(reliability: f64) -> &'static str {
+    match reliability {
+        x if x >= 0.95 => "🌟",
+        x if x >= 0.85 => "✅",
+        x if x >= 0.70 => "⚠️",
+        _ => "❌",
+    }
+}
+
+fn format_bytes_per_sec(bytes_per_sec: f64) -> String {
+    match bytes_per_sec {
+        x if x >= 1_000_000.0 => format!("{:.1} MB/s", x / 1_000_000.0),
+        x if x >= 1_000.0 => format!("{:.1} KB/s", x / 1_000.0),
+        _ => format!("{:.0} B/s", bytes_per_sec),
+    }
+}
+
+fn create_progress_bar(percentage: f64, width: usize) -> String {
+    let filled = ((percentage / 100.0) * width as f64) as usize;
+    let empty = width - filled;
+    
+    format!("[{}{}]", 
+        "█".repeat(filled.min(width)), 
+        "░".repeat(empty)
+    )
+}
+
+fn create_latency_bar(latency_ms: f64, width: usize) -> String {
+    let normalized = ((latency_ms / 200.0).min(1.0) * width as f64) as usize; // Normalize to 200ms max
+    let filled = normalized.min(width);
+    let empty = width - filled;
+    
+    let color = match latency_ms {
+        x if x < 50.0 => "🟢",
+        x if x < 100.0 => "🟡",
+        x if x < 200.0 => "🟠",
+        _ => "🔴",
+    };
+    
+    format!("{} [{}{}]", 
+        color,
+        "█".repeat(filled), 
+        "░".repeat(empty)
+    )
 } 
