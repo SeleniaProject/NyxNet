@@ -4058,6 +4058,8 @@ dependencies = [
  "md5",
  "prost 0.12.6",
  "prost-types 0.12.6",
+ "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4066,6 +4068,7 @@ dependencies = [
  "tokio-util",
  "tonic 0.10.2",
  "tonic-build",
+ "url",
  "uuid",
 ]
 

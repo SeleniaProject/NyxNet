@@ -34,4 +34,11 @@ url = "2.5"
 regex = "1.10"
 
 [build-dependencies]
-tonic-build = "0.10" 
+tonic-build = "0.10"
+
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.0"
+tempfile = "3.8"
+tokio-test = "0.4"
+sysinfo = "0.29" 
