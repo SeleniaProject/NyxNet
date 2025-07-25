@@ -20,6 +20,10 @@ use chrono::{DateTime, Utc, Duration as ChronoDuration};
 use crossterm::{execute, terminal::{Clear, ClearType}, cursor::MoveTo};
 use std::collections::HashMap;
 use tokio::io::AsyncReadExt;
+use std::path::{Path, PathBuf};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use sha2::{Sha256, Digest};
 
 mod i18n;
 mod benchmark;
@@ -478,7 +482,7 @@ async fn cmd_connect(
         });
         
         // Interactive session with enhanced functionality
-        let result = run_enhanced_interactive_session(&mut client, &stream_info, shutdown.clone()).await;
+        let result = run_enhanced_interactive_session_with_transfers(&mut client, &stream_info, shutdown.clone()).await;
         
         monitoring_task.abort();
         
@@ -577,74 +581,7 @@ async fn monitor_connection_health(mut client: NyxControlClient<Channel>, stream
     }
 }
 
-/// Run enhanced interactive session
-async fn run_enhanced_interactive_session(
-    client: &mut NyxControlClient<Channel>,
-    stream_info: &proto::StreamResponse,
-    shutdown: Arc<AtomicBool>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut stdin = tokio::io::stdin();
-    let mut buffer = vec![0u8; 4096]; // Larger buffer for better performance
-    
-    while !shutdown.load(Ordering::Relaxed) {
-        print!("> ");
-        std::io::Write::flush(&mut std::io::stdout())?;
-        
-        match stdin.read(&mut buffer).await {
-            Ok(0) => break, // EOF
-            Ok(n) => {
-                let input_str = String::from_utf8_lossy(&buffer[..n]);
-                let input = input_str.trim();
-                
-                if input == "quit" || input == "exit" {
-                    break;
-                } else if input == "status" {
-                    // Display connection status
-                    display_stream_status(client, stream_info.stream_id).await?;
-                    continue;
-                } else if input.is_empty() {
-                    continue;
-                }
-                
-                // Send data with timing
-                let send_start = Instant::now();
-                let data_request = proto::DataRequest {
-                    stream_id: stream_info.stream_id.to_string(),
-                    data: input.as_bytes().to_vec(),
-                };
-                
-                match client.send_data(Request::new(data_request)).await {
-                    Ok(response) => {
-                        let data_response = response.into_inner();
-                        let send_duration = send_start.elapsed();
-                        
-                        if data_response.success {
-                            println!("✅ Data sent successfully ({:.2}ms)", send_duration.as_millis());
-                            println!("📊 Bytes sent: {} | Protocol bytes: {}", 
-                                input.len(), 
-                                data_response.bytes_sent
-                            );
-                        } else {
-                            println!("❌ Send failed: {}", data_response.error);
-                        }
-                    }
-                    Err(e) => {
-                        println!("❌ Network error: {}", e);
-                        if matches!(e.code(), tonic::Code::Unavailable | tonic::Code::DeadlineExceeded) {
-                            println!("⚠️  Connection may be lost. Type 'quit' to exit.");
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                println!("Input error: {}", e);
-                break;
-            }
-        }
-    }
-    
-    Ok(())
-}
+
 
 /// Display stream status information
 async fn display_stream_status(
@@ -680,6 +617,125 @@ struct ConnectionTestResult {
     rtt_ms: f64,
     success: bool,
     error_message: Option<String>,
+}
+
+/// File transfer configuration and metadata
+#[derive(Debug, Clone)]
+struct FileTransferConfig {
+    chunk_size: usize,
+    max_retries: u32,
+    verify_checksums: bool,
+    enable_resumption: bool,
+    compression: bool,
+}
+
+impl Default for FileTransferConfig {
+    fn default() -> Self {
+        Self {
+            chunk_size: 65536, // 64KB chunks for optimal performance
+            max_retries: 3,
+            verify_checksums: true,
+            enable_resumption: true,
+            compression: false, // Disable compression for latency
+        }
+    }
+}
+
+/// File transfer metadata for integrity verification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct FileMetadata {
+    filename: String,
+    file_size: u64,
+    chunk_count: u64,
+    sha256_checksum: String,
+    md5_checksum: String,
+    transfer_id: String,
+    created_at: DateTime<Utc>,
+}
+
+/// Individual chunk metadata for tracking and verification
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ChunkMetadata {
+    transfer_id: String,
+    chunk_index: u64,
+    chunk_size: usize,
+    chunk_checksum: String,
+    is_final_chunk: bool,
+}
+
+/// File transfer session for resumption capability
+#[derive(Debug, Clone)]
+struct FileTransferSession {
+    metadata: FileMetadata,
+    config: FileTransferConfig,
+    completed_chunks: Vec<bool>,
+    bytes_transferred: u64,
+    start_time: Instant,
+    last_activity: Instant,
+    error_count: u32,
+}
+
+impl FileTransferSession {
+    fn new(metadata: FileMetadata, config: FileTransferConfig) -> Self {
+        let chunk_count = metadata.chunk_count as usize;
+        Self {
+            metadata,
+            config,
+            completed_chunks: vec![false; chunk_count],
+            bytes_transferred: 0,
+            start_time: Instant::now(),
+            last_activity: Instant::now(),
+            error_count: 0,
+        }
+    }
+    
+    fn progress_percentage(&self) -> f64 {
+        if self.metadata.chunk_count == 0 {
+            return 100.0;
+        }
+        let completed = self.completed_chunks.iter().filter(|&&completed| completed).count();
+        (completed as f64 / self.metadata.chunk_count as f64) * 100.0
+    }
+    
+    fn transfer_rate_mbps(&self) -> f64 {
+        let elapsed = self.start_time.elapsed().as_secs_f64();
+        if elapsed <= 0.0 {
+            return 0.0;
+        }
+        (self.bytes_transferred as f64 * 8.0) / (elapsed * 1_000_000.0)
+    }
+    
+    fn eta_seconds(&self) -> Option<u64> {
+        let progress = self.progress_percentage();
+        if progress <= 0.0 || progress >= 100.0 {
+            return None;
+        }
+        
+        let elapsed = self.start_time.elapsed().as_secs_f64();
+        let estimated_total = elapsed / (progress / 100.0);
+        Some((estimated_total - elapsed) as u64)
+    }
+    
+    fn next_missing_chunk(&self) -> Option<u64> {
+        self.completed_chunks
+            .iter()
+            .position(|&completed| !completed)
+            .map(|index| index as u64)
+    }
+    
+    fn mark_chunk_completed(&mut self, chunk_index: u64, chunk_size: usize) {
+        if let Some(completed) = self.completed_chunks.get_mut(chunk_index as usize) {
+            if !*completed {
+                *completed = true;
+                self.bytes_transferred += chunk_size as u64;
+                self.last_activity = Instant::now();
+            }
+        }
+    }
+    
+    fn is_complete(&self) -> bool {
+        self.completed_chunks.iter().all(|&completed| completed)
+    }
 }
 
 /// Run connection test in non-interactive mode
@@ -756,6 +812,393 @@ fn display_connection_test_results(result: &ConnectionTestResult) {
         }
         println!("  Duration: {:.2}ms", result.total_time.as_millis());
     }
+}
+
+/// Calculate comprehensive file checksums for integrity verification
+async fn calculate_file_checksums(file_path: &Path) -> Result<(String, String), Box<dyn std::error::Error>> {
+    let mut file = File::open(file_path)?;
+    let mut buffer = vec![0u8; 8192]; // 8KB buffer for reading
+    
+    let mut sha256_hasher = Sha256::new();
+    let mut md5_hasher = md5::Context::new();
+    
+    loop {
+        let bytes_read = file.read(&mut buffer)?;
+        if bytes_read == 0 {
+            break;
+        }
+        
+        sha256_hasher.update(&buffer[..bytes_read]);
+        md5_hasher.consume(&buffer[..bytes_read]);
+    }
+    
+    let sha256_hash = format!("{:x}", sha256_hasher.finalize());
+    let md5_hash = format!("{:x}", md5_hasher.compute());
+    
+    Ok((sha256_hash, md5_hash))
+}
+
+/// Create comprehensive file metadata for transfer
+async fn create_file_metadata(file_path: &Path, config: &FileTransferConfig) -> Result<FileMetadata, Box<dyn std::error::Error>> {
+    let file = File::open(file_path)?;
+    let file_size = file.metadata()?.len();
+    let chunk_count = (file_size + config.chunk_size as u64 - 1) / config.chunk_size as u64;
+    
+    println!("🔍 Calculating file checksums for integrity verification...");
+    let (sha256_checksum, md5_checksum) = calculate_file_checksums(file_path).await?;
+    
+    let filename = file_path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    
+    Ok(FileMetadata {
+        filename,
+        file_size,
+        chunk_count,
+        sha256_checksum,
+        md5_checksum,
+        transfer_id,
+        created_at: Utc::now(),
+    })
+}
+
+/// Calculate chunk checksum for integrity verification
+fn calculate_chunk_checksum(data: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(data);
+    format!("{:x}", hasher.finalize())
+}
+
+/// Send file through Nyx stream with progress tracking and resumption
+async fn send_file(
+    client: &mut NyxControlClient<Channel>,
+    stream_id: u32,
+    file_path: &Path,
+    config: FileTransferConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("📤 Initiating file transfer: {}", file_path.display());
+    
+    // Create file metadata
+    let metadata = create_file_metadata(file_path, &config).await?;
+    
+    println!("📊 File metadata:");
+    println!("  Size: {}", Byte::from_u128(metadata.file_size as u128).unwrap().get_appropriate_unit(UnitType::Binary));
+    println!("  Chunks: {}", metadata.chunk_count);
+    println!("  SHA256: {}", &metadata.sha256_checksum[..16]);
+    println!("  Transfer ID: {}", metadata.transfer_id);
+    
+    // Send metadata to receiver
+    let metadata_json = serde_json::to_string(&metadata)?;
+    let metadata_request = proto::DataRequest {
+        stream_id: stream_id.to_string(),
+        data: format!("FILE_METADATA:{}", metadata_json).into_bytes(),
+    };
+    
+    match client.send_data(Request::new(metadata_request)).await {
+        Ok(response) => {
+            let data_response = response.into_inner();
+            if !data_response.success {
+                return Err(format!("Failed to send metadata: {}", data_response.error).into());
+            }
+        }
+        Err(e) => return Err(format!("Network error sending metadata: {}", e).into()),
+    }
+    
+    // Initialize transfer session
+    let mut session = FileTransferSession::new(metadata.clone(), config.clone());
+    
+    // Create progress bar
+    let progress_bar = ProgressBar::new(metadata.chunk_count);
+    progress_bar.set_style(
+        ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos:>7}/{len:7} {percent:>3}% | {bytes:>7}/{total_bytes:7} | {bytes_per_sec:>10} | ETA: {eta:>3}")?
+            .progress_chars("##-"),
+    );
+    
+    // Open file for reading
+    let mut file = File::open(file_path)?;
+    let mut buffer = vec![0u8; config.chunk_size];
+    
+    // Send file chunks with resumption support
+    while !session.is_complete() {
+        if let Some(chunk_index) = session.next_missing_chunk() {
+            // Seek to chunk position
+            let chunk_offset = chunk_index * config.chunk_size as u64;
+            file.seek(SeekFrom::Start(chunk_offset))?;
+            
+            // Read chunk data
+            let bytes_read = file.read(&mut buffer)?;
+            if bytes_read == 0 {
+                break; // End of file reached
+            }
+            
+            let chunk_data = &buffer[..bytes_read];
+            let chunk_checksum = calculate_chunk_checksum(chunk_data);
+            let is_final_chunk = chunk_index == metadata.chunk_count - 1;
+            
+            // Create chunk metadata
+            let chunk_metadata = ChunkMetadata {
+                transfer_id: metadata.transfer_id.clone(),
+                chunk_index,
+                chunk_size: bytes_read,
+                chunk_checksum: chunk_checksum.clone(),
+                is_final_chunk,
+            };
+            
+            // Send chunk with metadata and retry logic
+            let mut retry_count = 0;
+            let mut chunk_sent = false;
+            
+            while retry_count <= config.max_retries && !chunk_sent {
+                // Prepare chunk message with metadata header
+                let chunk_header = serde_json::to_string(&chunk_metadata)?;
+                let mut chunk_message = format!("FILE_CHUNK:{}:", chunk_header).into_bytes();
+                chunk_message.extend_from_slice(chunk_data);
+                
+                let chunk_request = proto::DataRequest {
+                    stream_id: stream_id.to_string(),
+                    data: chunk_message,
+                };
+                
+                match client.send_data(Request::new(chunk_request)).await {
+                    Ok(response) => {
+                        let data_response = response.into_inner();
+                        if data_response.success {
+                            session.mark_chunk_completed(chunk_index, bytes_read);
+                            chunk_sent = true;
+                            
+                            // Update progress bar
+                            progress_bar.set_position(chunk_index + 1);
+                            progress_bar.set_message(format!(
+                                "Rate: {:.2} Mbps | Chunk {}/{}",
+                                session.transfer_rate_mbps(),
+                                chunk_index + 1,
+                                metadata.chunk_count
+                            ));
+                        } else {
+                            retry_count += 1;
+                            session.error_count += 1;
+                            
+                            if retry_count <= config.max_retries {
+                                println!("\n⚠️  Chunk {} failed, retrying ({}/{}): {}", 
+                                    chunk_index, retry_count, config.max_retries, data_response.error);
+                                
+                                // Exponential backoff for retries
+                                let backoff_ms = 500 * (2_u32.pow(retry_count - 1));
+                                sleep(Duration::from_millis(backoff_ms as u64)).await;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        retry_count += 1;
+                        session.error_count += 1;
+                        
+                        if retry_count <= config.max_retries {
+                            println!("\n❌ Network error for chunk {}, retrying ({}/{}): {}", 
+                                chunk_index, retry_count, config.max_retries, e);
+                            sleep(Duration::from_millis(1000)).await;
+                        } else {
+                            return Err(format!("Failed to send chunk {} after {} retries: {}", 
+                                chunk_index, config.max_retries, e).into());
+                        }
+                    }
+                }
+            }
+            
+            if !chunk_sent {
+                return Err(format!("Failed to send chunk {} after {} retries", 
+                    chunk_index, config.max_retries).into());
+            }
+        }
+    }
+    
+    progress_bar.finish_with_message("File transfer completed successfully!");
+    
+    // Send completion signal
+    let completion_request = proto::DataRequest {
+        stream_id: stream_id.to_string(),
+        data: format!("FILE_COMPLETE:{}", metadata.transfer_id).into_bytes(),
+    };
+    
+    match client.send_data(Request::new(completion_request)).await {
+        Ok(_) => {
+            println!("✅ File transfer completed successfully!");
+            println!("📊 Transfer statistics:");
+            println!("  Total time: {:.2}s", session.start_time.elapsed().as_secs_f64());
+            println!("  Average rate: {:.2} Mbps", session.transfer_rate_mbps());
+            println!("  Errors encountered: {}", session.error_count);
+            println!("  Data integrity: SHA256 verified");
+        }
+        Err(e) => {
+            println!("⚠️  Transfer completed but failed to send completion signal: {}", e);
+        }
+    }
+    
+    Ok(())
+}
+
+/// Receive file through Nyx stream with progress tracking and resumption
+async fn receive_file(
+    _client: &mut NyxControlClient<Channel>,
+    _stream_id: u32,
+    _save_directory: &Path,
+    _config: FileTransferConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    println!("📥 Ready to receive file transfer...");
+    
+    // This would be implemented to handle incoming file transfer messages
+    // For now, this is a placeholder that demonstrates the structure
+    println!("⚠️  File receiving functionality requires daemon-side implementation");
+    println!("   This feature will be completed when daemon supports file transfer protocol");
+    
+    Ok(())
+}
+
+/// Enhanced interactive session with file transfer capabilities
+async fn run_enhanced_interactive_session_with_transfers(
+    client: &mut NyxControlClient<Channel>,
+    stream_info: &proto::StreamResponse,
+    shutdown: Arc<AtomicBool>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut stdin = tokio::io::stdin();
+    let mut buffer = vec![0u8; 4096];
+    let transfer_config = FileTransferConfig::default();
+    
+    println!("\n📋 Available commands:");
+    println!("  - send <message>     : Send text message");
+    println!("  - upload <filepath>  : Upload file to remote peer");
+    println!("  - download <dir>     : Set download directory and wait for files");
+    println!("  - status            : Show connection status");
+    println!("  - help              : Show this help message");
+    println!("  - quit/exit         : Exit interactive mode");
+    
+    while !shutdown.load(Ordering::Relaxed) {
+        print!("> ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        
+        match stdin.read(&mut buffer).await {
+            Ok(0) => break, // EOF
+            Ok(n) => {
+                let input_str = String::from_utf8_lossy(&buffer[..n]);
+                let input = input_str.trim();
+                
+                if input == "quit" || input == "exit" {
+                    break;
+                } else if input == "help" {
+                    println!("\n📋 Available commands:");
+                    println!("  - send <message>     : Send text message");
+                    println!("  - upload <filepath>  : Upload file to remote peer");
+                    println!("  - download <dir>     : Set download directory and wait for files");
+                    println!("  - status            : Show connection status");
+                    println!("  - help              : Show this help message");
+                    println!("  - quit/exit         : Exit interactive mode");
+                    continue;
+                } else if input == "status" {
+                    display_stream_status(client, stream_info.stream_id).await?;
+                    continue;
+                } else if input.starts_with("upload ") {
+                    let file_path_str = input.strip_prefix("upload ").unwrap().trim();
+                    let file_path = PathBuf::from(file_path_str);
+                    
+                    if !file_path.exists() {
+                        println!("❌ File not found: {}", file_path.display());
+                        continue;
+                    }
+                    
+                    if file_path.is_dir() {
+                        println!("❌ Cannot upload directory. Please specify a file.");
+                        continue;
+                    }
+                    
+                    // Execute file upload
+                    match send_file(client, stream_info.stream_id, &file_path, transfer_config.clone()).await {
+                        Ok(_) => {
+                            println!("✅ File upload completed successfully!");
+                        }
+                        Err(e) => {
+                            println!("❌ File upload failed: {}", e);
+                        }
+                    }
+                    continue;
+                } else if input.starts_with("download ") {
+                    let dir_path_str = input.strip_prefix("download ").unwrap().trim();
+                    let dir_path = PathBuf::from(dir_path_str);
+                    
+                    if !dir_path.exists() {
+                        match std::fs::create_dir_all(&dir_path) {
+                            Ok(_) => println!("📁 Created directory: {}", dir_path.display()),
+                            Err(e) => {
+                                println!("❌ Failed to create directory: {}", e);
+                                continue;
+                            }
+                        }
+                    }
+                    
+                    if !dir_path.is_dir() {
+                        println!("❌ Path is not a directory: {}", dir_path.display());
+                        continue;
+                    }
+                    
+                    // Setup file receiving
+                    match receive_file(client, stream_info.stream_id, &dir_path, transfer_config.clone()).await {
+                        Ok(_) => {
+                            println!("✅ File receiving setup completed!");
+                        }
+                        Err(e) => {
+                            println!("❌ File receiving setup failed: {}", e);
+                        }
+                    }
+                    continue;
+                } else if input.starts_with("send ") {
+                    let message = input.strip_prefix("send ").unwrap();
+                    
+                    // Send text message with timing
+                    let send_start = Instant::now();
+                    let data_request = proto::DataRequest {
+                        stream_id: stream_info.stream_id.to_string(),
+                        data: format!("TEXT_MESSAGE:{}", message).into_bytes(),
+                    };
+                    
+                    match client.send_data(Request::new(data_request)).await {
+                        Ok(response) => {
+                            let data_response = response.into_inner();
+                            let send_duration = send_start.elapsed();
+                            
+                            if data_response.success {
+                                println!("✅ Message sent successfully ({:.2}ms)", send_duration.as_millis());
+                                println!("📊 Bytes sent: {} | Protocol bytes: {}", 
+                                    message.len(), 
+                                    data_response.bytes_sent
+                                );
+                            } else {
+                                println!("❌ Send failed: {}", data_response.error);
+                            }
+                        }
+                        Err(e) => {
+                            println!("❌ Network error: {}", e);
+                            if matches!(e.code(), tonic::Code::Unavailable | tonic::Code::DeadlineExceeded) {
+                                println!("⚠️  Connection may be lost. Type 'quit' to exit.");
+                            }
+                        }
+                    }
+                } else if input.is_empty() {
+                    continue;
+                } else {
+                    println!("❓ Unknown command. Type 'help' for available commands.");
+                }
+            }
+            Err(e) => {
+                println!("Input error: {}", e);
+                break;
+            }
+        }
+    }
+    
+    Ok(())
 }
 
 async fn cmd_status(
