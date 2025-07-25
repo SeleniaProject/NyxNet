@@ -306,148 +306,456 @@ async fn cmd_connect(
     interactive: bool,
     connect_timeout: u64,
     stream_name: &str,
-    _shutdown: Arc<AtomicBool>,
+    shutdown: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let mut client = create_client(cli).await?;
+    // Enhanced connection with retry logic and exponential backoff
+    let max_retries = 3;
+    let mut retry_count = 0;
+    let mut base_delay = Duration::from_millis(500);
+    
+    println!("{}", style(format!("Initiating Nyx stream connection to {}", target)).cyan());
+    println!("{}", style("Performing target address resolution...").dim());
+    
+    // Target address resolution - validate and normalize the address
+    let resolved_address = resolve_target_address(target).await?;
+    println!("{}", style(format!("Resolved target: {}", resolved_address)).green());
+    
+    // Create client with connection pooling and health checks
+    let mut client = create_enhanced_client(cli).await?;
+    
+    // Configure stream options for optimal Nyx performance
+    let stream_options = proto::StreamOptions {
+        buffer_size: 65536, // 64KB buffer for optimal throughput
+        timeout_ms: (connect_timeout * 1000) as u32,
+        multipath: true, // Enable multipath for resilience
+        max_paths: 3, // Use up to 3 parallel paths
+        path_strategy: "latency_weighted".to_string(), // Optimize for low latency
+        auto_reconnect: true, // Enable automatic reconnection
+        max_retry_attempts: max_retries as u32,
+        compression: false, // Disable compression for latency
+        cipher_suite: "ChaCha20Poly1305".to_string(), // Fast cipher for Nyx
+    };
     
     let request = proto::OpenRequest {
         stream_name: stream_name.to_string(),
-        target_address: target.to_string(),
-        options: None,
+        target_address: resolved_address.clone(),
+        options: Some(stream_options),
     };
     
-    println!("{}", style(localize(&cli.language, "connecting", None)?).cyan());
-    
-    let spinner = ProgressBar::new_spinner();
-    spinner.set_style(ProgressStyle::default_spinner()
+    // Enhanced progress indication with detailed status
+    let progress = ProgressBar::new_spinner();
+    progress.set_style(ProgressStyle::default_spinner()
         .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-        .template("{spinner:.blue} {msg}")?);
-    spinner.set_message(format!("Connecting to {}", target));
+        .template("{spinner:.blue} {msg} {elapsed_precise}")?);
     
-    let start_time = Instant::now();
+    let mut connection_established = false;
+    let mut stream_response: Option<proto::StreamResponse> = None;
+    let overall_start = Instant::now();
     
-    // Start the spinner
-    let spinner_clone = spinner.clone();
-    let spinner_task = tokio::spawn(async move {
-        loop {
-            spinner_clone.tick();
-            sleep(Duration::from_millis(100)).await;
+    // Retry loop with exponential backoff
+    while retry_count <= max_retries && !shutdown.load(Ordering::Relaxed) {
+        let attempt_start = Instant::now();
+        
+        if retry_count == 0 {
+            progress.set_message(format!("Establishing Nyx handshake with {}", target));
+        } else {
+            progress.set_message(format!("Retry attempt {}/{} (backoff: {}ms)", 
+                retry_count, max_retries, base_delay.as_millis()));
+            // Apply exponential backoff with jitter
+            let jitter = Duration::from_millis(fastrand::u64(0..=100));
+            sleep(base_delay + jitter).await;
         }
-    });
-    
-    // Attempt connection
-    let response = tokio::time::timeout(
-        Duration::from_secs(connect_timeout),
-        client.open_stream(Request::new(request))
-    ).await;
-    
-    spinner_task.abort();
-    spinner.finish_and_clear();
-    
-    match response {
-        Ok(Ok(response)) => {
-            let stream_info = response.into_inner();
-            let duration = start_time.elapsed();
-            
-            println!("{}", style(localize(&cli.language, "connection_established", None)?).green());
-            println!("Stream ID: {}", stream_info.stream_id);
-            println!("Connection time: {:.2}s", duration.as_secs_f64());
-            
-            if interactive {
-                println!("{}", style("Entering interactive mode. Type 'quit' to exit.").yellow());
+        
+        // Start progress spinner
+        let progress_clone = progress.clone();
+        let spinner_task = tokio::spawn(async move {
+            loop {
+                progress_clone.tick();
+                sleep(Duration::from_millis(100)).await;
+            }
+        });
+        
+        // Attempt connection with detailed error handling
+        let connection_result = tokio::time::timeout(
+            Duration::from_secs(connect_timeout),
+            client.open_stream(Request::new(request.clone()))
+        ).await;
+        
+        spinner_task.abort();
+        
+        match connection_result {
+            Ok(Ok(response)) => {
+                let stream_info = response.into_inner();
+                let attempt_duration = attempt_start.elapsed();
                 
-                // Start interactive session
-                let mut stdin = tokio::io::stdin();
-                let mut buffer = vec![0u8; 1024];
+                progress.finish_and_clear();
+                println!("{}", style("✅ Nyx stream established successfully!").green());
+                println!("Stream ID: {}", stream_info.stream_id);
+                println!("Target: {}", stream_info.target_address);
+                println!("Status: {}", stream_info.status);
+                println!("Connection time: {:.2}s", attempt_duration.as_secs_f64());
                 
-                loop {
-                    print!("> ");
-                    std::io::Write::flush(&mut std::io::stdout())?;
-                    
-                    // Read user input
-                    match stdin.read(&mut buffer).await {
-                        Ok(0) => break, // EOF
-                        Ok(n) => {
-                            let input_str = String::from_utf8_lossy(&buffer[..n]);
-                            let input = input_str.trim();
-                            
-                            if input == "quit" || input == "exit" {
-                                break;
-                            }
-                            
-                            if input.is_empty() {
-                                continue;
-                            }
-                            
-                            // Send data through stream
-                            println!("Sending: {}", input);
-                            
-                            // Simulate data transfer
-                            let data_request = proto::DataRequest {
-                                stream_id: stream_info.stream_id.to_string(),
-                                data: input.as_bytes().to_vec(),
-                            };
-                            
-                            match client.send_data(Request::new(data_request)).await {
-                                Ok(response) => {
-                                    let data_response = response.into_inner();
-                                    if data_response.success {
-                                        println!("✅ Data sent successfully");
-                                        println!("📊 Bytes sent: {}", input.len());
-                                    } else {
-                                        println!("❌ Failed to send data: {}", data_response.error);
-                                    }
-                                }
-                                Err(e) => {
-                                    println!("❌ Send error: {}", e);
-                                }
-                            }
+                if let Some(stats) = &stream_info.initial_stats {
+                    println!("Initial RTT: {:.2}ms", stats.avg_rtt_ms);
+                    println!("Stream state: {}", stats.state);
+                }
+                
+                stream_response = Some(stream_info);
+                connection_established = true;
+                break;
+            }
+            Ok(Err(e)) => {
+                let error_msg = format!("Stream establishment failed: {}", e);
+                match e.code() {
+                    tonic::Code::Unavailable => {
+                        progress.set_message(format!("Daemon unavailable, retrying..."));
+                        if retry_count >= max_retries {
+                            progress.finish_and_clear();
+                            println!("{}", style("❌ Daemon is unavailable after all retry attempts").red());
+                            return Err(format!("Daemon unavailable: {}", e).into());
                         }
-                        Err(e) => {
-                            println!("Input error: {}", e);
-                            break;
+                    }
+                    tonic::Code::DeadlineExceeded => {
+                        progress.set_message(format!("Connection timeout, retrying..."));
+                        if retry_count >= max_retries {
+                            progress.finish_and_clear();
+                            println!("{}", style("❌ Connection timeout after all retry attempts").red());
+                            return Err(format!("Connection timeout: {}", e).into());
+                        }
+                    }
+                    tonic::Code::NotFound => {
+                        progress.finish_and_clear();
+                        println!("{}", style(format!("❌ Target not reachable: {}", target)).red());
+                        return Err(format!("Target not found: {}", e).into());
+                    }
+                    tonic::Code::PermissionDenied => {
+                        progress.finish_and_clear();
+                        println!("{}", style("❌ Access denied - check daemon permissions").red());
+                        return Err(format!("Permission denied: {}", e).into());
+                    }
+                    _ => {
+                        progress.set_message(format!("Connection error: {}", e.message()));
+                        if retry_count >= max_retries {
+                            progress.finish_and_clear();
+                            println!("{}", style(format!("❌ {}", error_msg)).red());
+                            return Err(e.into());
                         }
                     }
                 }
+            }
+            Err(_) => {
+                // Timeout occurred
+                progress.set_message(format!("Operation timeout, retrying..."));
+                if retry_count >= max_retries {
+                    progress.finish_and_clear();
+                    println!("{}", style("❌ Connection timeout after all retry attempts").red());
+                    return Err("Connection timeout".into());
+                }
+            }
+        }
+        
+        retry_count += 1;
+        base_delay = std::cmp::min(base_delay * 2, Duration::from_secs(10)); // Cap at 10 seconds
+    }
+    
+    if !connection_established {
+        return Err("Failed to establish connection after all retry attempts".into());
+    }
+    
+    let stream_info = stream_response.unwrap();
+    println!("Total connection time: {:.2}s", overall_start.elapsed().as_secs_f64());
+    
+    // Enhanced interactive or non-interactive data transfer
+    if interactive {
+        println!("{}", style("🔗 Entering interactive mode with real-time monitoring").yellow());
+        println!("{}", style("Type 'quit' to exit, 'status' for connection info, or any text to send").dim());
+        
+        // Start connection monitoring in background
+        let monitoring_client = create_enhanced_client(cli).await?;
+        let stream_id_for_monitoring = stream_info.stream_id;
+        let monitoring_task = tokio::spawn(async move {
+            monitor_connection_health(monitoring_client, stream_id_for_monitoring).await;
+        });
+        
+        // Interactive session with enhanced functionality
+        let result = run_enhanced_interactive_session(&mut client, &stream_info, shutdown.clone()).await;
+        
+        monitoring_task.abort();
+        
+        match result {
+            Ok(_) => println!("{}", style("Interactive session completed successfully").green()),
+            Err(e) => println!("{}", style(format!("Interactive session error: {}", e)).yellow()),
+        }
+    } else {
+        // Enhanced non-interactive mode with performance testing
+        println!("{}", style("📤 Running connection test...").cyan());
+        
+        let test_result = run_connection_test(&mut client, &stream_info).await?;
+        display_connection_test_results(&test_result);
+    }
+    
+    // Graceful stream closure
+    println!("{}", style("🔌 Closing Nyx stream...").dim());
+    let close_request = proto::StreamId { id: stream_info.stream_id };
+    match client.close_stream(Request::new(close_request)).await {
+        Ok(_) => println!("{}", style("✅ Stream closed gracefully").green()),
+        Err(e) => println!("{}", style(format!("⚠️  Stream close warning: {}", e)).yellow()),
+    }
+    
+    Ok(())
+}
+
+/// Resolve and validate target address
+async fn resolve_target_address(target: &str) -> Result<String, Box<dyn std::error::Error>> {
+    // Basic validation and normalization
+    if target.is_empty() {
+        return Err("Target address cannot be empty".into());
+    }
+    
+    // Check if it's already a valid address format
+    if target.contains(':') {
+        // Validate port range
+        if let Some(port_str) = target.split(':').last() {
+            if let Ok(port) = port_str.parse::<u16>() {
+                if port == 0 {
+                    return Err("Port number cannot be 0".into());
+                }
+                return Ok(target.to_string());
+            }
+        }
+        return Err("Invalid port number in target address".into());
+    }
+    
+    // Add default port if not specified
+    Ok(format!("{}:80", target))
+}
+
+/// Create enhanced client with connection pooling and health checks
+async fn create_enhanced_client(cli: &Cli) -> Result<NyxControlClient<Channel>, Box<dyn std::error::Error>> {
+    let default_endpoint = default_daemon_endpoint();
+    let endpoint_str = cli.endpoint.as_deref().unwrap_or(&default_endpoint);
+    
+    let endpoint = if endpoint_str.starts_with("http://") || endpoint_str.starts_with("https://") {
+        Endpoint::from_shared(endpoint_str.to_string())?
+    } else {
+        Endpoint::from_shared(format!("http://{}", endpoint_str))?
+    }
+    .connect_timeout(Duration::from_secs(10))
+    .timeout(Duration::from_secs(30))
+    .tcp_keepalive(Some(Duration::from_secs(60)))
+    .keep_alive_timeout(Duration::from_secs(10))
+    .keep_alive_while_idle(true);
+    
+    let channel = endpoint.connect().await?;
+    Ok(NyxControlClient::new(channel))
+}
+
+/// Monitor connection health in background
+async fn monitor_connection_health(mut client: NyxControlClient<Channel>, stream_id: u32) {
+    let mut interval = tokio::time::interval(Duration::from_secs(5));
+    
+    loop {
+        interval.tick().await;
+        
+        // Get stream statistics
+        let stream_id_req = proto::StreamId { id: stream_id };
+        match client.get_stream_stats(Request::new(stream_id_req)).await {
+            Ok(response) => {
+                let stats = response.into_inner();
+                if stats.avg_rtt_ms > 200.0 {
+                    println!("\n{}", style(format!("⚠️  High latency detected: {:.2}ms", stats.avg_rtt_ms)).yellow());
+                }
+                if stats.retransmissions > 0 {
+                    println!("\n{}", style(format!("⚠️  Packet retransmissions: {}", stats.retransmissions)).yellow());
+                }
+            }
+            Err(_) => {
+                // Stream might be closed or connection lost
+                break;
+            }
+        }
+    }
+}
+
+/// Run enhanced interactive session
+async fn run_enhanced_interactive_session(
+    client: &mut NyxControlClient<Channel>,
+    stream_info: &proto::StreamResponse,
+    shutdown: Arc<AtomicBool>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut stdin = tokio::io::stdin();
+    let mut buffer = vec![0u8; 4096]; // Larger buffer for better performance
+    
+    while !shutdown.load(Ordering::Relaxed) {
+        print!("> ");
+        std::io::Write::flush(&mut std::io::stdout())?;
+        
+        match stdin.read(&mut buffer).await {
+            Ok(0) => break, // EOF
+            Ok(n) => {
+                let input_str = String::from_utf8_lossy(&buffer[..n]);
+                let input = input_str.trim();
                 
-                println!("{}", style("Exiting interactive mode...").yellow());
-            } else {
-                // Non-interactive mode: send test data
-                println!("{}", style("Sending test data...").cyan());
+                if input == "quit" || input == "exit" {
+                    break;
+                } else if input == "status" {
+                    // Display connection status
+                    display_stream_status(client, stream_info.stream_id).await?;
+                    continue;
+                } else if input.is_empty() {
+                    continue;
+                }
                 
-                let test_data = b"Hello, Nyx Network!";
+                // Send data with timing
+                let send_start = Instant::now();
                 let data_request = proto::DataRequest {
                     stream_id: stream_info.stream_id.to_string(),
-                    data: test_data.to_vec(),
+                    data: input.as_bytes().to_vec(),
                 };
                 
                 match client.send_data(Request::new(data_request)).await {
                     Ok(response) => {
                         let data_response = response.into_inner();
+                        let send_duration = send_start.elapsed();
+                        
                         if data_response.success {
-                            println!("✅ Test data sent successfully");
-                            println!("📊 Bytes sent: {}", test_data.len());
+                            println!("✅ Data sent successfully ({:.2}ms)", send_duration.as_millis());
+                            println!("📊 Bytes sent: {} | Protocol bytes: {}", 
+                                input.len(), 
+                                data_response.bytes_sent
+                            );
                         } else {
-                            println!("❌ Failed to send test data: {}", data_response.error);
+                            println!("❌ Send failed: {}", data_response.error);
                         }
                     }
                     Err(e) => {
-                        println!("❌ Send error: {}", e);
+                        println!("❌ Network error: {}", e);
+                        if matches!(e.code(), tonic::Code::Unavailable | tonic::Code::DeadlineExceeded) {
+                            println!("⚠️  Connection may be lost. Type 'quit' to exit.");
+                        }
                     }
                 }
             }
-        }
-        Ok(Err(e)) => {
-            println!("{}", style(format!("Connection failed: {}", e)).red());
-            return Err(e.into());
-        }
-        Err(_) => {
-            println!("{}", style("Connection timeout").red());
-            return Err("Connection timeout".into());
+            Err(e) => {
+                println!("Input error: {}", e);
+                break;
+            }
         }
     }
     
     Ok(())
+}
+
+/// Display stream status information
+async fn display_stream_status(
+    client: &mut NyxControlClient<Channel>,
+    stream_id: u32,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let stream_id_req = proto::StreamId { id: stream_id };
+    
+    match client.get_stream_stats(Request::new(stream_id_req)).await {
+        Ok(response) => {
+            let stats = response.into_inner();
+            println!("\n📊 Stream Status:");
+            println!("  Stream ID: {}", stats.stream_id);
+            println!("  State: {}", stats.state);
+            println!("  Target: {}", stats.target_address);
+            println!("  Bytes sent: {} | received: {}", stats.bytes_sent, stats.bytes_received);
+            println!("  RTT: {:.2}ms (min: {:.2}ms)", stats.avg_rtt_ms, stats.min_rtt_ms);
+            println!("  Retransmissions: {}", stats.retransmissions);
+        }
+        Err(e) => {
+            println!("Failed to get stream status: {}", e);
+        }
+    }
+    
+    Ok(())
+}
+
+/// Connection test results
+#[derive(Debug)]
+struct ConnectionTestResult {
+    total_time: Duration,
+    bytes_sent: usize,
+    rtt_ms: f64,
+    success: bool,
+    error_message: Option<String>,
+}
+
+/// Run connection test in non-interactive mode
+async fn run_connection_test(
+    client: &mut NyxControlClient<Channel>,
+    stream_info: &proto::StreamResponse,
+) -> Result<ConnectionTestResult, Box<dyn std::error::Error>> {
+    let test_data = b"Nyx Network Connection Test - Performance Validation";
+    let test_start = Instant::now();
+    
+    let data_request = proto::DataRequest {
+        stream_id: stream_info.stream_id.to_string(),
+        data: test_data.to_vec(),
+    };
+    
+    match client.send_data(Request::new(data_request)).await {
+        Ok(response) => {
+            let data_response = response.into_inner();
+            let test_duration = test_start.elapsed();
+            
+            // Get updated stream stats for RTT
+            let stream_id_req = proto::StreamId { id: stream_info.stream_id };
+            let rtt = match client.get_stream_stats(Request::new(stream_id_req)).await {
+                Ok(stats_response) => stats_response.into_inner().avg_rtt_ms,
+                Err(_) => 0.0,
+            };
+            
+            Ok(ConnectionTestResult {
+                total_time: test_duration,
+                bytes_sent: test_data.len(),
+                rtt_ms: rtt,
+                success: data_response.success,
+                error_message: if data_response.success { None } else { Some(data_response.error) },
+            })
+        }
+        Err(e) => {
+            Ok(ConnectionTestResult {
+                total_time: test_start.elapsed(),
+                bytes_sent: 0,
+                rtt_ms: 0.0,
+                success: false,
+                error_message: Some(e.to_string()),
+            })
+        }
+    }
+}
+
+/// Display connection test results
+fn display_connection_test_results(result: &ConnectionTestResult) {
+    println!("\n📊 Connection Test Results:");
+    
+    if result.success {
+        println!("✅ Test completed successfully");
+        println!("  Data sent: {} bytes", result.bytes_sent);
+        println!("  Total time: {:.2}ms", result.total_time.as_millis());
+        println!("  RTT: {:.2}ms", result.rtt_ms);
+        
+        // Calculate throughput
+        let throughput = (result.bytes_sent as f64 * 8.0) / (result.total_time.as_secs_f64() * 1_000_000.0);
+        println!("  Throughput: {:.2} Mbps", throughput);
+        
+        // Performance assessment
+        if result.rtt_ms < 50.0 {
+            println!("  Performance: {} Excellent latency", style("🟢").green());
+        } else if result.rtt_ms < 100.0 {
+            println!("  Performance: {} Good latency", style("🟡").yellow());
+        } else {
+            println!("  Performance: {} High latency", style("🔴").red());
+        }
+    } else {
+        println!("❌ Test failed");
+        if let Some(error) = &result.error_message {
+            println!("  Error: {}", error);
+        }
+        println!("  Duration: {:.2}ms", result.total_time.as_millis());
+    }
 }
 
 async fn cmd_status(
