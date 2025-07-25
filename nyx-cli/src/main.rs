@@ -25,8 +25,11 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use sha2::{Sha256, Digest};
 
+use prometheus_client::{PrometheusClient, PrometheusConfig, MetricsFilter, NyxMetrics};
+
 
 mod i18n;
+mod prometheus_client;
 mod benchmark;
 mod latency_collector;
 mod throughput_measurer;
@@ -1951,27 +1954,83 @@ async fn cmd_statistics(
 
 async fn cmd_metrics(
     cli: &Cli,
-    _prometheus_url: &str,
+    prometheus_url: &str,
     time_range: &str,
     format: &str,
     detailed: bool,
     _shutdown: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    println!("{}", style("Analyzing metrics...").cyan());
+    println!("{}", style("Analyzing Nyx metrics...").cyan());
     
-    // Simulate Prometheus query (in real implementation, this would query actual Prometheus)
-    let analysis = simulate_metrics_analysis(time_range).await?;
+    // Create Prometheus client configuration
+    let prometheus_config = PrometheusConfig {
+        endpoint: prometheus_url.to_string(),
+        timeout_seconds: 30,
+        auth_token: None, // Could be configured via CLI args in the future
+        enable_tls: prometheus_url.starts_with("https"),
+        verify_tls: true,
+    };
     
+    // Initialize Prometheus client
+    let prometheus_client = PrometheusClient::new(prometheus_config)?;
+    
+    // Parse time range
+    let time_filter = parse_time_range(time_range)?;
+    let metrics_filter = MetricsFilter {
+        time_range: Some(time_filter),
+        stream_ids: Vec::new(),
+        error_types: Vec::new(),
+        layer_filter: None,
+    };
+    
+    // Try to connect to Prometheus
+    let metrics = match prometheus_client.test_connection().await {
+        Ok(true) => {
+            println!("{}", style("✅ Connected to Prometheus").green());
+            
+            // Query Nyx metrics from Prometheus
+            match prometheus_client.query_nyx_metrics(metrics_filter).await {
+                Ok(metrics) => {
+                    // Validate metrics data
+                    prometheus_client.validate_metrics(&metrics)?;
+                    metrics
+                }
+                Err(e) => {
+                    println!("{}", style(format!("⚠️  Prometheus query failed: {}", e)).yellow());
+                    
+                    // Fallback to daemon queries
+                    let mut daemon_client = create_client(cli).await?;
+                    prometheus_client.query_daemon_fallback(&mut daemon_client).await?
+                }
+            }
+        }
+        Ok(false) => {
+            println!("{}", style("⚠️  Prometheus connection failed, using daemon fallback").yellow());
+            
+            // Fallback to daemon queries
+            let mut daemon_client = create_client(cli).await?;
+            prometheus_client.query_daemon_fallback(&mut daemon_client).await?
+        }
+        Err(e) => {
+            println!("{}", style(format!("⚠️  Prometheus connection error: {}, using daemon fallback", e)).yellow());
+            
+            // Fallback to daemon queries
+            let mut daemon_client = create_client(cli).await?;
+            prometheus_client.query_daemon_fallback(&mut daemon_client).await?
+        }
+    };
+    
+    // Display metrics in requested format
     match format {
         "json" => {
-            let json = serde_json::to_string_pretty(&analysis)?;
+            let json = serde_json::to_string_pretty(&metrics)?;
             println!("{}", json);
         }
         "summary" => {
-            display_metrics_summary(&analysis, &cli.language)?;
+            display_nyx_metrics_summary(&metrics, &cli.language)?;
         }
         _ => {
-            display_metrics_table(&analysis, &cli.language, detailed)?;
+            display_nyx_metrics_table(&metrics, &cli.language, detailed)?;
         }
     }
     
@@ -2128,6 +2187,212 @@ fn format_duration(seconds: u64) -> String {
     } else {
         format!("{}s", secs)
     }
+}
+
+/// Parse time range string into start and end DateTime
+fn parse_time_range(time_range: &str) -> Result<(DateTime<Utc>, DateTime<Utc>), Box<dyn std::error::Error>> {
+    let end_time = Utc::now();
+    let start_time = match time_range {
+        "1h" => end_time - chrono::Duration::hours(1),
+        "3h" => end_time - chrono::Duration::hours(3),
+        "6h" => end_time - chrono::Duration::hours(6),
+        "12h" => end_time - chrono::Duration::hours(12),
+        "24h" | "1d" => end_time - chrono::Duration::hours(24),
+        "7d" => end_time - chrono::Duration::days(7),
+        "30d" => end_time - chrono::Duration::days(30),
+        _ => {
+            // Try to parse as hours if it's a number
+            if let Ok(hours) = time_range.trim_end_matches('h').parse::<i64>() {
+                end_time - chrono::Duration::hours(hours)
+            } else {
+                return Err(format!("Invalid time range: {}. Use formats like '1h', '24h', '7d'", time_range).into());
+            }
+        }
+    };
+    
+    Ok((start_time, end_time))
+}
+
+/// Display Nyx metrics summary
+fn display_nyx_metrics_summary(metrics: &NyxMetrics, _language: &str) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n{}", style("📊 Nyx Metrics Summary").bold().blue());
+    println!("Timestamp: {}", metrics.timestamp.format("%Y-%m-%d %H:%M:%S UTC"));
+    println!("Active Streams: {}", metrics.stream_count);
+    println!("Active Connections: {}", metrics.connection_count);
+    println!("Throughput: {:.2} Mbps", metrics.throughput_mbps);
+    println!("Latency P95: {:.1}ms", metrics.latency_p95);
+    
+    // Health assessment based on metrics
+    println!("\n{}", style("🏥 System Health Assessment").bold());
+    
+    // Assess latency
+    if metrics.latency_p95 < 50.0 {
+        println!("✅ Latency: Excellent (<50ms)");
+    } else if metrics.latency_p95 < 100.0 {
+        println!("⚠️  Latency: Good (50-100ms)");
+    } else {
+        println!("❌ Latency: High (>100ms)");
+    }
+    
+    // Assess throughput
+    if metrics.throughput_mbps > 10.0 {
+        println!("✅ Throughput: Good (>10 Mbps)");
+    } else if metrics.throughput_mbps > 1.0 {
+        println!("⚠️  Throughput: Moderate (1-10 Mbps)");
+    } else {
+        println!("❌ Throughput: Low (<1 Mbps)");
+    }
+    
+    // Assess error rate
+    if metrics.error_count < 0.1 {
+        println!("✅ Error Rate: Low (<0.1/s)");
+    } else if metrics.error_count < 1.0 {
+        println!("⚠️  Error Rate: Moderate (0.1-1.0/s)");
+    } else {
+        println!("❌ Error Rate: High (>1.0/s)");
+    }
+    
+    Ok(())
+}
+
+/// Display detailed Nyx metrics table
+fn display_nyx_metrics_table(metrics: &NyxMetrics, _language: &str, detailed: bool) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n{}", style("📊 Nyx Network Metrics").bold().blue());
+    
+    // Main metrics table
+    let mut main_table = Table::new();
+    main_table.load_preset(UTF8_FULL);
+    main_table.set_header(vec!["Metric", "Value", "Status"]);
+    
+    main_table.add_row(vec![
+        "Active Streams", 
+        &metrics.stream_count.to_string(),
+        if metrics.stream_count > 0.0 { "🟢 Active" } else { "🔴 Inactive" }
+    ]);
+    
+    main_table.add_row(vec![
+        "Active Connections", 
+        &metrics.connection_count.to_string(),
+        if metrics.connection_count > 0.0 { "🟢 Active" } else { "🔴 Inactive" }
+    ]);
+    
+    main_table.add_row(vec![
+        "Bytes Sent", 
+        &format!("{:.2} MB", metrics.bytes_sent / 1_000_000.0),
+        "📤 Outbound"
+    ]);
+    
+    main_table.add_row(vec![
+        "Bytes Received", 
+        &format!("{:.2} MB", metrics.bytes_received / 1_000_000.0),
+        "📥 Inbound"
+    ]);
+    
+    main_table.add_row(vec![
+        "Throughput", 
+        &format!("{:.2} Mbps", metrics.throughput_mbps),
+        if metrics.throughput_mbps > 10.0 { "🟢 Good" } 
+        else if metrics.throughput_mbps > 1.0 { "🟡 Moderate" } 
+        else { "🔴 Low" }
+    ]);
+    
+    println!("{}", main_table);
+    
+    // Latency metrics table
+    println!("\n{}", style("⏱️  Latency Metrics").bold());
+    let mut latency_table = Table::new();
+    latency_table.load_preset(UTF8_FULL);
+    latency_table.set_header(vec!["Percentile", "Latency (ms)", "Assessment"]);
+    
+    latency_table.add_row(vec![
+        "50th (Median)", 
+        &format!("{:.1}", metrics.latency_p50),
+        if metrics.latency_p50 < 25.0 { "🟢 Excellent" } 
+        else if metrics.latency_p50 < 50.0 { "🟡 Good" } 
+        else { "🔴 High" }
+    ]);
+    
+    latency_table.add_row(vec![
+        "95th", 
+        &format!("{:.1}", metrics.latency_p95),
+        if metrics.latency_p95 < 50.0 { "🟢 Excellent" } 
+        else if metrics.latency_p95 < 100.0 { "🟡 Good" } 
+        else { "🔴 High" }
+    ]);
+    
+    latency_table.add_row(vec![
+        "99th", 
+        &format!("{:.1}", metrics.latency_p99),
+        if metrics.latency_p99 < 100.0 { "🟢 Excellent" } 
+        else if metrics.latency_p99 < 200.0 { "🟡 Good" } 
+        else { "🔴 High" }
+    ]);
+    
+    println!("{}", latency_table);
+    
+    if detailed {
+        // System resource metrics
+        println!("\n{}", style("💻 System Resources").bold());
+        let mut system_table = Table::new();
+        system_table.load_preset(UTF8_FULL);
+        system_table.set_header(vec!["Resource", "Usage", "Status"]);
+        
+        system_table.add_row(vec![
+            "CPU Usage", 
+            &format!("{:.1}%", metrics.cpu_usage_percent),
+            if metrics.cpu_usage_percent < 50.0 { "🟢 Normal" } 
+            else if metrics.cpu_usage_percent < 80.0 { "🟡 Moderate" } 
+            else { "🔴 High" }
+        ]);
+        
+        system_table.add_row(vec![
+            "Memory Usage", 
+            &format!("{:.1} MB", metrics.memory_usage_mb),
+            if metrics.memory_usage_mb < 512.0 { "🟢 Normal" } 
+            else if metrics.memory_usage_mb < 1024.0 { "🟡 Moderate" } 
+            else { "🔴 High" }
+        ]);
+        
+        system_table.add_row(vec![
+            "Error Rate", 
+            &format!("{:.2}/s", metrics.error_count),
+            if metrics.error_count < 0.1 { "🟢 Low" } 
+            else if metrics.error_count < 1.0 { "🟡 Moderate" } 
+            else { "🔴 High" }
+        ]);
+        
+        println!("{}", system_table);
+        
+        // Recommendations
+        println!("\n{}", style("💡 Recommendations").bold());
+        
+        if metrics.latency_p95 > 100.0 {
+            println!("⚠️  High latency detected (P95: {:.1}ms). Consider optimizing network configuration or reducing load.", metrics.latency_p95);
+        }
+        
+        if metrics.throughput_mbps < 1.0 {
+            println!("⚠️  Low throughput detected ({:.2} Mbps). Check network capacity and connection quality.", metrics.throughput_mbps);
+        }
+        
+        if metrics.error_count > 1.0 {
+            println!("⚠️  High error rate detected ({:.2}/s). Investigate error logs and network connectivity.", metrics.error_count);
+        }
+        
+        if metrics.cpu_usage_percent > 80.0 {
+            println!("⚠️  High CPU usage detected ({:.1}%). Consider reducing load or upgrading hardware.", metrics.cpu_usage_percent);
+        }
+        
+        if metrics.memory_usage_mb > 1024.0 {
+            println!("⚠️  High memory usage detected ({:.1} MB). Monitor for memory leaks or increase available memory.", metrics.memory_usage_mb);
+        }
+        
+        // If everything looks good
+        if metrics.latency_p95 < 50.0 && metrics.throughput_mbps > 5.0 && metrics.error_count < 0.1 {
+            println!("✅ All metrics look healthy! Nyx network is performing well.");
+        }
+    }
+    
+    Ok(())
 }
 
 /// Display performance metrics panel
