@@ -194,117 +194,35 @@ pub struct StorageStats {
     pub last_modified: Option<SystemTime>,
 }
 
-impl PersistentPeerStore {
-    pub fn new(file_path: PathBuf) -> Self {
-        Self { file_path }
-    }
-
-    /// Save peers to persistent storage with atomic write operation
-    pub async fn save_peers(&self, peers: &[(String, CachedPeerInfo)]) -> Result<(), DhtError> {
-        let serializable_peers: Vec<_> = peers.iter()
-            .map(|(id, peer)| (id.clone(), SerializablePeerInfo::from(peer)))
-            .collect();
-
-        let data = serde_json::to_string_pretty(&serializable_peers)
-            .map_err(|e| DhtError::SerializationError(format!("Serialization failed: {}", e)))?;
-
-        // Create parent directory if it doesn't exist
-        if let Some(parent) = self.file_path.parent() {
-            tokio::fs::create_dir_all(parent).await
-                .map_err(|e| DhtError::Communication(format!("Failed to create directory: {}", e)))?;
-        }
-
-        // Write to temporary file first, then atomically rename
-        let temp_path = self.file_path.with_extension("tmp");
-        tokio::fs::write(&temp_path, data).await
-            .map_err(|e| DhtError::Communication(format!("Failed to write temp file: {}", e)))?;
-
-        tokio::fs::rename(&temp_path, &self.file_path).await
-            .map_err(|e| DhtError::Communication(format!("Failed to rename temp file: {}", e)))?;
-
-        debug!("Successfully saved {} peers to persistent storage", peers.len());
-        Ok(())
-    }
-
-    /// Load peers from persistent storage
-    pub async fn load_peers(&self) -> Result<Vec<(String, CachedPeerInfo)>, DhtError> {
-        if !self.file_path.exists() {
-            debug!("Peer storage file does not exist, starting with empty cache");
-            return Ok(vec![]);
-        }
-
-        let data = tokio::fs::read_to_string(&self.file_path).await
-            .map_err(|e| DhtError::Communication(format!("Failed to read peer data: {}", e)))?;
-
-        let serializable_peers: Vec<(String, SerializablePeerInfo)> = 
-            serde_json::from_str(&data)
-                .map_err(|e| DhtError::Communication(format!("Deserialization failed: {}", e)))?;
-
-        let mut peers = Vec::new();
-        for (id, serializable_peer) in serializable_peers {
-            match serializable_peer.try_into() {
-                Ok(cached_peer) => peers.push((id, cached_peer)),
-                Err(e) => warn!("Failed to deserialize peer {}: {}", id, e),
-            }
-        }
-
-        debug!("Loaded {} peers from persistent storage", peers.len());
-        Ok(peers)
-    }
-
-    /// Clear persistent storage
-    pub async fn clear(&self) -> Result<(), DhtError> {
-        if self.file_path.exists() {
-            tokio::fs::remove_file(&self.file_path).await
-                .map_err(|e| DhtError::Communication(format!("Failed to clear peer data: {}", e)))?;
-        }
-        debug!("Cleared persistent peer storage");
-        Ok(())
-    }
+/// SerializablePeerInfo for JSON persistence
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializablePeerInfo {
+    pub peer_id: String,
+    pub addresses: Vec<String>,
+    pub capabilities: Vec<String>,
+    pub region: Option<String>,
+    pub location: Option<(f64, f64)>, // lat, lon
+    pub latency_ms: Option<f64>,
+    pub reliability_score: f64,
+    pub bandwidth_mbps: Option<f64>,
+    pub last_seen_timestamp: u64,
+    pub response_time_ms: Option<f64>,
 }
 
 impl From<&CachedPeerInfo> for SerializablePeerInfo {
-    fn from(cached: &CachedPeerInfo) -> Self {
+    fn from(peer: &CachedPeerInfo) -> Self {
         Self {
-            peer_id: cached.peer_id.clone(),
-            addresses: cached.addresses.iter().map(|addr| addr.to_string()).collect(),
-            capabilities: cached.capabilities.iter().cloned().collect(),
-            region: cached.region.clone(),
-            location: cached.location.map(|p| (p.x(), p.y())),
-            latency_ms: cached.latency_ms,
-            reliability_score: cached.reliability_score,
-            bandwidth_mbps: cached.bandwidth_mbps,
-            last_seen_timestamp: cached.last_seen.elapsed().as_secs(),
-            response_time_ms: cached.response_time_ms,
+            peer_id: peer.peer_id.clone(),
+            addresses: peer.addresses.iter().map(|addr| addr.to_string()).collect(),
+            capabilities: peer.capabilities.iter().cloned().collect(),
+            region: peer.region.clone(),
+            location: peer.location.map(|p| (p.x(), p.y())),
+            latency_ms: peer.latency_ms,
+            reliability_score: peer.reliability_score,
+            bandwidth_mbps: peer.bandwidth_mbps,
+            last_seen_timestamp: peer.last_seen.elapsed().as_secs(),
+            response_time_ms: peer.response_time_ms,
         }
-    }
-}
-
-impl TryInto<CachedPeerInfo> for SerializablePeerInfo {
-    type Error = DhtError;
-    
-    fn try_into(self) -> Result<CachedPeerInfo, Self::Error> {
-        let addresses: Result<Vec<Multiaddr>, _> = self.addresses
-            .into_iter()
-            .map(|addr| addr.parse())
-            .collect();
-        
-        let addresses = addresses.map_err(|e| DhtError::InvalidPeerData(format!("Invalid address: {}", e)))?;
-        
-        let location = self.location.map(|(lat, lon)| Point::new(lat, lon));
-        
-        Ok(CachedPeerInfo {
-            peer_id: self.peer_id,
-            addresses,
-            capabilities: self.capabilities.into_iter().collect(),
-            region: self.region,
-            location,
-            latency_ms: self.latency_ms,
-            reliability_score: self.reliability_score,
-            bandwidth_mbps: self.bandwidth_mbps,
-            last_seen: Instant::now() - Duration::from_secs(self.last_seen_timestamp),
-            response_time_ms: self.response_time_ms,
-        })
     }
 }
 
@@ -348,38 +266,6 @@ struct CachedPeerInfo {
     pub bandwidth_mbps: Option<f64>,
     pub last_seen: Instant,
     pub response_time_ms: Option<f64>,
-}
-
-/// Serializable peer information for persistent storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SerializablePeerInfo {
-    pub peer_id: String,
-    pub addresses: Vec<String>,
-    pub capabilities: Vec<String>,
-    pub region: Option<String>,
-    pub location: Option<(f64, f64)>, // lat, lon
-    pub latency_ms: Option<f64>,
-    pub reliability_score: f64,
-    pub bandwidth_mbps: Option<f64>,
-    pub last_seen_timestamp: u64,
-    pub response_time_ms: Option<f64>,
-}
-
-impl From<&CachedPeerInfo> for SerializablePeerInfo {
-    fn from(cached: &CachedPeerInfo) -> Self {
-        Self {
-            peer_id: cached.peer_id.clone(),
-            addresses: cached.addresses.iter().map(|addr| addr.to_string()).collect(),
-            capabilities: cached.capabilities.iter().cloned().collect(),
-            region: cached.region.clone(),
-            location: cached.location.map(|p| (p.x(), p.y())),
-            latency_ms: cached.latency_ms,
-            reliability_score: cached.reliability_score,
-            bandwidth_mbps: cached.bandwidth_mbps,
-            last_seen_timestamp: cached.last_seen.elapsed().as_secs(),
-            response_time_ms: cached.response_time_ms,
-        }
-    }
 }
 
 impl TryFrom<SerializablePeerInfo> for CachedPeerInfo {
