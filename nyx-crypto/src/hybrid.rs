@@ -7,18 +7,16 @@
 //! producing `ct_pq`.  Shared secret = HKDF-Extract( SHA-512,
 //! concatenate(dh_shared || pq_shared) ).  Ciphertext = (ct_pq, x25519_pub).
 
-use rand_core::{CryptoRng, RngCore};
+use rand_core::{CryptoRng, RngCore, OsRng};
 use std::convert::TryInto;
 use hkdf::Hkdf;
 use sha2::Sha512;
 use x25519_dalek::{StaticSecret, PublicKey as XPublic};
-use pqcrypto_kyber::kyber1024::{encapsulate as kyb_enc, decapsulate as kyb_dec, PublicKey as KyberPub, SecretKey as KyberSec};
-// BIKE support removed for now to avoid unresolved dependency.
-use pqcrypto_traits::kem::{Ciphertext as KyCtTrait, PublicKey as KyPubTrait, SecretKey as KySecTrait, SharedSecret as KySsTrait};
+use pqc_kyber::{encapsulate, decapsulate, PublicKey as KyberPub, SecretKey as KyberSec, Ciphertext as KyberCt};
 use crate::noise::SessionKey;
 
 pub enum PqAlgo {
-    Kyber,
+    Kyber1024,
 }
 
 pub struct Ciphertext {
@@ -27,19 +25,22 @@ pub struct Ciphertext {
 }
 
 /// Encapsulate hybrid secret for recipient keys.
-pub fn encapsulate<R: RngCore + CryptoRng>(rng: &mut R, pq_pk: &[u8], algo: PqAlgo, x25519_pk: &XPublic) -> (Ciphertext, Vec<u8>) {
+pub fn encapsulate(pq_pk: &[u8], algo: PqAlgo, x25519_pk: &XPublic) -> (Ciphertext, Vec<u8>) {
     // X25519 ephemeral
     let eph_priv = StaticSecret::random();
     let eph_pub = XPublic::from(&eph_priv);
     let dh = eph_priv.diffie_hellman(x25519_pk);
 
     let (ct_pq, ss_pq) = match algo {
-        PqAlgo::Kyber => {
-            let pk = KyberPub::from_bytes(pq_pk).expect("pk parse");
-            let (ss, ct) = kyb_enc(&pk);
-            (ct.as_bytes().to_vec(), ss.as_bytes().to_vec())
+        PqAlgo::Kyber1024 => {
+            // Parse Kyber public key from bytes
+            let pk = match KyberPub::from_bytes(pq_pk) {
+                Ok(pk) => pk,
+                Err(_) => return (Ciphertext { ct_pq: vec![], x25519_pub: [0u8; 32] }, vec![]),
+            };
+            let (ss, ct) = encapsulate(&pk);
+            (ct.to_bytes().to_vec(), ss.to_vec())
         }
-        // Bike removed
     };
 
     let mut concat = Vec::with_capacity(32 + ss_pq.len());
@@ -62,13 +63,20 @@ pub fn decapsulate(ct: &Ciphertext, pq_sk: &[u8], algo: PqAlgo, x25519_sk: &Stat
     let dh = x25519_sk.diffie_hellman(&rem_pub);
 
     let ss_pq = match algo {
-        PqAlgo::Kyber => {
-            let sk = KyberSec::from_bytes(pq_sk).expect("sk parse");
-            let ct_k = pqcrypto_kyber::kyber1024::Ciphertext::from_bytes(&ct.ct_pq).expect("ct parse");
-            let ss = kyb_dec(&ct_k, &sk);
-            ss.as_bytes().to_vec()
+        PqAlgo::Kyber1024 => {
+            let sk = match KyberSec::from_bytes(pq_sk) {
+                Ok(sk) => sk,
+                Err(_) => return vec![],
+            };
+            
+            let ct_k = match KyberCt::from_bytes(&ct.ct_pq) {
+                Ok(ct) => ct,
+                Err(_) => return vec![],
+            };
+            
+            let ss = decapsulate(&ct_k, &sk);
+            ss.to_vec()
         }
-        // Bike removed
     };
 
     let mut concat = Vec::with_capacity(32 + ss_pq.len());

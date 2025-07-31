@@ -154,6 +154,8 @@
 
   - Fix prometheus exporter configuration
 
+
+
   - Resolve set_boxed_recorder vs set_global_recorder API changes
   - _Requirements: 4.1, 4.2_
 
@@ -162,7 +164,12 @@
 
 
 
+
+
   - Correct async function usage and Future type handling
+
+
+
   - Fix RwLock usage in async contexts
   - Resolve type system violations with async code
   - _Requirements: 3.1, 3.2, 3.3_

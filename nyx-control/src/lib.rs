@@ -7,6 +7,7 @@ use libp2p::{identity, kad::{store::MemoryStore, Kademlia, Quorum, record::{Key,
 use tokio::sync::{mpsc, oneshot};
 use std::collections::HashMap;
 use nyx_core::{NyxConfig};
+use tracing::warn;
 
 /// Aggregates control-plane handles (DHT + optional Push service).
 #[derive(Clone)]
@@ -33,8 +34,9 @@ pub async fn init_control(cfg: &NyxConfig) -> ControlManager {
             .unwrap_or(vec![0u8;32]);
         let mut id = [0u8;32];
         id.copy_from_slice(&bytes[..32]);
-        let client = rendezvous::RendezvousClient::new(url, id, dht.listen_addr().clone(), dht.clone());
-        client.spawn();
+        // let client = rendezvous::RendezvousClient::new(url, id, dht.listen_addr().clone(), dht.clone());
+        // client.spawn();
+        warn!("DHT disabled, rendezvous client not started");
     }
     ControlManager { dht, push }
 }

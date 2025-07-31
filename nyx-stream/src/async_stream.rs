@@ -16,8 +16,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::stream_frame::{StreamFrame, build_stream_frame};
 use crate::resource_manager::{ResourceManager, ResourceInfo, ResourceType, ResourceError};
-use crate::frame_handler::{FrameHandler, FrameHandlerError};
-use crate::flow_controller::{FlowController, FlowControlError};
+// use crate::frame_handler::{FrameHandler, FrameHandlerError, ReassembledData}; // Temporarily disabled
+use crate::simple_frame_handler::FrameHandler;
+use crate::flow_controller::FlowController;
 
 /// Errors that can occur during stream operations
 #[derive(Debug, thiserror::Error)]
@@ -283,16 +284,12 @@ impl NyxAsyncStream {
         
         // Initialize frame handler and flow controller
         let frame_handler = Arc::new(Mutex::new(FrameHandler::new(
-            1, // max_streams (single stream per handler)
             max_buffer_size,
-            max_buffer_size * 2, // max_total_buffer
+            Duration::from_secs(30), // reassembly timeout
         )));
         
         let flow_controller = Arc::new(Mutex::new(FlowController::new(
             65536,    // initial_window (64KB)
-            1048576,  // max_window (1MB)
-            32768,    // initial_cwnd (32KB)
-            max_buffer_size, // max_send_buffer
         )));
         
         let stream = Self {
@@ -332,13 +329,13 @@ impl NyxAsyncStream {
         (stream, external_receiver)
     }
 
-    /// Process incoming frame data using FrameHandler
+    /// Process incoming frame data using integrated FrameHandler and FlowController
     pub async fn handle_incoming_frame(&mut self, frame_data: &[u8]) -> Result<(), StreamError> {
-        // Register operation
+        // Register operation for tracking
         let operation_id = self.register_operation("handle_incoming_frame").await?;
         
         let result = async {
-            // Register frame data as a resource
+            // Register frame data as a resource for monitoring
             let frame_resource = ResourceInfo::new(
                 format!("frame_{}_{}", self.stream_id, frame_data.len()),
                 ResourceType::Buffer,
@@ -347,30 +344,59 @@ impl NyxAsyncStream {
             
             self.resource_manager.register_resource(frame_resource).await?;
 
-            // Use FrameHandler to process the frame
-            let reassembled_data = {
+            // Step 1: Parse the frame using FrameHandler
+            let parsed_frame_components = {
                 let mut frame_handler = self.frame_handler.lock().await;
-                frame_handler.handle_frame(frame_data)
-                    .map_err(|e| match e {
-                        FrameHandlerError::FrameParsing(msg) => StreamError::FrameParsing(msg),
-                        FrameHandlerError::InvalidFrame(msg) => StreamError::InvalidFrame(msg),
-                        FrameHandlerError::BufferOverflow(_) => StreamError::BufferOverflow,
-                        FrameHandlerError::OutOfOrder { .. } => StreamError::InvalidFrame("Out of order frame".to_string()),
-                        FrameHandlerError::StreamNotFound(_) => StreamError::InvalidFrame("Stream not found".to_string()),
-                        FrameHandlerError::DuplicateFrame(_, _) => StreamError::InvalidFrame("Duplicate frame".to_string()),
-                    })?
+                match frame_handler.parse_and_validate_frame(frame_data) {
+                    Ok(components) => components,
+                    Err(e) => return Err(self.convert_frame_handler_error(e)),
+                }
             };
 
-            // If we have reassembled data, add it to read buffer
-            if let Some(data) = reassembled_data {
-                debug!("Received reassembled data: {} bytes, complete: {}", 
-                       data.data.len(), data.is_complete);
+            // Step 2: Apply flow control before processing
+            let need_window_update = {
+                let mut flow_controller = self.flow_controller.lock().await;
                 
-                // Add data to read buffer
-                self.read_data.extend_from_slice(&data.data);
+                // Update receive window (use data length from components)
+                let frame_size = parsed_frame_components.2.len() as u32;
+                if let Err(e) = flow_controller.consume_receive_window(frame_size) {
+                    warn!("Flow control violation for frame size {}: {:?}", frame_size, e);
+                    return Err(StreamError::FlowControlViolation);
+                }
+                
+                // Check if window update is needed
+                if flow_controller.should_send_window_update() {
+                    Some(flow_controller.generate_window_update())
+                } else {
+                    None
+                }
+            };
+            
+            // Send window update if necessary
+            if let Some(window_update) = need_window_update {
+                self.send_window_update_frame(window_update).await?;
+            }
+
+            // Step 3: Process frame through FrameHandler for reassembly
+            let reassembled_data = {
+                let mut frame_handler = self.frame_handler.lock().await;
+                frame_handler.process_frame_for_reassembly(self.stream_id, parsed_frame_components)
+                    .map_err(|e| self.convert_frame_handler_error(e))?
+            };
+
+            // Step 4: If we have complete reassembled data, add it to read buffer
+            if let Some(reassembled) = reassembled_data {
+                debug!("Received reassembled data: {} bytes, complete: {}", 
+                       reassembled.data.len(), reassembled.is_complete);
+                
+                let data_len = reassembled.data.len() as u64;
+                let is_complete = reassembled.is_complete;
+                
+                // Add data to read buffer with proper ordering
+                self.add_reassembled_data_to_buffer(reassembled).await?;
                 
                 // Update bytes read counter
-                self.bytes_read.fetch_add(data.data.len() as u64, std::sync::atomic::Ordering::Relaxed);
+                self.bytes_read.fetch_add(data_len, std::sync::atomic::Ordering::Relaxed);
                 
                 // Wake up any pending read operations
                 if let Some(waker) = self.read_waker.take() {
@@ -378,28 +404,124 @@ impl NyxAsyncStream {
                 }
 
                 // Update stream state if complete
-                if data.is_complete {
-                    match self.state {
-                        StreamState::Open => self.state = StreamState::HalfClosedRemote,
-                        StreamState::HalfClosedLocal => self.state = StreamState::Closed,
-                        _ => {}
-                    }
+                if is_complete {
+                    self.handle_stream_completion().await?;
                 }
             }
 
-            // Update activity
+            // Step 5: Update flow control metrics
+            {
+                let mut flow_controller = self.flow_controller.lock().await;
+                flow_controller.update_receive_metrics(frame_data.len() as u32);
+            }
+
+            // Update activity timestamp
             self.update_activity().await;
 
             Ok(())
         }.await;
         
-        // Complete operation
+        // Complete operation tracking
         if let Err(e) = self.complete_operation(operation_id).await {
             warn!("Failed to complete operation {}: {}", operation_id, e);
         }
         
         result
     }
+
+    /// Add reassembled data to read buffer with proper flow control integration
+    async fn add_reassembled_data_to_buffer(&mut self, reassembled: ReassembledData) -> Result<(), StreamError> {
+        // Verify stream ID matches
+        if reassembled.stream_id != self.stream_id {
+            return Err(StreamError::InvalidFrame(
+                format!("Stream ID mismatch: expected {}, got {}", self.stream_id, reassembled.stream_id)
+            ));
+        }
+
+        // Check buffer capacity before adding
+        let available_space = self.max_buffer_size.saturating_sub(self.read_data.len());
+        if reassembled.data.len() > available_space {
+            // Apply backpressure through flow control
+            let mut flow_controller = self.flow_controller.lock().await;
+            flow_controller.apply_backpressure(reassembled.data.len() as u32);
+            return Err(StreamError::BufferOverflow);
+        }
+
+        // Add data to read buffer
+        self.read_data.extend_from_slice(&reassembled.data);
+
+        // Update stream state based on completion
+        if reassembled.has_fin {
+            match self.state {
+                StreamState::Open => self.state = StreamState::HalfClosedRemote,
+                StreamState::HalfClosedLocal => self.state = StreamState::Closed,
+                _ => {}
+            }
+        }
+
+        debug!("Added {} bytes to read buffer, total buffered: {}", 
+               reassembled.data.len(), self.read_data.len());
+        
+        Ok(())
+    }
+
+    /// Handle stream completion with flow control cleanup
+    async fn handle_stream_completion(&mut self) -> Result<(), StreamError> {
+        debug!("Stream {} completing", self.stream_id);
+        
+        // Update stream state to closed
+        match self.state {
+            StreamState::Open => self.state = StreamState::HalfClosedRemote,
+            StreamState::HalfClosedLocal => self.state = StreamState::Closed,
+            _ => {}
+        }
+
+        // Final flow control updates
+        {
+            let flow_controller = self.flow_controller.lock().await;
+            let stats = flow_controller.get_stats();
+            debug!("Final flow control stats: bytes_sent={}, bytes_acked={}, throughput={:.2}", 
+                   stats.bytes_sent, stats.bytes_acked, stats.throughput);
+        }
+
+        Ok(())
+    }
+
+    /// Send window update frame
+    async fn send_window_update_frame(&mut self, window_size: u32) -> Result<(), StreamError> {
+        debug!("Sending window update: {} bytes", window_size);
+        
+        // Create window update frame (implementation depends on frame format)
+        let frame_data = {
+            let mut frame_handler = self.frame_handler.lock().await;
+            frame_handler.create_data_frame(
+                self.stream_id,
+                0, // Window updates typically use offset 0
+                &window_size.to_be_bytes(),
+                false
+            ).map_err(|e| self.convert_frame_handler_error(e))?
+        };
+
+        // Send frame through underlying stream
+        // This would typically go through the transport layer
+        debug!("Window update frame created: {} bytes", frame_data.len());
+        
+        Ok(())
+    }
+
+    /// Convert FrameHandlerError to StreamError (temporarily disabled)
+    /*
+    fn convert_frame_handler_error(&self, error: FrameHandlerError) -> StreamError {
+        match error {
+            FrameHandlerError::FrameParsing(msg) => StreamError::FrameParsing(msg),
+            FrameHandlerError::InvalidFrame(msg) => StreamError::InvalidFrame(msg),
+            FrameHandlerError::BufferOverflow(_) => StreamError::BufferOverflow,
+            FrameHandlerError::OutOfOrder { .. } => StreamError::InvalidFrame("Out of order frame".to_string()),
+            FrameHandlerError::StreamNotFound(_) => StreamError::InvalidFrame("Stream not found".to_string()),
+            FrameHandlerError::DuplicateFrame(_, _) => StreamError::InvalidFrame("Duplicate frame".to_string()),
+        }
+    }
+    */
 
     /// Get current stream state
     pub fn state(&self) -> StreamState {
@@ -424,13 +546,26 @@ impl NyxAsyncStream {
     /// Start resource monitoring and automatic cleanup
     pub async fn start_resource_monitoring(&mut self) -> Result<(), StreamError> {
         if self.cleanup_config.enable_automatic_cleanup {
-            // Note: ResourceManager doesn't have mutable methods for start/stop
-            // This would need to be implemented differently in the ResourceManager
+            // Start basic monitoring task
+            let stream_id = self.stream_id;
+            let cleanup_interval = self.cleanup_config.cleanup_interval;
+            let resource_manager = Arc::clone(&self.resource_manager);
             
-            // Start monitoring task
-            let monitoring_task = self.spawn_monitoring_task().await;
+            let monitoring_task = tokio::spawn(async move {
+                let mut interval = tokio::time::interval(cleanup_interval);
+                
+                loop {
+                    interval.tick().await;
+                    
+                    // Perform periodic resource checks
+                    let stats = resource_manager.get_stats().await;
+                    if stats.total_resources > 100 { // Arbitrary threshold
+                        debug!("Stream {} has {} resources active", stream_id, stats.total_resources);
+                    }
+                }
+            });
+            
             self.monitoring_task = Some(monitoring_task);
-            
             info!("Started resource monitoring for stream {}", self.stream_id);
         }
         Ok(())
@@ -591,7 +726,7 @@ impl NyxAsyncStream {
         // Clean up all resources through resource manager
         if let Err(errors) = self.resource_manager.cleanup_all().await {
             warn!("Some resources failed to clean up: {} errors", errors.len());
-            for error in errors {
+            for error in &errors {
                 error!("Resource cleanup error: {}", error);
             }
         }
@@ -655,52 +790,209 @@ impl NyxAsyncStream {
         }
     }
 
-    /// Spawn monitoring task for resource usage
-    async fn spawn_monitoring_task(&self) -> JoinHandle<()> {
-        let resource_manager = Arc::clone(&self.resource_manager);
-        let pending_operations = Arc::clone(&self.pending_operations);
-        let cleanup_config = self.cleanup_config.clone();
-        let stream_id = self.stream_id;
-        let is_cleaning_up = Arc::clone(&self.is_cleaning_up);
+    /// Write data with integrated flow control and frame generation
+    async fn write_with_flow_control(&mut self, buf: &[u8]) -> Result<usize, StreamError> {
+        if self.write_closed {
+            return Err(StreamError::StreamClosed);
+        }
+
+        if buf.is_empty() {
+            return Ok(0);
+        }
+
+        // Register operation for tracking
+        let operation_id = self.register_operation("write_with_flow_control").await?;
         
-        tokio::spawn(async move {
-            let mut interval = tokio::time::interval(cleanup_config.cleanup_interval);
-            
-            loop {
-                interval.tick().await;
-                
-                if is_cleaning_up.load(std::sync::atomic::Ordering::SeqCst) {
+        let result = async {
+            let mut total_written = 0;
+            let mut remaining_data = buf;
+
+            while !remaining_data.is_empty() {
+                // Step 1: Check flow control window availability
+                let available_window = {
+                    let flow_controller = self.flow_controller.lock().await;
+                    flow_controller.get_available_send_window()
+                };
+
+                if available_window == 0 {
+                    // Wait for window update or apply backpressure
+                    debug!("Send window exhausted, applying backpressure for stream {}", self.stream_id);
+                    
+                    // In a real implementation, we would wait for a window update
+                    // For now, we'll return partial write
                     break;
                 }
-                
-                // Check for stale operations
-                let mut stale_operations = Vec::new();
+
+                // Step 2: Determine how much data we can send
+                let chunk_size = std::cmp::min(
+                    std::cmp::min(remaining_data.len(), self.max_frame_size),
+                    available_window as usize
+                );
+
+                let chunk = &remaining_data[..chunk_size];
+
+                // Step 3: Create frame through FrameHandler
+                let frame_data = {
+                    let mut frame_handler = self.frame_handler.lock().await;
+                    frame_handler.create_data_frame(
+                        self.stream_id,
+                        self.write_offset,
+                        chunk,
+                        false // Not FIN frame
+                    ).map_err(|e| self.convert_frame_handler_error(e))?
+                };
+
+                // Step 4: Update flow control before sending
                 {
-                    let pending_ops = pending_operations.lock().await;
-                    let now = Instant::now();
+                    let mut flow_controller = self.flow_controller.lock().await;
                     
-                    for operation in pending_ops.iter() {
-                        if now.duration_since(operation.started_at) > cleanup_config.cleanup_timeout {
-                            stale_operations.push(operation.id);
-                        }
+                    // Reserve send window space
+                    flow_controller.consume_send_window(chunk_size as u32)
+                        .map_err(|_| StreamError::FlowControlViolation)?;
+                    
+                    // Update congestion control metrics
+                    flow_controller.on_data_sent(chunk_size as u32);
+                }
+
+                // Step 5: Send the frame
+                if let Err(_) = self.frame_sender.send(frame_data) {
+                    // Sender dropped, restore flow control window
+                    let mut flow_controller = self.flow_controller.lock().await;
+                    flow_controller.restore_send_window(chunk_size as u32);
+                    return Err(StreamError::StreamClosed);
+                }
+
+                // Update counters and state
+                self.write_offset += chunk_size as u32;
+                total_written += chunk_size;
+                remaining_data = &remaining_data[chunk_size..];
+                
+                // Update bytes written counter
+                self.bytes_written.fetch_add(chunk_size as u64, std::sync::atomic::Ordering::Relaxed);
+
+                // Update activity
+                self.update_activity().await;
+
+                // If we couldn't send all data due to flow control, break
+                if chunk_size < remaining_data.len() {
+                    debug!("Partial write due to flow control: sent {}/{} bytes", 
+                           total_written, buf.len());
+                    break;
+                }
+            }
+
+            debug!("Wrote {} bytes to stream {}", total_written, self.stream_id);
+            Ok(total_written)
+        }.await;
+
+        // Complete operation tracking
+        if let Err(e) = self.complete_operation(operation_id).await {
+            warn!("Failed to complete write operation {}: {}", operation_id, e);
+        }
+
+        result
+    }
+
+    /// Handle acknowledgment of sent data to update flow control
+    pub async fn handle_data_ack(&mut self, acked_bytes: u32, rtt_sample: Option<Duration>) -> Result<(), StreamError> {
+        debug!("Handling data ACK: {} bytes, RTT: {:?}", acked_bytes, rtt_sample);
+        
+        // Update flow control state
+        {
+            let mut flow_controller = self.flow_controller.lock().await;
+            
+            // Update RTT if provided
+            if let Some(rtt) = rtt_sample {
+                flow_controller.update_rtt(rtt);
+            }
+            
+            // Process acknowledgment
+            flow_controller.on_data_acked(acked_bytes);
+            
+            // Update congestion window if RTT sample is provided
+            if let Some(rtt) = rtt_sample {
+                flow_controller.on_ack_received(acked_bytes, rtt, false);
+            }
+        }
+
+        // Update activity
+        self.update_activity().await;
+        
+        Ok(())
+    }
+
+    /// Handle data loss indication to trigger congestion control
+    pub async fn handle_data_loss(&mut self, lost_bytes: u32) -> Result<(), StreamError> {
+        warn!("Handling data loss: {} bytes for stream {}", lost_bytes, self.stream_id);
+        
+        // Update flow control state
+        {
+            let mut flow_controller = self.flow_controller.lock().await;
+            flow_controller.on_data_lost(lost_bytes);
+        }
+
+        // Update activity
+        self.update_activity().await;
+        
+        Ok(())
+    }
+
+    /// Get current flow control statistics
+    pub async fn get_flow_stats(&self) -> FlowStats {
+        let flow_controller = self.flow_controller.lock().await;
+        FlowStats {
+            available_window: flow_controller.get_available_send_window(),
+            bytes_in_flight: flow_controller.get_bytes_in_flight(),
+            congestion_window: flow_controller.get_congestion_window(),
+            send_buffer_size: self.write_buffer.len(),
+        }
+    }
+
+    /// Schedule automatic cleanup when appropriate
+    async fn schedule_cleanup(&mut self) -> Result<(), StreamError> {
+        if self.is_cleaning_up.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(()); // Already cleaning up
+        }
+
+        debug!("Scheduling cleanup for stream {}", self.stream_id);
+        
+        let resource_manager = Arc::clone(&self.resource_manager);
+        let pending_operations = Arc::clone(&self.pending_operations);
+        let is_cleaning_up = Arc::clone(&self.is_cleaning_up);
+        let cleanup_completed = Arc::clone(&self.cleanup_completed);
+        let _cleanup_config = self.cleanup_config.clone();
+        let stream_id = self.stream_id;
+
+        let cleanup_task = tokio::spawn(async move {
+            // Wait a bit before cleanup to allow final operations
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            
+            is_cleaning_up.store(true, std::sync::atomic::Ordering::SeqCst);
+            
+            // Cancel all pending operations
+            {
+                let mut pending_ops = pending_operations.lock().await;
+                for operation in pending_ops.drain(..) {
+                    if let Some(cancel_token) = operation.cancel_handle {
+                        cancel_token.cancel();
                     }
-                }
-                
-                if !stale_operations.is_empty() {
-                    warn!("Found {} stale operations for stream {}", stale_operations.len(), stream_id);
-                    // Note: In a real implementation, we'd cancel these operations
-                }
-                
-                // Get resource stats
-                let stats = resource_manager.get_stats().await;
-                if stats.total_resources > 0 {
-                    debug!("Stream {} resource stats: {} resources, {} bytes", 
-                           stream_id, stats.total_resources, stats.total_memory_bytes);
                 }
             }
             
-            debug!("Monitoring task completed for stream {}", stream_id);
-        })
+            // Clean up resources
+            if let Err(errors) = resource_manager.cleanup_all().await {
+                error!("Failed to cleanup resources for stream {}: {} errors", stream_id, errors.len());
+                for error in &errors {
+                    error!("Cleanup error: {}", error);
+                }
+            }
+            
+            cleanup_completed.notify_waiters();
+            info!("Completed scheduled cleanup for stream {}", stream_id);
+        });
+
+        self.cleanup_task = Some(cleanup_task);
+        Ok(())
     }
 
     /// Update activity timestamp
@@ -804,21 +1096,9 @@ impl NyxAsyncStream {
     pub async fn update_flow_window(&mut self, new_window: u32) -> Result<(), StreamError> {
         let mut flow_controller = self.flow_controller.lock().await;
         flow_controller.update_flow_window(new_window)
-            .map_err(|e| StreamError::FlowControlViolation)?;
+            .map_err(|_e| StreamError::FlowControlViolation)?;
         debug!("Updated flow window to {} bytes", new_window);
         Ok(())
-    }
-
-    /// Get current flow control statistics
-    pub async fn get_flow_stats(&self) -> FlowStats {
-        let flow_controller = self.flow_controller.lock().await;
-        let stats = flow_controller.get_stats();
-        FlowStats {
-            available_window: flow_controller.available_to_send(),
-            bytes_in_flight: stats.bytes_in_flight,
-            congestion_window: stats.congestion_window,
-            send_buffer_size: stats.send_buffer_size,
-        }
     }
 
     /// Check if backpressure should be applied
@@ -895,6 +1175,17 @@ impl AsyncRead for NyxAsyncStream {
             )));
         }
 
+        // Check stream state
+        match self.state {
+            StreamState::Closed => {
+                return Poll::Ready(Ok(())); // EOF
+            }
+            StreamState::HalfClosedRemote if self.read_data.is_empty() => {
+                return Poll::Ready(Ok(())); // EOF
+            }
+            _ => {}
+        }
+
         // First, try to read from existing buffered data
         if !self.read_data.is_empty() {
             let to_read = std::cmp::min(buf.remaining(), self.read_data.len());
@@ -911,62 +1202,13 @@ impl AsyncRead for NyxAsyncStream {
                 *activity = Instant::now();
             });
             
-            return Poll::Ready(Ok(()));
-        }
-
-        // Try to get more data from frame buffer
-        let buffer = self.read_buffer.clone();
-        
-        // Use a future to lock the buffer
-        let lock_future = buffer.lock();
-        let mut pinned_future = std::pin::pin!(lock_future);
-        
-        let mut buffer_guard = match pinned_future.as_mut().poll(cx) {
-            Poll::Ready(guard) => guard,
-            Poll::Pending => {
-                self.read_waker = Some(cx.waker().clone());
-                return Poll::Pending;
-            }
-        };
-
-        if let Some(data) = buffer_guard.get_contiguous_data() {
-            drop(buffer_guard);
-            
-            let to_read = std::cmp::min(buf.remaining(), data.len());
-            buf.put_slice(&data[..to_read]);
-            
-            // Store remaining data for next read
-            if to_read < data.len() {
-                self.read_data.extend_from_slice(&data[to_read..]);
-            }
-            
-            // Update statistics
-            self.bytes_read.fetch_add(to_read as u64, std::sync::atomic::Ordering::SeqCst);
-            
-            // Update activity in background
-            let last_activity = Arc::clone(&self.last_activity);
-            tokio::spawn(async move {
-                let mut activity = last_activity.lock().await;
-                *activity = Instant::now();
-            });
+            // Send window update if needed
+            self.check_and_send_window_update();
             
             return Poll::Ready(Ok(()));
         }
 
-        // Check if stream is complete (FIN received and all data processed)
-        if buffer_guard.is_complete() && buffer_guard.frames.is_empty() {
-            drop(buffer_guard);
-            return Poll::Ready(Ok(()));
-        }
-
-        // Check if stream is closed for reading and no more data available
-        if matches!(self.state, StreamState::HalfClosedRemote | StreamState::Closed) {
-            drop(buffer_guard);
-            debug!("Stream {} closed and no more data, returning EOF", self.stream_id);
-            return Poll::Ready(Ok(()));
-        }
-
-        // No data available, register waker
+        // No buffered data available, save waker for when new data arrives
         self.read_waker = Some(cx.waker().clone());
         Poll::Pending
     }
@@ -977,7 +1219,7 @@ impl AsyncWrite for NyxAsyncStream {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
-    ) -> Poll<Result<usize, io::Error>> {
+    ) -> Poll<io::Result<usize>> {
         // Check if we're cleaning up
         if self.is_cleaning_up.load(std::sync::atomic::Ordering::SeqCst) {
             return Poll::Ready(Err(io::Error::new(
@@ -986,62 +1228,62 @@ impl AsyncWrite for NyxAsyncStream {
             )));
         }
 
-        if self.write_closed || matches!(self.state, StreamState::HalfClosedLocal | StreamState::Closed) {
+        // Check if write side is closed
+        if self.write_closed || matches!(self.state, StreamState::Closed | StreamState::HalfClosedLocal) {
             return Poll::Ready(Err(io::Error::new(
                 io::ErrorKind::BrokenPipe,
-                "Stream write side is closed"
+                "Write side of stream is closed"
             )));
         }
 
-        // Use FlowController to check if we can send data
-        let flow_controller = Arc::clone(&self.flow_controller);
-        let can_send_future = async move {
-            let mut controller = flow_controller.lock().await;
-            
-            // Try to buffer the data in flow controller
-            match controller.buffer_data(buf) {
-                Ok(buffered_bytes) => {
-                    debug!("Buffered {} bytes in flow controller", buffered_bytes);
-                    Ok(buffered_bytes)
-                }
-                Err(FlowControlError::BufferOverflow { available, .. }) => {
-                    if available == 0 {
-                        // No space available, would block
-                        Err(io::Error::new(io::ErrorKind::WouldBlock, "Flow control buffer full"))
-                    } else {
-                        // Partial write possible
-                        let partial_data = &buf[..available];
-                        controller.buffer_data(partial_data).map_err(|e| {
-                            io::Error::new(io::ErrorKind::Other, format!("Flow control error: {}", e))
-                        })
-                    }
-                }
-                Err(e) => Err(io::Error::new(io::ErrorKind::Other, format!("Flow control error: {}", e))),
-            }
+        if buf.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+
+        // Check flow control window availability
+        let flow_controller = self.flow_controller.clone();
+        let check_window_future = async move {
+            let controller = flow_controller.lock().await;
+            controller.get_available_send_window()
+        };
+        
+        let mut pinned_check = std::pin::pin!(check_window_future);
+        let available_window = match pinned_check.as_mut().poll(cx) {
+            Poll::Ready(window) => window,
+            Poll::Pending => return Poll::Pending,
         };
 
-        // Poll the future
-        let mut pinned_future = std::pin::pin!(can_send_future);
-        match pinned_future.as_mut().poll(cx) {
-            Poll::Ready(Ok(bytes_written)) => {
-                // Update statistics
-                self.bytes_written.fetch_add(bytes_written as u64, std::sync::atomic::Ordering::SeqCst);
-                
-                // Update activity in background
-                let last_activity = Arc::clone(&self.last_activity);
-                tokio::spawn(async move {
-                    let mut activity = last_activity.lock().await;
-                    *activity = Instant::now();
-                });
-                
-                Poll::Ready(Ok(bytes_written))
-            }
-            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+        if available_window == 0 {
+            // No window available, wait for window update
+            debug!("No send window available for stream {}, waiting", self.stream_id);
+            cx.waker().wake_by_ref(); // Wake up to check again later
+            return Poll::Pending;
+        }
+
+        // Determine how much we can write
+        let can_write = std::cmp::min(
+            std::cmp::min(buf.len(), self.max_frame_size),
+            available_window as usize
+        );
+
+        // Perform the actual write operation
+        let write_future = self.write_with_flow_control(&buf[..can_write]);
+        let mut pinned_write = std::pin::pin!(write_future);
+        
+        match pinned_write.as_mut().poll(cx) {
+            Poll::Ready(Ok(bytes_written)) => Poll::Ready(Ok(bytes_written)),
+            Poll::Ready(Err(e)) => Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("Write error: {}", e)
+            ))),
             Poll::Pending => Poll::Pending,
         }
     }
 
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+    fn poll_flush(
+        self: Pin<&mut Self>,
+        _cx: &mut Context<'_>,
+    ) -> Poll<io::Result<()>> {
         // Check if we're cleaning up
         if self.is_cleaning_up.load(std::sync::atomic::Ordering::SeqCst) {
             return Poll::Ready(Err(io::Error::new(
@@ -1050,31 +1292,123 @@ impl AsyncWrite for NyxAsyncStream {
             )));
         }
 
-        // Extract last_activity before borrowing self mutably
+        // For Nyx streams, flush means ensuring all buffered data is sent
+        // In this implementation, data is sent immediately, so flush is always ready
+        
+        // Update activity
         let last_activity = Arc::clone(&self.last_activity);
+        tokio::spawn(async move {
+            let mut activity = last_activity.lock().await;
+            *activity = Instant::now();
+        });
         
-        let future = self.flush_write_buffer();
-        let mut pinned = std::pin::pin!(future);
-        
-        match pinned.as_mut().poll(cx) {
-            Poll::Ready(Ok(())) => {
-                // Update activity in background
-                tokio::spawn(async move {
-                    let mut activity = last_activity.lock().await;
-                    *activity = Instant::now();
-                });
-                Poll::Ready(Ok(()))
-            },
-            Poll::Ready(Err(e)) => Poll::Ready(Err(io::Error::new(io::ErrorKind::Other, e))),
-            Poll::Pending => Poll::Pending,
-        }
+        Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        self.close_write();
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<io::Result<()>> {
+        // Check if already shutting down
+        if self.is_cleaning_up.load(std::sync::atomic::Ordering::SeqCst) {
+            return Poll::Ready(Ok(()));
+        }
+
+        // Close the write side if not already closed
+        if !self.write_closed {
+            let mut pinned_self = self.as_mut();
+            pinned_self.close_write();
+            
+            // Send FIN frame directly through frame sender instead of async method
+            let fin_frame_data = format!("FIN:{}", pinned_self.stream_id);
+            if let Err(_) = pinned_self.frame_sender.send(fin_frame_data.into_bytes()) {
+                debug!("Failed to send FIN frame - receiver may be closed");
+                // This is not necessarily an error as the stream may be closing
+            } else {
+                debug!("Sent FIN frame for stream {}", pinned_self.stream_id);
+            }
+        }
+
+        // Start cleanup if stream is fully closed
+        if self.state == StreamState::Closed {
+            let cleanup_future = self.initiate_shutdown_cleanup();
+            let mut pinned_cleanup = std::pin::pin!(cleanup_future);
+            
+            match pinned_cleanup.as_mut().poll(cx) {
+                Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
+                Poll::Ready(Err(e)) => {
+                    error!("Cleanup failed during shutdown: {}", e);
+                    Poll::Ready(Ok(())) // Don't fail shutdown due to cleanup errors
+                }
+                Poll::Pending => Poll::Pending,
+            }
+        } else {
+            Poll::Ready(Ok(()))
+        }
+    }
+}
+
+impl NyxAsyncStream {
+    /// Check if we should send a window update and do so if needed
+    fn check_and_send_window_update(&self) {
+        let flow_controller = self.flow_controller.clone();
+        let frame_sender = self.frame_sender.clone();
+        let stream_id = self.stream_id;
         
-        // For shutdown, we'll just flush and let the Drop implementation handle cleanup
-        self.poll_flush(cx)
+        tokio::spawn(async move {
+            let should_update = {
+                let controller = flow_controller.lock().await;
+                controller.should_send_window_update()
+            };
+            
+            if should_update {
+                let window_update = {
+                    let controller = flow_controller.lock().await;
+                    controller.generate_window_update()
+                };
+                
+                let window_frame_data = format!("WINDOW_UPDATE:{}:{}", stream_id, window_update);
+                if let Err(_) = frame_sender.send(window_frame_data.into_bytes()) {
+                    warn!("Failed to send window update frame for stream {}", stream_id);
+                }
+            }
+        });
+    }
+
+    /// Send FIN frame to close the write side
+    async fn send_fin_frame(&mut self) -> Result<(), StreamError> {
+        debug!("Sending FIN frame for stream {}", self.stream_id);
+        
+        // Create FIN frame through FrameHandler
+        let fin_frame_data = {
+            let mut frame_handler = self.frame_handler.lock().await;
+            frame_handler.create_data_frame(
+                self.stream_id,
+                self.write_offset,
+                &[], // Empty data
+                true  // FIN frame
+            ).map_err(|e| self.convert_frame_handler_error(e))?
+        };
+
+        // Send the FIN frame
+        if let Err(_) = self.frame_sender.send(fin_frame_data) {
+            return Err(StreamError::StreamClosed);
+        }
+
+        Ok(())
+    }
+
+    /// Initiate cleanup during shutdown
+    async fn initiate_shutdown_cleanup(&mut self) -> Result<(), StreamError> {
+        debug!("Initiating shutdown cleanup for stream {}", self.stream_id);
+        
+        // Mark as cleaning up
+        self.is_cleaning_up.store(true, std::sync::atomic::Ordering::SeqCst);
+        
+        // Schedule cleanup
+        self.schedule_cleanup().await?;
+        
+        Ok(())
     }
 }
 

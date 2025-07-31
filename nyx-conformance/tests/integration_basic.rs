@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::info;
 
-use nyx_crypto::{hpke::HpkeKeyDeriver, noise::NoiseHandshake};
+use nyx_crypto::noise::NoiseHandshake;
 use nyx_stream::{NyxAsyncStream, FlowController, FrameHandler};
 use nyx_conformance::{network_simulator::NetworkSimulator, property_tester::PropertyTester};
 
@@ -16,22 +16,7 @@ async fn test_basic_crypto_operations() {
     let _guard = tracing_subscriber::fmt::try_init();
     info!("Testing basic crypto operations");
 
-    // Test HPKE key derivation
-    let hpke_deriver = HpkeKeyDeriver::new();
-    
-    for i in 0..10 {
-        let (private_key, public_key) = hpke_deriver.derive_keypair()
-            .expect("Failed to derive keypair");
-        
-        info!("Generated keypair {}: private_key len={}, public_key len={}", 
-              i, private_key.len(), public_key.len());
-        
-        // Verify keys have expected lengths
-        assert!(!private_key.is_empty());
-        assert!(!public_key.is_empty());
-    }
-    
-    // Test Noise handshake
+    // Test Noise handshake only (HPKE is behind feature flag)
     let mut initiator = NoiseHandshake::new_initiator().expect("Failed to create initiator");
     let mut responder = NoiseHandshake::new_responder().expect("Failed to create responder");
     
@@ -93,8 +78,8 @@ async fn test_basic_network_simulation() {
     // Test configuration
     network_simulator.simulate_packet_loss(0.05).await; // 5% loss
     network_simulator.simulate_latency(nyx_conformance::network_simulator::LatencyDistribution::Normal {
-        mean: Duration::from_millis(10),
-        std_dev: Duration::from_millis(2),
+        mean: 10.0,
+        std_dev: 2.0,
     }).await;
     network_simulator.simulate_bandwidth_limit(1_000_000.0).await; // 1 Mbps
     
@@ -117,25 +102,36 @@ async fn test_basic_property_testing() {
 
     // Create a simple property test configuration
     let config = nyx_conformance::property_tester::PropertyTestConfig {
-        test_cases: 50,
-        max_shrink_iters: 100,
-        timeout: Duration::from_secs(30),
+        iterations: 50,
+        seed: None,
+        max_size: 1024,
+        shrink_attempts: 100,
+        test_timeout: Duration::from_secs(30),
+        verbose: false,
     };
     
-    // Create a simple generator for Vec<u8>
-    let generator = Box::new(nyx_conformance::property_tester::VecGenerator::new(0, 1024));
+    // Create a simple property generator
+    let generator = nyx_conformance::property_tester::ByteVecGenerator::new(1, 1024);
     
-    let mut property_tester = PropertyTester::<Vec<u8>>::new(config, generator);
+    let mut property_tester = PropertyTester::<Vec<u8>>::new(config, Box::new(generator));
     
     // Create a simple property
     struct NonEmptyProperty;
     impl nyx_conformance::property_tester::Property<Vec<u8>> for NonEmptyProperty {
-        fn test(&self, input: &Vec<u8>) -> bool {
-            !input.is_empty()
+        fn test(&self, input: &Vec<u8>) -> nyx_conformance::property_tester::PropertyResult {
+            if input.is_empty() {
+                nyx_conformance::property_tester::PropertyResult::Failed("Input is empty".to_string())
+            } else {
+                nyx_conformance::property_tester::PropertyResult::Passed
+            }
         }
         
-        fn name(&self) -> &str {
+        fn name(&self) -> &'static str {
             "non_empty"
+        }
+        
+        fn description(&self) -> &'static str {
+            "Verifies that input is not empty"
         }
     }
     
@@ -160,15 +156,24 @@ async fn test_component_load_interaction() {
 
     let start_time = std::time::Instant::now();
     
-    // Create multiple crypto operations concurrently
+    // Create multiple crypto operations concurrently (simplified without HPKE)
     let mut crypto_handles = Vec::new();
     
     for i in 0..20 {
         let handle = tokio::spawn(async move {
-            let hpke_deriver = HpkeKeyDeriver::new();
-            let (private_key, public_key) = hpke_deriver.derive_keypair()
-                .expect("Failed to derive keypair");
-            (i, private_key.len(), public_key.len())
+            // Test basic Noise handshake instead
+            let mut initiator = NoiseHandshake::new_initiator().expect("Failed to create initiator");
+            let mut responder = NoiseHandshake::new_responder().expect("Failed to create responder");
+            
+            let mut message_buffer = vec![0u8; 1024];
+            let mut payload_buffer = vec![0u8; 1024];
+            
+            let msg1_len = initiator.write_message(b"test_load", &mut message_buffer)
+                .expect("Failed to write message");
+            let payload1_len = responder.read_message(&message_buffer[..msg1_len], &mut payload_buffer)
+                .expect("Failed to read message");
+            
+            (i, msg1_len, payload1_len)
         });
         crypto_handles.push(handle);
     }
@@ -216,11 +221,8 @@ async fn test_basic_error_handling() {
     let _guard = tracing_subscriber::fmt::try_init();
     info!("Testing basic error handling");
 
-    // Test crypto error handling
-    let hpke_deriver = HpkeKeyDeriver::new();
-    
-    // This should work normally
-    let result = hpke_deriver.derive_keypair();
+    // Test crypto error handling with Noise handshake
+    let result = NoiseHandshake::new_initiator();
     assert!(result.is_ok());
     
     // Test network simulator error conditions
@@ -249,27 +251,27 @@ async fn test_resource_management() {
 
     // Create and drop many objects to test cleanup
     for iteration in 0..10 {
-        let mut objects = Vec::new();
+        let mut crypto_objects = Vec::new();
+        let mut stream_objects = Vec::new();
         
-        // Create crypto objects
+        // Create crypto objects (simplified without HPKE)
         for i in 0..10 {
-            let hpke_deriver = HpkeKeyDeriver::new();
-            let (private_key, public_key) = hpke_deriver.derive_keypair()
-                .expect("Failed to derive keypair");
-            objects.push((hpke_deriver, private_key, public_key));
+            let initiator = NoiseHandshake::new_initiator().expect("Failed to create initiator");
+            crypto_objects.push(initiator);
         }
         
         // Create stream objects
         for i in 0..10 {
             let stream = NyxAsyncStream::new(i, 65536, 1024);
-            objects.push(stream);
+            stream_objects.push(stream);
         }
         
         // Use objects briefly
         sleep(Duration::from_millis(1)).await;
         
         // Drop all objects
-        drop(objects);
+        drop(crypto_objects);
+        drop(stream_objects);
         
         // Allow cleanup
         sleep(Duration::from_millis(10)).await;

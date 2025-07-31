@@ -7,7 +7,16 @@ description = "Nyx control plane: DHT and settings sync"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-libp2p = { version = "0.49", default-features = false, optional = true, features = ["kad", "dns-tokio", "tcp-tokio", "mplex", "yamux", "noise", "websocket", "tokio"] }
+# libp2p = { version = "0.49", default-features = false, optional = true, features = ["kad", "dns-tokio", "tcp-tokio", "mplex", "yamux", "websocket", "tokio"] }
+
+# Pure Rust networking for DHT implementation
+# quinn = { version = "0.10", default-features = false, features = ["ring", "runtime-tokio"] }
+multiaddr = "0.18"
+# hickory-resolver = "0.24"
+# trust-dns-resolver = "0.23"
+ed25519-dalek = { version = "2.0", features = ["rand_core"] }
+chacha20poly1305 = { version = "0.10", features = ["alloc"] }
+x25519-dalek = { version = "2.0", features = ["static_secrets"] }
 nyx-core = { path = "../nyx-core" }
 tokio = { version = "1", features = ["rt", "macros", "net", "time"] }
 futures = "0.3"
@@ -18,16 +27,19 @@ jsonschema = "0.17"
 hex = "0.4"
 rand = "0.8"
 nyx-stream = { path = "../nyx-stream" }
-reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.11", default-features = false, features = ["json"] }
 tracing = "0.1"
 anyhow = "1"
-jsonwebtoken = "9"
+# jsonwebtoken = "9"
+# jwt-simple = "0.12"
+pasetors = "0.6"
 chrono = { version = "0.4", features = ["std"] }
 
 [features]
 # Full DHT functionality requires libp2p.
-dht = ["libp2p"]
-default = ["dht"]
+# dht = ["libp2p"]
+# default = ["dht"]
+default = []
 
 [dependencies.build-protoc]
 path = "../build-protoc"

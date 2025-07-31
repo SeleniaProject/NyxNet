@@ -42,12 +42,13 @@ fn noise_handshake_uniqueness() {
 /// Test handshake with corrupted public keys
 #[test]
 fn noise_handshake_corrupted_keys() {
-    let (mut init_pub, init_sec) = initiator_generate();
+    let (init_pub, init_sec) = initiator_generate();
     
-    // Corrupt the initiator public key
-    init_pub.as_bytes_mut()[0] ^= 0xFF;
+    // Create a different public key to simulate corruption
+    // (since PublicKey cannot be directly mutated)
+    let (corrupted_init_pub, _) = initiator_generate();
     
-    let (resp_pub, shared_resp) = responder_process(&init_pub);
+    let (resp_pub, shared_resp) = responder_process(&corrupted_init_pub);
     let shared_init = initiator_finalize(init_sec, &resp_pub);
     
     let key_init = derive_session_key(&shared_init);

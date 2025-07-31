@@ -16,7 +16,7 @@ use nyx_core::types::*;
 use nyx_stream::StreamState;
 use nyx_mix::{cmix::CmixController, larmix::LARMixPlanner};
 use nyx_transport::{Transport};
-use crate::path_builder::{PathBuilder, PathBuilderConfig};
+use crate::path_builder::PathBuilder;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -253,13 +253,14 @@ impl StreamManager {
     ) -> Result<Self> {
         let (event_tx, _) = broadcast::channel(1000);
         
+        let bootstrap_peers = vec!["127.0.0.1:8080".to_string()]; // Placeholder bootstrap peers
+        let path_builder_config = crate::path_builder::PathBuilderConfig::default();
+        
         Ok(Self {
             streams: Arc::new(DashMap::new()),
             transport,
             cmix_controller: Arc::new(CmixController::default()),
-            path_builder: Arc::new(PathBuilder::new(
-                Arc::new(nyx_control::spawn_dht().await),
-            )),
+            path_builder: Arc::new(PathBuilder::new(bootstrap_peers, path_builder_config).await.unwrap()),
             prober: Arc::new(RwLock::new(nyx_mix::larmix::Prober::new())),
             scheduler: Arc::new(RwLock::new(PathScheduler::default())),
             known_peers: Arc::new(DashMap::new()),
@@ -299,7 +300,7 @@ impl StreamManager {
         info!("Opening new stream to target: {}", request.target_address);
         
         // Check if we've reached the maximum number of concurrent streams
-        if self.streams.len() >= self.config.max_concurrent_streams as usize {
+        if self.streams.len() >= self.config.max_concurrent_streams.try_into().unwrap_or(0) {
             error!("Maximum concurrent streams reached: {}", self.config.max_concurrent_streams);
             return Ok(proto::StreamResponse {
                 stream_id: 0,
@@ -340,7 +341,7 @@ impl StreamManager {
                 buffer_size: opts.buffer_size.max(1024).min(1024 * 1024), // 1KB to 1MB
                 timeout_ms: opts.timeout_ms.max(1000).min(300000), // 1s to 5min
                 multipath: opts.multipath && self.config.enable_multipath,
-                max_paths: opts.max_paths.min(self.config.max_paths_per_stream as u32),
+                max_paths: opts.max_paths.min(self.config.max_paths_per_stream.try_into().unwrap_or(u32::MAX)),
                 path_strategy: opts.path_strategy,
                 auto_reconnect: opts.auto_reconnect,
                 max_retry_attempts: opts.max_retry_attempts.min(10),
@@ -521,7 +522,7 @@ impl StreamManager {
         let prober = self.prober.write().await;
         let planner = LARMixPlanner::new(&*prober, self.config.latency_bias);
         
-        for path_id in 0..std::cmp::min(max_paths, self.config.max_paths_per_stream as u32) {
+        for path_id in 0..std::cmp::min(max_paths, self.config.max_paths_per_stream.try_into().unwrap_or(u32::MAX)) {
             match self.build_single_path_with_planner(&planner, target, path_id as u8).await {
                 Ok(path) => paths.push(path),
                 Err(e) => {
@@ -575,7 +576,7 @@ impl StreamManager {
             .map_err(|e| StreamError::InvalidAddress(format!("Invalid address {}: {}", target, e)))?;
         
         Ok(StreamPath {
-            path_id: path_id as u32,
+            path_id: path_id.try_into().unwrap_or(0),
             status: PathStatus::Validating,
             statistics: PathStatistics::new(),
             last_rtt: None,
@@ -595,7 +596,7 @@ impl StreamManager {
     /// Parse stream options
     fn parse_stream_options(&self, options: StreamOptions) -> Result<StreamOptions, StreamError> {
         // Validate max paths
-        if options.max_paths > self.config.max_paths_per_stream as u32 {
+        if options.max_paths > self.config.max_paths_per_stream.try_into().unwrap_or(u32::MAX) {
             return Err(StreamError::InvalidAddress(
                 format!("Max paths {} exceeds limit {}", 
                     options.max_paths, self.config.max_paths_per_stream)
@@ -673,7 +674,7 @@ impl StreamManager {
                 bandwidth_mbps: path.estimated_bandwidth,
                 bytes_sent: path.statistics.bytes_sent.load(Ordering::Relaxed),
                 bytes_received: path.statistics.bytes_received.load(Ordering::Relaxed),
-                packet_count: path.statistics.packet_count.load(Ordering::Relaxed) as u32,
+                packet_count: path.statistics.packet_count.load(Ordering::Relaxed).try_into().unwrap_or(0),
                 success_rate: path.statistics.success_rate(),
             };
             path_stats.push(path_stat);
@@ -776,7 +777,7 @@ impl StreamManager {
             interval.tick().await;
             
             // Update metrics
-            self.metrics.set_active_streams(self.streams.len() as u32);
+            self.metrics.set_active_streams(self.streams.len().try_into().unwrap_or(0));
             
             // Monitor stream health
             for entry in self.streams.iter() {

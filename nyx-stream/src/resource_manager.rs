@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::collections::HashMap;
-use std::sync::{Arc, Weak};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
@@ -418,7 +418,7 @@ impl ResourceManager {
         
         {
             let mut weak_refs_guard = weak_refs.lock().await;
-            weak_refs_guard.retain(|resource_id, weak_ref_any| {
+            weak_refs_guard.retain(|resource_id, _weak_ref_any| {
                 // Try to downcast to Weak<T> - this is a simplified approach
                 // In practice, we'd need a more sophisticated type-erased weak reference system
                 to_cleanup.push(resource_id.clone());

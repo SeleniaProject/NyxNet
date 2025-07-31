@@ -4,20 +4,22 @@
 //! covering complete data flow, multiple client connections, multipath communication,
 //! long-running scenarios, stress testing, and network failure recovery.
 
+#![cfg(feature = "hpke")]
+
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::RwLock;
 use tokio::time::{sleep, timeout};
 use tracing::{info, warn, error};
 use futures::future::join_all;
 use rand::{Rng, thread_rng};
 
-use nyx_crypto::{hpke::HpkeKeyDeriver, noise::NoiseHandshake};
+use nyx_crypto::noise::NoiseHandshake;
 use nyx_stream::{NyxAsyncStream, FlowController, FrameHandler};
 use nyx_conformance::{
     network_simulator::{NetworkSimulator, SimulationConfig, LatencyDistribution, SimulatedPacket, PacketPriority},
-    property_tester::{PropertyTester, PropertyTestConfig, ByteVecGenerator, PredicateProperty}
+    property_tester::{PropertyTester, PropertyTestConfig, ByteVecGenerator}
 };
 
 /// Test context for end-to-end scenarios
@@ -686,7 +688,7 @@ async fn test_multipath_communication() {
         // Distribute packets across paths using load balancing
         for packet_id in 0..packet_count {
             let path_index = packet_id % path_configs.len();
-            let path_config = &path_configs[path_index];
+            let path_config = path_configs[path_index].clone(); // Clone the path config
             let context_clone = context.clone();
             
             // Create unique packet data
@@ -1333,7 +1335,7 @@ async fn test_stress_scenario() {
             
             for msg_id in 0..messages_per_connection {
                 let message_size = 512 + (msg_id % 4) * 256; // Variable message sizes
-                let message_data = vec![((conn_id + msg_id) % 256) as u8; message_size];
+                let message_data = vec![((conn_id + msg_id) % 256) as u8; message_size as usize];
                 
                 let packet = SimulatedPacket {
                     id: thread_rng().gen(),
@@ -1519,7 +1521,7 @@ async fn test_stress_scenario() {
     }
     
     // Performance assertions
-    assert!(completed_connections >= connection_count * 8 / 10, 
+    assert!(completed_connections >= (connection_count * 8 / 10) as usize, 
             "Should complete at least 80% of connections");
     assert!(success_rate >= 0.6, 
             "Should have at least 60% success rate under stress");

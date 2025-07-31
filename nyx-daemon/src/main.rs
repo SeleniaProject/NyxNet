@@ -47,7 +47,7 @@ mod layer_recovery_test;
 use metrics::MetricsCollector;
 use prometheus_exporter::{PrometheusExporter, PrometheusExporterBuilder};
 use stream_manager::{StreamManager, StreamManagerConfig};
-use path_builder::{PathBuilder, PathBuilderConfig};
+use path_builder::PathBuilder;
 use session_manager::{SessionManager, SessionManagerConfig};
 use config_manager::{ConfigManager};
 use health_monitor::{HealthMonitor};
@@ -150,9 +150,9 @@ impl ControlService {
         
         // Initialize path builder
         info!("Initializing path builder...");
-        let path_builder = Arc::new(PathBuilder::new(
-            Arc::new(control_manager.dht.clone()),
-        ));
+        let bootstrap_peers = vec!["127.0.0.1:8080".to_string()]; // Placeholder bootstrap peers
+        let path_builder_config = path_builder::PathBuilderConfig::default();
+        let path_builder = Arc::new(PathBuilder::new(bootstrap_peers, path_builder_config).await.unwrap());
         info!("Path builder created");
         info!("Path builder started successfully");
         

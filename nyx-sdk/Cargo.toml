@@ -47,23 +47,23 @@ futures = "0.3"
 # Time and duration utilities
 humantime = "2.1"
 chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.8", features = ["v4", "serde"] }
 
 # Random number generation for jitter
 fastrand = "2.0"
 
 # Optional features
-uuid = { version = "1.8", features = ["v4", "serde"], optional = true }
 tracing-subscriber = "0.3.19"
 
 [build-dependencies]
 tonic-build = "0.10"
 
 [features]
-default = ["uuid"]
+default = []
 # Enable stream reconnection with automatic retry
-reconnect = ["backoff", "uuid"]
+reconnect = ["backoff"]
 # Enable comprehensive error propagation
-error-propagation = ["uuid"]
+error-propagation = []
 # Enable metrics collection
 metrics = ["nyx-core/telemetry"]
 

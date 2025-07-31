@@ -147,7 +147,7 @@ impl SessionManager {
     pub async fn create_session(&self, _peer_node_id: Option<NodeId>) -> anyhow::Result<ConnectionId> {
         // Check session limit
         let current_sessions = self.sessions.len();
-        if current_sessions >= self.config.max_sessions as usize {
+        if current_sessions >= self.config.max_sessions.try_into().unwrap_or(0) {
             return Err(anyhow::anyhow!("Maximum sessions exceeded"));
         }
         
@@ -175,7 +175,7 @@ impl SessionManager {
         {
             let mut stats = self.statistics.write().await;
             stats.total_sessions_created += 1;
-            stats.active_sessions = self.sessions.len() as u32;
+            stats.active_sessions = self.sessions.len().try_into().unwrap_or(0);
         }
         
         info!("Created session {}", hex::encode(cid));
@@ -271,7 +271,7 @@ impl SessionManager {
             // Update statistics
             {
                 let mut stats = self.statistics.write().await;
-                stats.active_sessions = self.sessions.len() as u32;
+                stats.active_sessions = self.sessions.len().try_into().unwrap_or(0);
             }
             
             Ok(())
@@ -342,7 +342,7 @@ impl SessionManager {
                 // Update statistics
                 let mut stats = self.statistics.write().await;
                 stats.expired_sessions += 1;
-                stats.active_sessions = self.sessions.len() as u32;
+                stats.active_sessions = self.sessions.len().try_into().unwrap_or(0);
             }
         }
     }

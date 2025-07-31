@@ -31,24 +31,24 @@
 //! written to disk.
 
 use std::fs;
-use std::io::{Read, Write};
 use std::path::Path;
-use age::armor::{ArmoredWriter, ArmoredReader, Format};
-use age::secrecy::SecretString;
-use age::Encryptor;
+use std::io::{Read};
+use aes_gcm::{Aes256Gcm, Key, Nonce, aead::{Aead, KeyInit}};
 use zeroize::Zeroizing;
 use thiserror::Error;
 use std::time::Duration;
+use pbkdf2;
+use hmac;
 
 /// Error type for keystore operations.
 #[derive(Debug, Error)]
 pub enum KeystoreError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("age encryption error: {0}")]
-    Encrypt(#[from] age::EncryptError),
-    #[error("age decryption error: {0}")]
-    Decrypt(#[from] age::DecryptError),
+    #[error("AES-GCM encryption error")]
+    Encrypt,
+    #[error("AES-GCM decryption error")]
+    Decrypt,
     #[error("decryption failed (incorrect passphrase or corrupt file)")]
     DecryptFailed,
     #[error("maximum retry attempts exceeded")]
@@ -57,6 +57,8 @@ pub enum KeystoreError {
     UserCancelled,
     #[error("no input available (non-interactive mode)")]
     NoInputAvailable,
+    #[error("cryptographic operation failed: {0}")]
+    Crypto(String),
 }
 
 /// Configuration for passphrase retry behavior
@@ -399,39 +401,71 @@ impl Default for PassphraseInput {
     }
 }
 
-/// Encrypt `secret` with `passphrase` and write to `path` in armored age format.
+/// Encrypt `secret` with `passphrase` and write to `path` in AES-GCM format.
 pub fn encrypt_and_store<P: AsRef<Path>>(secret: &Zeroizing<Vec<u8>>, path: P, passphrase: &str) -> Result<(), KeystoreError> {
     // Ensure parent directory exists.
     if let Some(parent) = path.as_ref().parent() {
         fs::create_dir_all(parent)?;
     }
 
-    // Writer → armor → file.
-    let file = fs::File::create(&path)?;
-    let armor = ArmoredWriter::wrap_output(file, Format::AsciiArmor)
-        .map_err(|e| KeystoreError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
-
-    let pass = SecretString::from(passphrase.to_owned());
-    let encryptor = Encryptor::with_user_passphrase(pass);
-    let mut writer = encryptor.wrap_output(armor)?;
-
-    writer.write_all(&*secret)?;
-    writer.finish()?; // flush + close
+    // Generate random salt and nonce
+    let mut salt = [0u8; 32];
+    let mut nonce_bytes = [0u8; 12];
+    getrandom::getrandom(&mut salt).map_err(|_| KeystoreError::Encrypt)?;
+    getrandom::getrandom(&mut nonce_bytes).map_err(|_| KeystoreError::Encrypt)?;
+    
+    // Derive key from passphrase using PBKDF2
+    let mut key_bytes = [0u8; 32];
+    match pbkdf2::pbkdf2::<hmac::Hmac<sha2::Sha256>>(passphrase.as_bytes(), &salt, 100_000, &mut key_bytes) {
+        Ok(_) => {},
+        Err(e) => return Err(KeystoreError::Crypto(format!("PBKDF2 derivation failed: {:?}", e))),
+    }
+    let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    
+    // Encrypt the data
+    let cipher = Aes256Gcm::new(key);
+    let ciphertext = cipher.encrypt(nonce, secret.as_slice())
+        .map_err(|_| KeystoreError::Encrypt)?;
+    
+    // Write salt + nonce + ciphertext to file
+    let mut file_data = Vec::new();
+    file_data.extend_from_slice(&salt);
+    file_data.extend_from_slice(&nonce_bytes);
+    file_data.extend_from_slice(&ciphertext);
+    
+    fs::write(&path, file_data)?;
     Ok(())
 }
 
-/// Load age-encrypted keystore from `path`, decrypt with `passphrase` and return secret.
+/// Load AES-GCM encrypted keystore from `path`, decrypt with `passphrase` and return secret.
 pub fn load_and_decrypt<P: AsRef<Path>>(path: P, passphrase: &str) -> Result<Zeroizing<Vec<u8>>, KeystoreError> {
-    let file = fs::File::open(&path)?;
-    let mut armor = ArmoredReader::new(file);
-    let decryptor = age::Decryptor::new(&mut armor)?;
-
-    let pass = SecretString::from(passphrase.to_owned());
-    let identity = age::scrypt::Identity::new(pass);
-    let mut reader = decryptor.decrypt(std::iter::once(&identity as &dyn age::Identity))?;
-    let mut buf = Zeroizing::new(Vec::new());
-    reader.read_to_end(&mut buf)?;
-    Ok(buf)
+    let encrypted_data = fs::read(&path)?;
+    
+    // Extract salt and nonce from the beginning of the file
+    if encrypted_data.len() < 44 { // 32 bytes salt + 12 bytes nonce = 44 bytes minimum
+        return Err(KeystoreError::DecryptFailed);
+    }
+    
+    let salt = &encrypted_data[0..32];
+    let nonce_bytes = &encrypted_data[32..44];
+    let ciphertext = &encrypted_data[44..];
+    
+    // Derive key from passphrase using PBKDF2
+    let mut key_bytes = [0u8; 32];
+    match pbkdf2::pbkdf2::<hmac::Hmac<sha2::Sha256>>(passphrase.as_bytes(), salt, 100_000, &mut key_bytes) {
+        Ok(_) => {},
+        Err(e) => return Err(KeystoreError::Crypto(format!("PBKDF2 derivation failed: {:?}", e))),
+    }
+    let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
+    let nonce = Nonce::from_slice(nonce_bytes);
+    
+    // Decrypt the data
+    let cipher = Aes256Gcm::new(key);
+    let plaintext = cipher.decrypt(nonce, ciphertext)
+        .map_err(|_| KeystoreError::DecryptFailed)?;
+    
+    Ok(Zeroizing::new(plaintext))
 }
 
 /// Load secret with interactive passphrase prompt and retry logic
@@ -449,7 +483,7 @@ pub fn load_and_decrypt_interactive<P: AsRef<Path>>(
         
         match load_and_decrypt(&path, &passphrase) {
             Ok(secret) => return Ok(secret),
-            Err(KeystoreError::Decrypt(_)) | Err(KeystoreError::DecryptFailed) => {
+            Err(KeystoreError::Decrypt) | Err(KeystoreError::DecryptFailed) => {
                 if attempt < input.config.max_attempts {
                     eprintln!("Incorrect passphrase. Please try again.");
                     continue;
@@ -565,7 +599,7 @@ mod tests {
         encrypt_and_store(&secret, &path, "pass1").unwrap();
         let err = load_and_decrypt(&path, "wrongpass").unwrap_err();
         match err {
-            KeystoreError::DecryptFailed | KeystoreError::Encrypt(_) | KeystoreError::Decrypt(_) => {},
+            KeystoreError::DecryptFailed | KeystoreError::Encrypt | KeystoreError::Decrypt => {},
             _ => panic!("unexpected error type"),
         }
         fs::remove_file(&path).unwrap();

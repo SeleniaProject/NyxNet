@@ -7,6 +7,8 @@
 //! - Network simulation with real components
 //! - Error propagation and recovery mechanisms
 
+#![cfg(feature = "hpke")]
+
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex};

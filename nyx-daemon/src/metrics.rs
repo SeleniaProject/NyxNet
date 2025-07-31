@@ -376,7 +376,7 @@ impl MetricsCollector {
         let (cpu_usage, memory_usage_mb) = {
             let system = self.system.read().await;
             let current_pid = std::process::id();
-            if let Some(process) = system.process(sysinfo::Pid::from(current_pid as usize)) {
+            if let Some(process) = system.process(sysinfo::Pid::from(current_pid.try_into().unwrap_or(0))) {
                 (
                     process.cpu_usage() as f64 / 100.0, // Convert to 0-1 range
                     process.memory() as f64 / (1024.0 * 1024.0), // Convert to MB
@@ -413,7 +413,7 @@ impl MetricsCollector {
         {
             let system = self.system.read().await;
             let current_pid = std::process::id();
-            if let Some(process) = system.process(Pid::from(current_pid as usize)) {
+            if let Some(process) = system.process(Pid::from(current_pid.try_into().unwrap_or(0))) {
                 Some(crate::proto::ResourceUsage {
                     memory_rss_bytes: process.memory() * 1024, // Convert from KB to bytes
                     memory_vms_bytes: process.virtual_memory() * 1024, // Convert from KB to bytes
@@ -796,7 +796,7 @@ impl ComprehensiveMetrics {
             
             // Get process-specific metrics
             let current_pid = std::process::id();
-            if let Some(process) = system.process(Pid::from(current_pid as usize)) {
+            if let Some(process) = system.process(Pid::from(current_pid.try_into().unwrap_or(0))) {
                 metrics.open_file_descriptors = 0; // Would need platform-specific implementation
                 metrics.thread_count = 0; // Would need platform-specific implementation
             }
@@ -829,7 +829,7 @@ impl ComprehensiveMetrics {
         metrics.packet_loss_rate = *self.base_collector.packet_loss_rate.read().await;
         metrics.bandwidth_utilization = *self.base_collector.bandwidth_utilization.read().await;
         metrics.peer_count = self.base_collector.connected_peers.load(Ordering::Relaxed);
-        metrics.route_count = self.base_collector.get_mix_routes().await.len() as u32;
+        metrics.route_count = self.base_collector.get_mix_routes().await.len().try_into().unwrap_or(0);
     }
     
     /// Update layer-specific metrics
@@ -1446,7 +1446,7 @@ impl SystemResourceMonitor {
         system.refresh_all();
         
         let current_pid = std::process::id();
-        let process = system.process(Pid::from(current_pid as usize));
+        let process = system.process(Pid::from(current_pid.try_into().unwrap_or(0)));
         
         let metrics = SystemMetrics {
             cpu_usage_percent: system.global_cpu_info().cpu_usage() as f64,
@@ -1479,7 +1479,7 @@ impl SystemResourceMonitor {
         {
             // On Unix systems, we could read from /proc/self/fd
             if let Ok(entries) = std::fs::read_dir("/proc/self/fd") {
-                return entries.count() as u32;
+                return entries.count().try_into().unwrap_or(0);
             }
         }
         

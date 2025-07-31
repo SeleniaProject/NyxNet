@@ -8,7 +8,7 @@
 //! HKDF construct as mandated by the Nyx Protocol v0.1/1.0 specifications.
 
 #[cfg(feature = "classic")]
-use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret, StaticSecret};
+use x25519_dalek::{EphemeralSecret, PublicKey, SharedSecret};
 use super::kdf::{hkdf_expand, KdfLabel};
 use super::aead::{NyxAead, AeadError};
 use zeroize::ZeroizeOnDrop;
@@ -213,7 +213,7 @@ pub struct NoiseHandshake {
     role: Role,
     
     // Local keys
-    local_static: Option<StaticSecret>,
+    local_static: Option<EphemeralSecret>,
     local_ephemeral: Option<EphemeralSecret>,
     
     // Remote keys
@@ -246,7 +246,7 @@ impl NoiseHandshake {
     fn new_with_role(role: Role) -> Result<Self, NoiseError> {
         // Generate static key for this session
         let mut rng = OsRng;
-        let local_static = StaticSecret::random_from_rng(&mut rng);
+        let local_static = EphemeralSecret::random_from_rng(&mut rng);
         
         // Initialize chaining key with protocol name hash
         let protocol_name = b"Noise_XX_25519_ChaChaPoly_BLAKE3";
@@ -432,7 +432,10 @@ impl NoiseHandshake {
         message[..32].copy_from_slice(ephemeral_pub.as_bytes());
         
         // Write static public key (simplified - not encrypted for now)
-        let static_pub = PublicKey::from(self.local_static.as_ref().unwrap());
+        let static_pub = match self.local_static.as_ref() {
+            Some(key) => PublicKey::from(key),
+            None => return Err(NoiseError::InvalidState { expected: "local static key".to_string(), actual: "None".to_string() }),
+        };
         message[32..64].copy_from_slice(static_pub.as_bytes());
         
         // Write payload (simplified - not encrypted for now)
@@ -500,7 +503,10 @@ impl NoiseHandshake {
         }
         
         // Write static public key (simplified - not encrypted for now)
-        let static_pub = PublicKey::from(self.local_static.as_ref().unwrap());
+        let static_pub = match self.local_static.as_ref() {
+            Some(key) => PublicKey::from(key),
+            None => return Err(NoiseError::InvalidState { expected: "local static key for message 2".to_string(), actual: "None".to_string() }),
+        };
         message[..32].copy_from_slice(static_pub.as_bytes());
         
         // Write payload (simplified - not encrypted for now)
@@ -639,11 +645,20 @@ pub mod kyber {
     //! is derived from the Kyber shared secret via the common HKDF wrapper to
     //! ensure uniform key derivation logic across classic and PQ modes.
 
-    use pqcrypto_kyber::kyber1024::{keypair, encapsulate, decapsulate, SharedSecret};
+    use pqc_kyber::{keypair, encapsulate, decapsulate, PublicKey, SecretKey, Ciphertext};
     use crate::kdf::{hkdf_expand, KdfLabel};
-    use pqcrypto_traits::kem::SharedSecret as _; // bring trait for as_bytes
+    
     // Re-export commonly used Kyber types for external modules (Hybrid handshake, etc.).
-    pub use pqcrypto_kyber::kyber1024::{PublicKey, SecretKey, Ciphertext};
+    pub use pqc_kyber::{PublicKey, SecretKey, Ciphertext};
+    
+    #[derive(Clone, Debug)]
+    pub struct SharedSecret(pub [u8; 32]);
+    
+    impl SharedSecret {
+        pub fn as_bytes(&self) -> &[u8] {
+            &self.0
+        }
+    }
 
     /// Generate a Kyber1024 keypair for the responder.
     pub fn responder_keypair() -> (PublicKey, SecretKey) {
@@ -654,14 +669,20 @@ pub mod kyber {
     /// ciphertext to transmit and the derived 32-byte session key.
     pub fn initiator_encapsulate(pk: &PublicKey) -> (Ciphertext, super::SessionKey) {
         let (ss, ct) = encapsulate(pk);
-        (ct, derive_session_key(&ss))
+        let mut shared = [0u8; 32];
+        shared.copy_from_slice(&ss[..32]);
+        let shared_secret = SharedSecret(shared);
+        (ct, derive_session_key(&shared_secret))
     }
 
     /// Responder decapsulates ciphertext with its secret key and derives the
     /// matching 32-byte session key.
     pub fn responder_decapsulate(ct: &Ciphertext, sk: &SecretKey) -> super::SessionKey {
         let ss = decapsulate(ct, sk);
-        derive_session_key(&ss)
+        let mut shared = [0u8; 32];
+        shared.copy_from_slice(&ss[..32]);
+        let shared_secret = SharedSecret(shared);
+        derive_session_key(&shared_secret)
     }
 
     /// Convert Kyber shared secret into Nyx session key via HKDF.
@@ -673,13 +694,14 @@ pub mod kyber {
     }
 }
 
-#[cfg(feature = "bike")]
-pub mod bike {
-    //! BIKE post-quantum KEM integration is planned but the required Rust
-    //! crate is not yet available on crates.io. Attempting to compile with
-    //! `--features bike` will therefore raise a compile-time error.
-    compile_error!("Feature `bike` is not yet supported – awaiting upstream pqcrypto-bike crate");
-}
+// BIKE post-quantum KEM integration is planned but the required Rust
+// crate is not yet available on crates.io. This module is disabled
+// to avoid compilation errors.
+// #[cfg(feature = "bike")]
+// pub mod bike {
+//     //! `--features bike` will therefore raise a compile-time error.
+//     compile_error!("Feature `bike` is not yet supported – awaiting upstream pqcrypto-bike crate");
+// }
 
 /// -----------------------------------------------------------------------------
 /// Hybrid X25519 + Kyber Handshake (feature "hybrid")
@@ -712,15 +734,19 @@ pub mod hybrid {
         let public = PublicKey::from(&secret);
         let x_key = secret.diffie_hellman(init_pub);
         // Combine
-        combine_keys(&x_key, &kyber_key)
-            .map(|k| (public, k))
-            .unwrap()
+        match combine_keys(&x_key, &kyber_key) {
+            Ok(combined_key) => (public, combined_key),
+            Err(e) => panic!("Key combination failed: {}", e), // This should never fail in practice
+        }
     }
 
     /// Initiator finalizes with responder X25519 pub, producing combined session key.
     pub fn initiator_finalize(sec: EphemeralSecret, resp_pub: &PublicKey, kyber_key: SessionKey) -> SessionKey {
         let x_key = sec.diffie_hellman(resp_pub);
-        combine_keys(&x_key, &kyber_key).expect("hkdf")
+        match combine_keys(&x_key, &kyber_key) {
+            Ok(combined_key) => combined_key,
+            Err(e) => panic!("HKDF key combination failed: {}", e), // This should never fail in practice
+        }
     }
 
     fn combine_keys(classic: &SharedSecret, pq: &SessionKey) -> Option<SessionKey> {

@@ -18,7 +18,7 @@ use std::time::Duration;
 use tokio::time::interval;
 use serde::{Serialize, Deserialize};
 use nyx_core::NodeId;
-use libp2p::Multiaddr;
+use multiaddr::Multiaddr;
 use crate::DhtHandle;
 use tracing::{info, warn};
 
@@ -66,9 +66,9 @@ impl RendezvousClient {
 
         for p in peers {
             if p.node_id == hex::encode(self.node_id) { continue; }
-            if let Ok(maddr) = p.addr.parse::<Multiaddr>() {
-                // dial via DHT for bootstrap
-                self.dht.add_bootstrap(maddr.clone()).await;
+            if let Ok(_maddr) = p.addr.parse::<Multiaddr>() {
+                // dial via DHT for bootstrap (disabled for now)
+                // self.dht.add_bootstrap(maddr.clone()).await;
                 info!(peer=%p.node_id, addr=%p.addr, "rendezvous discovered peer");
             }
         }

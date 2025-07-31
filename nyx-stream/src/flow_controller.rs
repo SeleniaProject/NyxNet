@@ -2,19 +2,51 @@
 
 use std::time::{Duration, Instant};
 use std::collections::VecDeque;
-use tracing::{debug, warn, trace};
+use tracing::{debug, warn, trace, error};
+use serde::{Serialize, Deserialize};
+
+/// Network statistics for monitoring and debugging
+#[derive(Debug, Clone)]
+pub struct NetworkStats {
+    pub bytes_sent: u64,
+    pub bytes_acked: u64,
+    pub packets_lost: u32,
+    pub current_window: u32,
+    pub congestion_window: u32,
+    pub rtt: Option<Duration>,
+    pub rto: Duration,
+    pub throughput: f64,
+    pub buffer_usage: f64,
+}
+
+/// Flow control statistics for monitoring
+#[derive(Debug, Clone)]
+pub struct FlowControlStats {
+    pub flow_window_size: u32,
+    pub bytes_in_flight: u32,
+    pub congestion_window: u32,
+    pub congestion_state: CongestionState,
+    pub rtt: Option<Duration>,
+    pub rto: Duration,
+    pub bytes_sent: u64,
+    pub bytes_acked: u64,
+    pub packets_lost: u32,
+    pub send_buffer_size: usize,
+    pub throughput: f64,
+    pub backpressure_active: bool,
+}
 
 /// Flow control errors
-#[derive(Debug, thiserror::Error)]
+#[derive(thiserror::Error, Debug)]
 pub enum FlowControlError {
-    #[error("Flow control violation: attempted to send {attempted} bytes, but only {available} bytes available")]
-    FlowControlViolation { attempted: u32, available: u32 },
-    #[error("Buffer overflow: attempted to buffer {attempted} bytes, but only {available} bytes available")]
-    BufferOverflow { attempted: usize, available: usize },
+    #[error("Buffer overflow: available={available}, requested={requested}")]
+    BufferOverflow { available: usize, requested: usize },
     #[error("Invalid window size: {0}")]
     InvalidWindowSize(u32),
     #[error("Congestion window exhausted")]
     CongestionWindowExhausted,
+    #[error("Flow control violation: {message}")]
+    FlowControlViolation { message: String },
 }
 
 /// RTT estimation using exponential weighted moving average
@@ -245,8 +277,7 @@ impl FlowWindow {
     pub fn on_data_sent(&mut self, bytes: u32) -> Result<(), FlowControlError> {
         if self.bytes_in_flight + bytes > self.window_size {
             return Err(FlowControlError::FlowControlViolation {
-                attempted: bytes,
-                available: self.available_window(),
+                message: format!("Attempted to send {} bytes but only {} available", bytes, self.available_window()),
             });
         }
         
@@ -305,9 +336,20 @@ impl FlowWindow {
     pub fn bytes_in_flight(&self) -> u32 {
         self.bytes_in_flight
     }
+
+    /// Get the maximum window size
+    pub fn max_window_size(&self) -> u32 {
+        self.max_window_size
+    }
+
+    /// Consume window for sending data
+    pub fn consume_window(&mut self, bytes: u32) -> Result<(), FlowControlError> {
+        self.on_data_sent(bytes)
+    }
 }
 
 /// Comprehensive flow controller for Nyx protocol
+#[derive(Debug)]
 pub struct FlowController {
     flow_window: FlowWindow,
     congestion_controller: CongestionController,
@@ -330,7 +372,30 @@ pub struct FlowController {
 }
 
 impl FlowController {
-    pub fn new(
+    /// Create a new flow controller with simplified constructor for integrated processor
+    pub fn new(initial_window: u32) -> Self {
+        let max_window = initial_window * 10;
+        let initial_cwnd = initial_window.min(65536);
+        let max_send_buffer = initial_window as usize * 4;
+        
+        Self {
+            flow_window: FlowWindow::new(initial_window, max_window),
+            congestion_controller: CongestionController::new(initial_cwnd, max_window),
+            rtt_estimator: RttEstimator::new(),
+            send_buffer: VecDeque::new(),
+            max_send_buffer,
+            bytes_sent: 0,
+            bytes_acked: 0,
+            packets_lost: 0,
+            last_throughput_update: Instant::now(),
+            throughput_bytes: 0,
+            enable_auto_tuning: true,
+            backpressure_threshold: 0.8,
+        }
+    }
+
+    /// Create a new flow controller with full parameters
+    pub fn new_with_params(
         initial_window: u32,
         max_window: u32,
         initial_cwnd: u32,
@@ -350,6 +415,13 @@ impl FlowController {
             enable_auto_tuning: true,
             backpressure_threshold: 0.8,
         }
+    }
+
+    /// Handle data received for flow control
+    pub fn on_data_received(&mut self, bytes: u32) -> Result<(), FlowControlError> {
+        self.flow_window.on_data_sent(bytes)?;
+        self.bytes_sent += bytes as u64;
+        Ok(())
     }
 
     /// Check if data can be sent considering both flow control and congestion control
@@ -421,7 +493,7 @@ impl FlowController {
         
         if data.len() > available_buffer {
             return Err(FlowControlError::BufferOverflow {
-                attempted: data.len(),
+                requested: data.len(),
                 available: available_buffer,
             });
         }
@@ -449,6 +521,129 @@ impl FlowController {
         }
         
         data
+    }
+
+    /// Get current throughput estimate (bytes per second)
+    pub fn current_throughput(&self) -> f64 {
+        let elapsed = self.last_throughput_update.elapsed();
+        if elapsed.as_secs_f64() > 0.0 {
+            self.throughput_bytes as f64 / elapsed.as_secs_f64()
+        } else {
+            0.0
+        }
+    }
+
+    /// Update flow control parameters based on network conditions
+    pub fn adaptive_flow_control_update(&mut self, network_delay: Duration, packet_loss_rate: f64) {
+        if !self.enable_auto_tuning {
+            return;
+        }
+
+        // Adjust window based on delay and loss
+        let current_window = self.flow_window.window_size();
+        
+        // Increase window if low delay and low loss
+        if network_delay < Duration::from_millis(50) && packet_loss_rate < 0.001 {
+            let new_window = (current_window as f64 * 1.1) as u32;
+            let _ = self.flow_window.update_window(new_window.min(self.flow_window.max_window_size()));
+            debug!("Increased flow window to {} due to good conditions", new_window);
+        }
+        // Decrease window if high delay or high loss
+        else if network_delay > Duration::from_millis(200) || packet_loss_rate > 0.01 {
+            let new_window = (current_window as f64 * 0.9) as u32;
+            let _ = self.flow_window.update_window(new_window.max(1024)); // Minimum window
+            debug!("Decreased flow window to {} due to poor conditions", new_window);
+        }
+    }
+
+    /// Dynamic window size adjustment based on congestion
+    pub fn dynamic_window_adjustment(&mut self) -> u32 {
+        let congestion_window = self.congestion_controller.cwnd();
+        let flow_window = self.flow_window.window_size();
+        
+        // Use the minimum of flow control and congestion control windows
+        let effective_window = congestion_window.min(flow_window);
+        
+        // Apply backpressure if buffer is getting full
+        if self.should_apply_backpressure() {
+            let backpressure_factor = 1.0 - (self.send_buffer.len() as f64 / self.max_send_buffer as f64);
+            let adjusted_window = (effective_window as f64 * backpressure_factor) as u32;
+            debug!("Applied backpressure: window {} -> {}", effective_window, adjusted_window);
+            adjusted_window.max(1024) // Ensure minimum window
+        } else {
+            effective_window
+        }
+    }
+
+    /// Get network statistics for monitoring
+    pub fn get_network_stats(&self) -> NetworkStats {
+        NetworkStats {
+            bytes_sent: self.bytes_sent,
+            bytes_acked: self.bytes_acked,
+            packets_lost: self.packets_lost,
+            current_window: self.flow_window.window_size(),
+            congestion_window: self.congestion_controller.cwnd(),
+            rtt: self.rtt_estimator.srtt(),
+            rto: self.rtt_estimator.rto(),
+            throughput: self.current_throughput(),
+            buffer_usage: self.send_buffer.len() as f64 / self.max_send_buffer as f64,
+        }
+    }
+
+    /// Check if flow control allows sending more data
+    pub fn can_send_more(&self) -> bool {
+        self.available_to_send() > 0 && !self.should_apply_backpressure()
+    }
+
+    /// Get optimal send size based on current conditions
+    pub fn optimal_send_size(&self) -> u32 {
+        let available = self.available_to_send();
+        let mtu_estimate = 1450; // Conservative MTU estimate
+        
+        if available >= mtu_estimate {
+            mtu_estimate // Send full packets when possible
+        } else {
+            available
+        }
+    }
+
+    /// Consume receive window for incoming data
+    pub fn consume_receive_window(&mut self, _bytes: u32) -> Result<(), FlowControlError> {
+        // For receive side, we just track the data
+        // Real implementation would manage receive buffer
+        Ok(())
+    }
+
+    /// Check if window update should be sent
+    pub fn should_send_window_update(&self) -> bool {
+        // Send update when window is getting low
+        let window_usage = self.flow_window.bytes_in_flight() as f64 / self.flow_window.window_size() as f64;
+        window_usage > 0.75
+    }
+
+    /// Generate window update value
+    pub fn generate_window_update(&self) -> u32 {
+        // Increase window based on available buffer space
+        self.flow_window.window_size() * 2
+    }
+
+    /// Update receive metrics
+    pub fn update_receive_metrics(&mut self, bytes_received: u32) {
+        // Track received data for statistics
+        self.throughput_bytes += bytes_received as u64;
+    }
+
+    /// Apply backpressure when buffer is getting full
+    pub fn apply_backpressure(&mut self, pending_bytes: u32) {
+        // Reduce window size to apply backpressure
+        let current_window = self.flow_window.window_size();
+        let reduced_window = current_window.saturating_sub(pending_bytes).max(1024);
+        
+        if let Err(e) = self.flow_window.update_window(reduced_window) {
+            warn!("Failed to apply backpressure: {}", e);
+        } else {
+            debug!("Applied backpressure: window {} -> {}", current_window, reduced_window);
+        }
     }
 
     /// Check if backpressure should be applied
@@ -507,23 +702,49 @@ impl FlowController {
     pub fn set_backpressure_threshold(&mut self, threshold: f64) {
         self.backpressure_threshold = threshold.clamp(0.0, 1.0);
     }
-}
 
-/// Flow control statistics
-#[derive(Debug, Clone)]
-pub struct FlowControlStats {
-    pub flow_window_size: u32,
-    pub bytes_in_flight: u32,
-    pub congestion_window: u32,
-    pub congestion_state: CongestionState,
-    pub rtt: Option<Duration>,
-    pub rto: Duration,
-    pub bytes_sent: u64,
-    pub bytes_acked: u64,
-    pub packets_lost: u32,
-    pub send_buffer_size: usize,
-    pub throughput: f64,
-    pub backpressure_active: bool,
+    /// Get available send window (same as available_to_send for compatibility)
+    pub fn get_available_send_window(&self) -> u32 {
+        self.available_to_send()
+    }
+
+    /// Get bytes in flight (same as flow window bytes in flight)
+    pub fn get_bytes_in_flight(&self) -> u32 {
+        self.flow_window.bytes_in_flight()
+    }
+
+    /// Get congestion window size
+    pub fn get_congestion_window(&self) -> u32 {
+        self.congestion_controller.cwnd()
+    }
+
+    /// Update RTT measurement
+    pub fn update_rtt(&mut self, rtt: Duration) {
+        self.rtt_estimator.update(rtt);
+    }
+
+    /// Handle data acknowledgment
+    pub fn on_data_acked(&mut self, bytes: u32) {
+        self.flow_window.on_ack_received(bytes);
+        self.bytes_acked += bytes as u64;
+    }
+
+    /// Handle data loss
+    pub fn on_data_lost(&mut self, bytes: u32) {
+        self.packets_lost += 1;
+        self.congestion_controller.on_loss();
+    }
+
+    /// Consume send window
+    pub fn consume_send_window(&mut self, bytes: u32) -> Result<(), FlowControlError> {
+        self.flow_window.on_data_sent(bytes)
+    }
+
+    /// Restore send window 
+    pub fn restore_send_window(&mut self, bytes: u32) {
+        self.flow_window.on_ack_received(bytes);
+    }
+
 }
 
 #[cfg(test)]

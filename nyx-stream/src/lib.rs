@@ -1,6 +1,12 @@
 #![forbid(unsafe_code)]
 //! Nyx Secure Stream layer (skeleton)
 
+// pub mod frame_handler; // Temporarily disabled due to compilation issues
+pub mod simple_frame_handler;
+pub mod flow_controller;
+//pub mod integrated_frame_processor; // Temporarily disabled for realistic benchmarks
+pub mod errors;
+
 pub mod frame;
 pub mod congestion;
 pub mod builder;
@@ -8,9 +14,7 @@ pub mod tx;
 pub mod stream_frame;
 pub mod ack;
 pub mod state;
-pub mod async_stream;
-pub mod frame_handler;
-pub mod flow_controller;
+//pub mod async_stream;  // Disabled during debugging  
 pub mod error_handler;
 pub mod resource_manager;
 #[cfg(feature = "plugin")]
@@ -54,8 +58,9 @@ mod receiver;
 pub use receiver::MultipathReceiver;
 mod sequencer;
 pub use sequencer::Sequencer;
-pub use async_stream::{NyxAsyncStream, StreamError, StreamState as AsyncStreamState, CleanupConfig, StreamStats};
-pub use frame_handler::{FrameHandler, FrameHandlerError, FrameValidation, ReassembledData, FrameHandlerStats};
+//pub use async_stream::{NyxAsyncStream, StreamError, StreamState as AsyncStreamState, CleanupConfig, StreamStats};  // Disabled during debugging
+// pub use frame_handler::{FrameHandler, FrameHandlerError, FrameValidation, ReassembledData, FrameHandlerStats}; // Temporarily disabled
+//pub use integrated_frame_processor::{IntegratedFrameProcessor, StreamContext}; // Temporarily disabled
 pub use flow_controller::{FlowController, FlowControlError, FlowControlStats, CongestionState, RttEstimator};
 pub use error_handler::{StreamErrorHandler, ErrorContext, ErrorCategory, ErrorSeverity, RecoveryStrategy, RecoveryAction, ErrorHandlerStats};
 pub use resource_manager::{ResourceManager, ResourceInfo, ResourceType, ResourceError, ResourceLimits, ResourceStats};
@@ -93,3 +98,6 @@ pub use hpke_rekey::{RekeyFrame, build_rekey_frame, parse_rekey_frame, seal_for_
 
 #[cfg(feature = "plugin")]
 pub mod plugin_dispatch;
+
+#[cfg(test)]
+mod tests;

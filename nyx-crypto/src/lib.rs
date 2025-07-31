@@ -5,15 +5,13 @@
 //! This crate provides:
 //! 1. Noise_Nyx handshake implementation (see [`noise`] module).
 //! 2. HKDF wrappers with misuse-resistant label semantics.
-//! 3. Optional Kyber1024 Post-Quantum fallback when built with `--features pq`.
+//! 3. Optional Kyber1024 Post-Quantum support when built with `--features kyber`.
 //! 4. HPKE (RFC 9180) wrapper utilities.
 
 use zeroize::Zeroize;
 
 pub mod noise;
 pub mod kdf;
-#[cfg(feature = "bike")]
-pub use noise::bike;
 #[cfg(feature = "kyber")]
 pub use noise::kyber;
 pub mod aead;
