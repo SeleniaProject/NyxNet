@@ -1,4 +1,8 @@
-# NyxNet Development Task List
+# Nyx- [ ] **DHT (Distributed Hash Table) Implementation**
+  - [x] Replace placeholder DHT implementation in `nyx-daemon/src/path_builder.rs`
+  - [x] Implement real peer discovery mechanism
+  - [x] Replace hardcoded "placeholder-node-1", "placeholder-node-2" with actual nodes
+  - [ ] Implement peer routing and lookup functionalityevelopment Task List
 
 ## 🚨 Critical Priority (Phase 1)
 

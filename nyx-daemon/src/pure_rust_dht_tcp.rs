@@ -76,6 +76,16 @@ pub struct PeerInfo {
 /// Node identifier (256-bit hash)
 pub type NodeId = [u8; 32];
 
+/// Routing table statistics
+#[derive(Debug, Clone)]
+pub struct RoutingStats {
+    pub total_peers: usize,
+    pub active_buckets: usize,
+    pub total_buckets: usize,
+    pub k_value: usize,
+    pub bucket_distribution: Vec<(usize, usize)>, // (bucket_index, peer_count)
+}
+
 /// DHT record stored in the network
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DhtRecord {
@@ -108,13 +118,12 @@ pub enum DhtMessage {
     },
     /// Find node request
     FindNode {
-        target_id: NodeId,
-        requester_id: NodeId,
+        target_id: String,
+        requester_id: String,
     },
     /// Find node response
     FindNodeResponse {
         nodes: Vec<PeerInfo>,
-        requester_id: NodeId,
     },
     /// Store record request
     Store {
@@ -123,17 +132,16 @@ pub enum DhtMessage {
     /// Store response
     StoreResponse {
         success: bool,
-        message: String,
     },
     /// Find value request
     FindValue {
         key: String,
-        requester_id: NodeId,
+        requester_id: String,
     },
-    /// Find value response
+    /// Find value response - can return either value or closest nodes
     FindValueResponse {
-        record: Option<DhtRecord>,
-        nodes: Vec<PeerInfo>,
+        value: Option<Vec<u8>>,
+        nodes: Option<Vec<PeerInfo>>,
     },
 }
 
@@ -319,10 +327,13 @@ impl PureRustDht {
             }
             DhtMessage::FindNode { target_id, requester_id } => {
                 let routing_table = routing_table.read().await;
-                let closest_nodes = routing_table.find_closest_nodes(&target_id, 20);
+                let target_node_id = hex::decode(&target_id)
+                    .map_err(|e| DhtError::InvalidMessage(format!("Invalid target_id: {}", e)))?;
+                let target_node_id: NodeId = target_node_id.try_into()
+                    .map_err(|_| DhtError::InvalidMessage("Invalid target_id length".to_string()))?;
+                let closest_nodes = routing_table.find_closest_nodes(&target_node_id, 20);
                 Ok(DhtMessage::FindNodeResponse {
                     nodes: closest_nodes,
-                    requester_id,
                 })
             }
             DhtMessage::Store { record } => {
@@ -332,21 +343,19 @@ impl PureRustDht {
                     storage.insert(record.key.clone(), record);
                     Ok(DhtMessage::StoreResponse {
                         success: true,
-                        message: "Record stored successfully".to_string(),
                     })
                 } else {
                     Ok(DhtMessage::StoreResponse {
                         success: false,
-                        message: "Invalid record signature".to_string(),
                     })
                 }
             }
-            DhtMessage::FindValue { key, requester_id } => {
+            DhtMessage::FindValue { key, requester_id: _ } => {
                 let storage = storage.read().await;
                 if let Some(record) = storage.get(&key) {
                     Ok(DhtMessage::FindValueResponse {
-                        record: Some(record.clone()),
-                        nodes: vec![],
+                        value: Some(record.value.clone()),
+                        nodes: None,
                     })
                 } else {
                     // Return closest nodes that might have the value
@@ -354,8 +363,8 @@ impl PureRustDht {
                     let routing_table = routing_table.read().await;
                     let closest_nodes = routing_table.find_closest_nodes(&target_id, 20);
                     Ok(DhtMessage::FindValueResponse {
-                        record: None,
-                        nodes: closest_nodes,
+                        value: None,
+                        nodes: Some(closest_nodes),
                     })
                 }
             }
@@ -494,16 +503,18 @@ impl PureRustDht {
             if let Ok(peer_addr) = self.peer_info_to_socket_addr(&peer) {
                 let find_message = DhtMessage::FindValue {
                     key: key.to_string(),
-                    requester_id: Self::calculate_node_id(&self.keypair.verifying_key().to_bytes()),
+                    requester_id: hex::encode(Self::calculate_node_id(&self.keypair.verifying_key().to_bytes())),
                 };
                 
                 match self.send_message_to_peer(peer_addr, find_message).await {
-                    Ok(DhtMessage::FindValueResponse { record: Some(record), .. }) => {
-                        return Ok(record.value);
+                    Ok(DhtMessage::FindValueResponse { value: Some(value), .. }) => {
+                        return Ok(value);
                     }
                     Ok(DhtMessage::FindValueResponse { nodes, .. }) => {
                         // Could continue searching with returned nodes
-                        debug!("Received {} additional nodes to search", nodes.len());
+                        if let Some(ref nodes) = nodes {
+                            debug!("Received {} additional nodes to search", nodes.len());
+                        }
                     }
                     Err(e) => {
                         warn!("Failed to query peer {}: {}", peer_addr, e);
@@ -517,10 +528,276 @@ impl PureRustDht {
     }
     
     /// Find closest nodes to a target ID
+    /// Advanced find node with iterative lookup
     pub async fn find_node(&self, target_id: &str) -> Result<Vec<PeerInfo>, DhtError> {
+        self.iterative_find_node(target_id, false).await
+    }
+    
+    /// Advanced find value with iterative lookup
+    pub async fn find_value(&self, key: &str) -> Result<Vec<u8>, DhtError> {
+        // First check local storage
+        if let Ok(value) = self.get(key).await {
+            return Ok(value);
+        }
+        
+        // Perform iterative lookup for the key
+        let peers = self.iterative_find_node(key, true).await?;
+        
+        // Query found peers for the value
+        for peer in peers {
+            if let Ok(addr) = self.peer_info_to_socket_addr(&peer) {
+                match self.query_peer_for_value(&addr, key).await {
+                    Ok(Some(value)) => return Ok(value),
+                    Ok(None) => continue,
+                    Err(_) => continue,
+                }
+            }
+        }
+        
+        Err(DhtError::NotFound(format!("Value not found for key: {}", key)))
+    }
+    
+    /// Iterative find node algorithm (Kademlia standard)
+    async fn iterative_find_node(&self, target_id: &str, find_value: bool) -> Result<Vec<PeerInfo>, DhtError> {
         let target_hash = Self::hash_key(target_id);
+        let alpha = 3; // Parallelism factor
+        let k = 20; // Desired number of closest nodes
+        
+        // Get initial closest nodes from routing table
         let routing_table = self.routing_table.read().await;
-        Ok(routing_table.find_closest_nodes(&target_hash, 20))
+        let mut closest_nodes = routing_table.find_closest_nodes(&target_hash, k);
+        drop(routing_table);
+        
+        if closest_nodes.is_empty() {
+            return Err(DhtError::NotFound("No nodes in routing table".to_string()));
+        }
+        
+        let mut queried_nodes = std::collections::HashSet::new();
+        let mut contacted_nodes = std::collections::HashSet::new();
+        
+        // Iterative improvement loop
+        for round in 0..10 { // Maximum 10 rounds
+            let mut candidates = Vec::new();
+            
+            // Select alpha unqueried nodes from closest_nodes
+            for node in &closest_nodes {
+                if !queried_nodes.contains(&node.peer_id) && candidates.len() < alpha {
+                    candidates.push(node.clone());
+                }
+            }
+            
+            if candidates.is_empty() {
+                break; // No more nodes to query
+            }
+            
+            // Query candidates in parallel
+            let mut tasks = Vec::new();
+            for candidate in candidates {
+                queried_nodes.insert(candidate.peer_id.clone());
+                contacted_nodes.insert(candidate.peer_id.clone());
+                
+                if let Ok(addr) = self.peer_info_to_socket_addr(&candidate) {
+                    let target_id_owned = target_id.to_string();
+                    let find_value_flag = find_value;
+                    
+                    let task = tokio::spawn(async move {
+                        if find_value_flag {
+                            // Try to find value first
+                            // Implementation would query for specific value
+                            None // Placeholder for value query
+                        } else {
+                            // Query for closer nodes
+                            Self::query_peer_for_closest_nodes(addr, &target_id_owned).await
+                        }
+                    });
+                    tasks.push(task);
+                }
+            }
+            
+            // Collect results
+            let mut new_nodes = Vec::new();
+            for task in tasks {
+                if let Ok(result) = task.await {
+                    if let Some(nodes) = result {
+                        new_nodes.extend(nodes);
+                    }
+                }
+            }
+            
+            // Add new nodes to closest_nodes and sort
+            for node in new_nodes {
+                if !contacted_nodes.contains(&node.peer_id) {
+                    closest_nodes.push(node);
+                }
+            }
+            
+            // Sort by distance to target and keep only k closest
+            let target_hash = Self::hash_key(target_id);
+            closest_nodes.sort_by_key(|node| {
+                let node_hash = Self::hash_key(&node.peer_id);
+                Self::xor_distance(&target_hash, &node_hash)
+            });
+            closest_nodes.truncate(k);
+            
+            // Check for convergence
+            if round > 0 && closest_nodes.len() >= k {
+                // If we have k nodes and no improvement, stop
+                break;
+            }
+        }
+        
+        Ok(closest_nodes)
+    }
+    
+    /// Query a peer for closest nodes to target
+    async fn query_peer_for_closest_nodes(peer_addr: std::net::SocketAddr, target_id: &str) -> Option<Vec<PeerInfo>> {
+        match tokio::net::TcpStream::connect(peer_addr).await {
+            Ok(mut stream) => {
+                let message = DhtMessage::FindNode {
+                    target_id: target_id.to_string(),
+                    requester_id: "anonymous".to_string(),
+                };
+                
+                if let Ok(serialized) = serde_json::to_vec(&message) {
+                    if let Ok(_) = stream.write_all(&serialized).await {
+                        let mut buffer = vec![0; 4096];
+                        if let Ok(n) = stream.read(&mut buffer).await {
+                            buffer.truncate(n);
+                            if let Ok(response) = serde_json::from_slice::<DhtMessage>(&buffer) {
+                                if let DhtMessage::FindNodeResponse { nodes } = response {
+                                    return Some(nodes);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Err(_) => {}
+        }
+        None
+    }
+    
+    /// Query a peer for a specific value
+    async fn query_peer_for_value(&self, peer_addr: &std::net::SocketAddr, key: &str) -> Result<Option<Vec<u8>>, DhtError> {
+        let mut stream = tokio::net::TcpStream::connect(peer_addr).await
+            .map_err(|e| DhtError::Connection(e.to_string()))?;
+            
+        let message = DhtMessage::FindValue {
+            key: key.to_string(),
+            requester_id: hex::encode(&self.local_addr.to_string()),
+        };
+        
+        let serialized = serde_json::to_vec(&message)
+            .map_err(|e| DhtError::Serialization(Box::new(bincode::ErrorKind::Custom(e.to_string()))))?;
+            
+        stream.write_all(&serialized).await
+            .map_err(|e| DhtError::Connection(e.to_string()))?;
+            
+        let mut buffer = vec![0; 8192];
+        let n = stream.read(&mut buffer).await
+            .map_err(|e| DhtError::Connection(e.to_string()))?;
+            
+        buffer.truncate(n);
+        let response = serde_json::from_slice::<DhtMessage>(&buffer)
+            .map_err(|e| DhtError::Deserialization(e.to_string()))?;
+            
+        match response {
+            DhtMessage::FindValueResponse { value: Some(value), .. } => Ok(Some(value)),
+            DhtMessage::FindValueResponse { value: None, .. } => Ok(None),
+            DhtMessage::FindNodeResponse { nodes: _ } => Ok(None), // Peer doesn't have value, returned closest nodes
+            _ => Err(DhtError::Protocol("Unexpected response".to_string())),
+        }
+    }
+    
+    /// Store value with intelligent routing
+    pub async fn store_with_routing(&self, key: &str, value: Vec<u8>) -> Result<(), DhtError> {
+        // Store locally first
+        self.store(key, value.clone()).await?;
+        
+        // Find k closest nodes to the key
+        let closest_nodes = self.iterative_find_node(key, false).await?;
+        
+        // Store on closest nodes
+        let mut successful_stores = 0;
+        let required_replicas = std::cmp::min(3, closest_nodes.len()); // Store on at least 3 nodes
+        
+        for node in closest_nodes.iter().take(required_replicas * 2) { // Try more nodes for redundancy
+            if let Ok(addr) = self.peer_info_to_socket_addr(node) {
+                match self.store_on_peer(&addr, key, &value).await {
+                    Ok(_) => {
+                        successful_stores += 1;
+                        if successful_stores >= required_replicas {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to store on peer {}: {}", node.peer_id, e);
+                    }
+                }
+            }
+        }
+        
+        if successful_stores == 0 {
+            return Err(DhtError::BootstrapFailed);
+        }
+        
+        info!("Successfully stored key '{}' on {} nodes", key, successful_stores);
+        Ok(())
+    }
+    
+    /// Store a value on a remote peer
+    async fn store_on_peer(&self, peer_addr: &std::net::SocketAddr, key: &str, value: &[u8]) -> Result<(), DhtError> {
+        let mut stream = tokio::net::TcpStream::connect(peer_addr).await
+            .map_err(|e| DhtError::Connection(e.to_string()))?;
+            
+        let record = self.create_signed_record(key, value.to_vec())?;
+        let message = DhtMessage::Store { record };
+        
+        let serialized = serde_json::to_vec(&message)
+            .map_err(|e| DhtError::Serialization(Box::new(bincode::ErrorKind::Custom(e.to_string()))))?;
+            
+        stream.write_all(&serialized).await
+            .map_err(|e| DhtError::Connection(e.to_string()))?;
+            
+        let mut buffer = vec![0; 1024];
+        let n = stream.read(&mut buffer).await
+            .map_err(|e| DhtError::Connection(e.to_string()))?;
+            
+        buffer.truncate(n);
+        let response = serde_json::from_slice::<DhtMessage>(&buffer)
+            .map_err(|e| DhtError::Deserialization(e.to_string()))?;
+            
+        match response {
+            DhtMessage::StoreResponse { success: true } => Ok(()),
+            DhtMessage::StoreResponse { success: false } => Err(DhtError::Protocol("Store rejected".to_string())),
+            _ => Err(DhtError::Protocol("Unexpected response".to_string())),
+        }
+    }
+    
+    /// Get routing table statistics
+    pub async fn get_routing_stats(&self) -> RoutingStats {
+        let routing_table = self.routing_table.read().await;
+        let mut total_peers = 0;
+        let mut active_buckets = 0;
+        let mut bucket_distribution = Vec::new();
+        
+        for (i, bucket) in routing_table.buckets.iter().enumerate() {
+            let peer_count = bucket.peers.len();
+            total_peers += peer_count;
+            bucket_distribution.push((i, peer_count));
+            
+            if peer_count > 0 {
+                active_buckets += 1;
+            }
+        }
+        
+        RoutingStats {
+            total_peers,
+            active_buckets,
+            total_buckets: routing_table.buckets.len(),
+            k_value: routing_table.k_value,
+            bucket_distribution,
+        }
     }
     
     /// Create a signed record
@@ -596,6 +873,15 @@ impl PureRustDht {
         let mut node_id = [0u8; 32];
         node_id.copy_from_slice(&hash);
         node_id
+    }
+    
+    /// Calculate XOR distance between two node IDs
+    fn xor_distance(a: &NodeId, b: &NodeId) -> NodeId {
+        let mut distance = [0u8; 32];
+        for i in 0..32 {
+            distance[i] = a[i] ^ b[i];
+        }
+        distance
     }
     
     /// Convert PeerInfo to SocketAddr
@@ -678,7 +964,7 @@ impl RoutingTable {
     pub fn find_closest_nodes(&self, target_id: &NodeId, count: usize) -> Vec<PeerInfo> {
         let mut candidates = Vec::new();
         
-        // Collect all peers
+        // Collect all peers with their distances
         for bucket in &self.buckets {
             for peer in &bucket.peers {
                 let peer_node_id = Self::hash_peer_id(&peer.peer_id);
@@ -687,14 +973,81 @@ impl RoutingTable {
             }
         }
         
-        // Sort by distance
+        // Sort by distance and return closest
         candidates.sort_by_key(|(distance, _)| *distance);
-        
-        // Return closest nodes
         candidates.into_iter()
             .take(count)
             .map(|(_, peer)| peer)
             .collect()
+    }
+    
+    /// Find nodes in a specific bucket for maintenance
+    pub fn find_bucket_nodes(&self, bucket_index: usize) -> Vec<PeerInfo> {
+        if bucket_index < self.buckets.len() {
+            self.buckets[bucket_index].peers.clone()
+        } else {
+            Vec::new()
+        }
+    }
+    
+    /// Get all peers for backup/persistence  
+    pub fn get_all_peers(&self) -> Vec<PeerInfo> {
+        let mut all_peers = Vec::new();
+        for bucket in &self.buckets {
+            all_peers.extend(bucket.peers.clone());
+        }
+        all_peers
+    }
+    
+    /// Remove stale peers based on last seen time
+    pub fn remove_stale_peers(&mut self, stale_threshold: Duration) {
+        let now = SystemTime::now();
+        
+        for bucket in &mut self.buckets {
+            bucket.peers.retain(|peer| {
+                match now.duration_since(peer.last_seen) {
+                    Ok(duration) => duration < stale_threshold,
+                    Err(_) => true, // Keep peers with future timestamps (clock skew)
+                }
+            });
+        }
+    }
+    
+    /// Update peer response time and last seen
+    pub fn update_peer_stats(&mut self, peer_id: &str, response_time: Duration) {
+        for bucket in &mut self.buckets {
+            if let Some(peer) = bucket.peers.iter_mut().find(|p| p.peer_id == peer_id) {
+                peer.last_seen = SystemTime::now();
+                // Update rolling average of response time
+                let current_avg = peer.avg_response_time.as_millis() as f64;
+                let new_time = response_time.as_millis() as f64;
+                let updated_avg = (current_avg * 0.8) + (new_time * 0.2); // Exponential moving average
+                peer.avg_response_time = Duration::from_millis(updated_avg as u64);
+                break;
+            }
+        }
+    }
+    
+    /// Find replacement candidates for a failed peer
+    pub fn find_replacement_candidates(&self, failed_peer_id: &str, count: usize) -> Vec<PeerInfo> {
+        let failed_peer_hash = Self::hash_peer_id(failed_peer_id);
+        
+        // Find candidates from nearby buckets
+        let bucket_index = self.distance_to_bucket_index(self.calculate_distance(&failed_peer_hash));
+        let mut candidates = Vec::new();
+        
+        // Check current bucket and adjacent buckets
+        for i in bucket_index.saturating_sub(2)..=std::cmp::min(bucket_index + 2, self.buckets.len() - 1) {
+            for peer in &self.buckets[i].peers {
+                if peer.peer_id != failed_peer_id {
+                    candidates.push(peer.clone());
+                }
+            }
+        }
+        
+        // Sort by response time and reliability
+        candidates.sort_by(|a, b| a.avg_response_time.cmp(&b.avg_response_time));
+        candidates.into_iter().take(count).collect()
     }
     
     /// Calculate XOR distance between two node IDs

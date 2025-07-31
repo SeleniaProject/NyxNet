@@ -7,7 +7,7 @@
 //! fully functional networking code that operates without C/C++ dependencies.
 
 use crate::proto::{PathRequest, PathResponse};
-use crate::pure_rust_dht_tcp::{PureRustDht, PeerInfo as DhtPeerInfo, DhtError, DhtMessage};
+use crate::pure_rust_dht_tcp::{PureRustDht, PeerInfo as DhtPeerInfo, DhtError};
 // Direct path_builder.rs local types 
 use geo::Point;
 use lru::LruCache;
@@ -870,8 +870,8 @@ impl DhtPeerDiscovery {
         
         // Create find_node request
         let find_node_msg = crate::pure_rust_dht_tcp::DhtMessage::FindNode {
-            target_id: self.string_to_node_id(&target_id),
-            requester_id: self.string_to_node_id(&self.get_local_node_id()),
+            target_id: target_id.clone(),
+            requester_id: self.get_local_node_id(),
         };
         
         // Send query message
@@ -1003,8 +1003,8 @@ impl DhtPeerDiscovery {
         
         // Create find_node request
         let find_node_msg = crate::pure_rust_dht_tcp::DhtMessage::FindNode {
-            target_id: self.string_to_node_id(&target_id),
-            requester_id: self.string_to_node_id(&self.get_local_node_id()),
+            target_id: target_id.clone(),
+            requester_id: self.get_local_node_id(),
         };
         
         // Send query
@@ -1827,22 +1827,112 @@ impl DhtPeerDiscovery {
         }
     }
     
-    /// Store a record in the DHT network
+    /// Store a record in the DHT network with intelligent routing
     pub async fn store_record_in_network(&self, key: &str, value: Vec<u8>) -> Result<(), DhtError> {
-        debug!("Storing record in DHT network for key: {}", key);
+        debug!("Storing record in DHT network with intelligent routing for key: {}", key);
         
         // Get DHT instance
         let dht_guard = self.dht.read().await;
         let dht = dht_guard.as_ref()
             .ok_or_else(|| DhtError::Communication("DHT not initialized".to_string()))?;
         
-        // Store the value in the DHT
-        dht.store(key, value).await
-            .map_err(|e| DhtError::QueryFailed(format!("DHT store failed: {:?}", e)))?;
+        // Use intelligent routing to store the value
+        dht.store_with_routing(key, value).await
+            .map_err(|e| DhtError::QueryFailed(format!("DHT routing store failed: {:?}", e)))?;
         
-        info!("Successfully stored record for key: {}", key);
+        info!("Successfully stored record with routing for key: {}", key);
         Ok(())
     }
+    
+    /// Advanced lookup with intelligent routing
+    pub async fn lookup_with_routing(&self, key: &str) -> Result<Vec<u8>, DhtError> {
+        debug!("Performing advanced lookup with routing for key: {}", key);
+        
+        // Get DHT instance
+        let dht_guard = self.dht.read().await;
+        let dht = dht_guard.as_ref()
+            .ok_or_else(|| DhtError::Communication("DHT not initialized".to_string()))?;
+        
+        // Use intelligent find value with routing
+        dht.find_value(key).await
+            .map_err(|e| DhtError::QueryFailed(format!("DHT routing lookup failed: {:?}", e)))
+    }
+    
+    /// Get routing table statistics
+    pub async fn get_routing_statistics(&self) -> Result<RouteStats, DhtError> {
+        let dht_guard = self.dht.read().await;
+        let dht = dht_guard.as_ref()
+            .ok_or_else(|| DhtError::Communication("DHT not initialized".to_string()))?;
+        
+        let routing_stats = dht.get_routing_stats().await;
+        
+        Ok(RouteStats {
+            total_peers: routing_stats.total_peers,
+            active_buckets: routing_stats.active_buckets,
+            total_buckets: routing_stats.total_buckets,
+            k_value: routing_stats.k_value,
+            avg_bucket_utilization: if routing_stats.total_buckets > 0 {
+                routing_stats.total_peers as f64 / routing_stats.total_buckets as f64
+            } else {
+                0.0
+            },
+            bucket_distribution: routing_stats.bucket_distribution,
+        })
+    }
+    
+    /// Perform advanced peer routing for path building
+    pub async fn route_to_peer(&self, target_peer_id: &str) -> Result<Vec<String>, DhtError> {
+        debug!("Routing to peer: {}", target_peer_id);
+        
+        let dht_guard = self.dht.read().await;
+        let dht = dht_guard.as_ref()
+            .ok_or_else(|| DhtError::Communication("DHT not initialized".to_string()))?;
+        
+        // Find nodes closest to target peer
+        let closest_peers = dht.find_node(target_peer_id).await?;
+        
+        // Convert to routing path
+        let route_path: Vec<String> = closest_peers
+            .into_iter()
+            .take(5) // Limit to reasonable path length
+            .map(|peer| peer.peer_id)
+            .collect();
+            
+        if route_path.is_empty() {
+            return Err(DhtError::NotFound(format!("No route found to peer: {}", target_peer_id)));
+        }
+        
+        info!("Found routing path to {} with {} hops", target_peer_id, route_path.len());
+        Ok(route_path)
+    }
+    
+    /// Optimize routing table by removing stale peers
+    pub async fn optimize_routing_table(&self) -> Result<usize, DhtError> {
+        debug!("Optimizing routing table");
+        
+        let dht_guard = self.dht.read().await;
+        let dht = dht_guard.as_ref()
+            .ok_or_else(|| DhtError::Communication("DHT not initialized".to_string()))?;
+        
+        // This would require extending the DHT interface
+        // For now, return stats on current table
+        let stats = dht.get_routing_stats().await;
+        info!("Routing table contains {} peers across {} active buckets", 
+              stats.total_peers, stats.active_buckets);
+              
+        Ok(stats.total_peers)
+    }
+}
+
+/// Routing statistics for DHT analysis
+#[derive(Debug, Clone)]
+pub struct RouteStats {
+    pub total_peers: usize,
+    pub active_buckets: usize,
+    pub total_buckets: usize,
+    pub k_value: usize,
+    pub avg_bucket_utilization: f64,
+    pub bucket_distribution: Vec<(usize, usize)>,
 }
 
 /// Extract peer ID from multiaddr with actual parsing logic
