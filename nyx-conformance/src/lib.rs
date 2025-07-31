@@ -3,4 +3,5 @@
 //! Provides protocol-level test vectors ensuring compatibility across
 //! implementations.
 
-// Currently empty: tests reside in `tests/` directory. 
+pub mod network_simulator;
+pub mod property_tester; 

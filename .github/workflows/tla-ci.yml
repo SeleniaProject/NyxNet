@@ -3,28 +3,97 @@ name: TLA+ Model Check CI
 on:
   push:
     branches: ["main"]
+    paths:
+      - 'formal/**'
+      - 'scripts/verify.py'
   pull_request:
+    paths:
+      - 'formal/**'
+      - 'scripts/verify.py'
+
+env:
+  JAVA_OPTS: "-Xmx4g"
 
 jobs:
   modelcheck:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v4
         with:
           distribution: "temurin"
           java-version: "17"
 
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Cache TLA+ tools
+        uses: actions/cache@v4
+        with:
+          path: formal/tla2tools.jar
+          key: tla-tools-${{ hashFiles('formal/README.md') }}
+          restore-keys: tla-tools-
+
       - name: Download TLA+ tools
         run: |
-          curl -L -o tla2tools.jar https://tla.msr-inria.inria.fr/tlatoolbox/resources/tla2tools.jar
+          cd formal
+          if [ ! -f tla2tools.jar ]; then
+            curl -L -o tla2tools.jar https://tla.msr-inria.inria.fr/tlatoolbox/resources/tla2tools.jar
+          fi
 
-      - name: Run TLC on models
+      - name: Run integrated TLA+ verification
         run: |
-          for file in formal/*.tla; do
-            echo "Running TLC on $file";
-            java -cp tla2tools.jar tlc2.TLC -deadlock -cleanup "$file";
-          done 
+          python3 scripts/verify.py --tla-only --timeout 600 --output tla_verification_report.json
+
+      - name: Generate TLA+ coverage report
+        if: always()
+        run: |
+          python3 scripts/generate-verification-report.py tla_verification_report.json --output tla_coverage_report.json --html tla_report.html
+
+      - name: Upload TLA+ results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tla-verification-results
+          path: |
+            tla_verification_report.json
+            tla_coverage_report.json
+            tla_report.html
+            formal/states/
+          retention-days: 30
+
+      - name: Check TLA+ verification status
+        run: |
+          python3 -c "
+import json
+import sys
+
+try:
+    with open('tla_verification_report.json', 'r') as f:
+        report = json.load(f)
+    
+    summary = report.get('summary', {})
+    success_rate = summary.get('success_rate', 0)
+    
+    print(f'TLA+ Verification Success Rate: {success_rate:.1f}%')
+    
+    if success_rate < 100:
+        failed_results = [r for r in report.get('results', []) if not r.get('success')]
+        print('Failed verifications:')
+        for result in failed_results:
+            print(f'  - {result.get(\"name\")}: {result.get(\"error_message\", \"Unknown error\")}')
+        sys.exit(1)
+    else:
+        print('✅ All TLA+ model checking passed')
+        
+except Exception as e:
+    print(f'Error checking verification status: {e}')
+    sys.exit(1)
+" 

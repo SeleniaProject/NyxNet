@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7eee2c5204052d0ea33135922567b8a06a30a949d7776466fa870152930c6c39 # shrinks to peer_caps = [Capability { id: 2, flags: 1, data: [] }], local_supported = [1, 3]

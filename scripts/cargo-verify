@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""
+Cargo Verify - Custom Cargo command for formal verification
+Usage: cargo verify [options]
+"""
+
+import os
+import sys
+import subprocess
+import argparse
+from pathlib import Path
+
+def main():
+    # Remove 'verify' from sys.argv if it's there (cargo passes it)
+    if len(sys.argv) > 1 and sys.argv[1] == 'verify':
+        sys.argv.pop(1)
+    
+    parser = argparse.ArgumentParser(
+        description="Cargo Verify - Formal verification for Nyx Protocol",
+        prog="cargo verify"
+    )
+    parser.add_argument("--tla-only", action="store_true",
+                       help="Run only TLA+ model checking")
+    parser.add_argument("--rust-only", action="store_true", 
+                       help="Run only Rust property tests")
+    parser.add_argument("--timeout", type=int, default=600,
+                       help="Verification timeout in seconds")
+    parser.add_argument("--java-opts", default="-Xmx4g",
+                       help="Java options for TLA+ model checking")
+    parser.add_argument("--report", default="cargo_verification_report.json",
+                       help="Output file for verification report")
+    parser.add_argument("--html-report", 
+                       help="Generate HTML report at specified path")
+    parser.add_argument("--quick", action="store_true",
+                       help="Run quick verification (basic TLA+ config only)")
+    
+    args = parser.parse_args()
+    
+    # Find project root (directory containing Cargo.toml)
+    current_dir = Path.cwd()
+    project_root = current_dir
+    
+    while project_root != project_root.parent:
+        if (project_root / "Cargo.toml").exists():
+            break
+        project_root = project_root.parent
+    else:
+        print("Error: Not in a Cargo project (no Cargo.toml found)")
+        sys.exit(1)
+    
+    # Change to project root
+    os.chdir(project_root)
+    
+    # Check if this is the Nyx project
+    if not (project_root / "formal" / "nyx_multipath_plugin.tla").exists():
+        print("Error: This doesn't appear to be the Nyx project (no TLA+ model found)")
+        sys.exit(1)
+    
+    print("🔍 Cargo Verify - Nyx Protocol Formal Verification")
+    print(f"Project Root: {project_root}")
+    print("=" * 60)
+    
+    # Build verification command
+    verify_cmd = [
+        sys.executable, "scripts/verify.py",
+        "--timeout", str(args.timeout),
+        "--java-opts", args.java_opts,
+        "--output", args.report
+    ]
+    
+    if args.tla_only:
+        verify_cmd.append("--tla-only")
+        print("🎯 Running TLA+ model checking only")
+    elif args.rust_only:
+        verify_cmd.append("--rust-only")
+        print("🦀 Running Rust property tests only")
+    elif args.quick:
+        # For quick mode, we'll modify the verify script behavior
+        os.environ["QUICK_VERIFY"] = "true"
+        print("⚡ Running quick verification")
+    else:
+        print("🔄 Running full verification pipeline")
+    
+    # Run verification
+    try:
+        result = subprocess.run(verify_cmd, check=False)
+        verification_success = result.returncode == 0
+    except FileNotFoundError:
+        print("Error: Verification script not found. Make sure scripts/verify.py exists.")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error running verification: {e}")
+        sys.exit(1)
+    
+    # Generate comprehensive report if verification completed
+    if os.path.exists(args.report):
+        print("\n📊 Generating comprehensive coverage report...")
+        
+        report_cmd = [
+            sys.executable, "scripts/generate-verification-report.py",
+            args.report,
+            "--output", "cargo_coverage_report.json"
+        ]
+        
+        if args.html_report:
+            report_cmd.extend(["--html", args.html_report])
+        else:
+            report_cmd.extend(["--html", "cargo_verification_report.html"])
+        
+        try:
+            subprocess.run(report_cmd, check=True)
+            print("✅ Coverage report generated")
+        except subprocess.CalledProcessError:
+            print("⚠️ Warning: Could not generate coverage report")
+        except FileNotFoundError:
+            print("⚠️ Warning: Report generator not found")
+    
+    # Print summary
+    if os.path.exists("cargo_coverage_report.json"):
+        print("\n" + "=" * 60)
+        print("CARGO VERIFY SUMMARY")
+        print("=" * 60)
+        
+        try:
+            import json
+            with open("cargo_coverage_report.json", 'r') as f:
+                report = json.load(f)
+            
+            overall_metrics = report.get("overall_metrics", {})
+            score = overall_metrics.get("composite_score", 0)
+            grade = overall_metrics.get("grade", "F")
+            status = overall_metrics.get("status", "Unknown")
+            
+            print(f"Overall Score: {score:.1f}% ({grade})")
+            print(f"Status: {status}")
+            print(f"Verification Success: {overall_metrics.get('verification_success_rate', 0):.1f}%")
+            print(f"Requirements Coverage: {overall_metrics.get('requirements_coverage_percentage', 0):.1f}%")
+            
+            if args.html_report or os.path.exists("cargo_verification_report.html"):
+                html_path = args.html_report or "cargo_verification_report.html"
+                print(f"\n📄 HTML Report: {html_path}")
+            
+            # Show recommendations
+            recommendations = report.get("recommendations", [])
+            if recommendations:
+                print(f"\n💡 Recommendations:")
+                for rec in recommendations[:3]:  # Show top 3
+                    print(f"  {rec}")
+            
+        except Exception as e:
+            print(f"Could not parse coverage report: {e}")
+    
+    # Exit with appropriate code
+    if verification_success:
+        print(f"\n✅ Cargo verify completed successfully")
+        sys.exit(0)
+    else:
+        print(f"\n❌ Cargo verify failed")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

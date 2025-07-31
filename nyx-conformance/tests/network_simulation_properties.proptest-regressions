@@ -1,0 +1,14 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 1ceb9429e7344dfbee61aa4f03cc2ae3647ce67bf439a7bae2449815e5ff8b09 # shrinks to path_count = 2, packets_per_path = 10, reorder_probability = 0.2884778682206344
+cc 1ffde71305d6aace2b8ad21dc4b1f6b43d49e8249bc3f67af7e4ccadbffafc2c # shrinks to failure_modes = [PacketLoss(0.0)], node_count = 3, packet_count = 20
+cc 72f7cafdc4db41dbdc0259a2ba74f29a41952239c17aa03792b3cc16a24b1f35 # shrinks to redundancy_level = 2, base_loss_rate = 0.1, packet_count = 54
+cc 83c1932271a9e90912893a510583cec52cd09a92084e60aeb36ce62de708e8eb # shrinks to (node_ids, node_paths) = ([[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]], [[3, 1], [1, 1], [1, 1]]), failure_modes = [], packet_count = 10, _path_length = 3
+cc 608f4e685df744bdb5e750298491af3e0ee49d7f8c4ab2907707f9d7a5b12b72 # shrinks to redundancy_level = 3, base_loss_rate = 0.23012789845918732, packet_count = 56
+cc 990098938df1655e73c270e51a1b60602c16cc4022f9f43da16507f033fdc3d6 # shrinks to redundancy_level = 2, base_loss_rate = 0.1, packet_count = 33
+cc 789268548120389dbc69f4abefe975897e7a45f6837ca4f0999bddde31d6fe9e # shrinks to failure_modes = [Delay(78), Delay(123)], node_count = 3, packet_count = 20
+cc 51c7130217d01dc9d62604593c9aab40264ec7aa68185833ebe4e5f7c03dfa23 # shrinks to redundancy_level = 4, base_loss_rate = 0.2881512768331032, packet_count = 30

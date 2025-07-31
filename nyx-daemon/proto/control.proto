@@ -153,6 +153,21 @@ message DataResponse {
   uint64 bytes_sent = 3;
 }
 
+// Data reception
+message ReceiveRequest {
+  uint32 stream_id = 1;
+  uint32 max_bytes = 2;  // maximum bytes to receive
+  uint32 timeout_ms = 3; // timeout in milliseconds
+}
+
+message ReceiveResponse {
+  bool success = 1;
+  string error = 2;
+  bytes data = 3;
+  uint64 bytes_received = 4;
+  bool more_data_available = 5;
+}
+
 // Detailed stream statistics
 message StreamStats {
   uint32 stream_id = 1;
@@ -360,6 +375,7 @@ service NyxControl {
   rpc GetStreamStats (StreamId) returns (StreamStats);
   rpc ListStreams (Empty) returns (stream StreamStats);
   rpc SendData (DataRequest) returns (DataResponse);
+  rpc ReceiveData (StreamId) returns (ReceiveResponse);
   
   // Event subscription
   rpc SubscribeEvents (EventFilter) returns (stream Event);

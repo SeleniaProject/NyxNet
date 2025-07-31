@@ -164,7 +164,7 @@ impl NyxEvent {
             NyxEvent::DaemonStatusChanged { new_status, .. } => {
                 match new_status {
                     ConnectionStatus::Connected => EventSeverity::Info,
-                    ConnectionStatus::Degraded => EventSeverity::Warning,
+                    ConnectionStatus::Connecting => EventSeverity::Info,
                     ConnectionStatus::Reconnecting => EventSeverity::Warning,
                     ConnectionStatus::Disconnected => EventSeverity::Error,
                     ConnectionStatus::Failed => EventSeverity::Critical,
@@ -174,7 +174,7 @@ impl NyxEvent {
                 match new_health {
                     HealthStatus::Healthy => EventSeverity::Info,
                     HealthStatus::Degraded => EventSeverity::Warning,
-                    HealthStatus::Critical => EventSeverity::Critical,
+                    HealthStatus::Unhealthy => EventSeverity::Critical,
                     HealthStatus::Unknown => EventSeverity::Warning,
                 }
             }

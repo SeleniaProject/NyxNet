@@ -8,7 +8,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::time::{Duration, Instant};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::time::sleep;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -36,6 +36,7 @@ mod throughput_measurer;
 mod error_tracker;
 mod statistics_renderer;
 mod performance_analyzer;
+mod connection_monitor;
 
 use i18n::localize;
 use benchmark::{BenchmarkRunner, BenchmarkConfig, LatencyPercentiles};
@@ -51,12 +52,16 @@ use proto::nyx_control_client::NyxControlClient;
 use tonic::transport::{Channel, Endpoint};
 use tonic::Request;
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
     /// Daemon endpoint
     #[arg(short, long, default_value = "http://127.0.0.1:50051")]
     endpoint: Option<String>,
+    
+    /// Authentication token for daemon access
+    #[arg(long, env = "NYX_AUTH_TOKEN")]
+    auth_token: Option<String>,
     
     /// Language (en, ja, zh)
     #[arg(short, long, default_value = "en")]
@@ -66,7 +71,7 @@ struct Cli {
     command: Commands,
 }
 
-#[derive(Subcommand)]
+#[derive(Subcommand, Clone)]
 enum Commands {
     /// Connect to a target through Nyx network
     Connect {
@@ -158,6 +163,24 @@ enum Commands {
         /// Enable performance analysis and recommendations
         #[arg(long)]
         analyze: bool,
+    },
+    /// Monitor connection quality with automatic reconnection
+    Monitor {
+        /// Enable automatic reconnection
+        #[arg(long, default_value = "true")]
+        auto_reconnect: bool,
+        /// Maximum reconnection attempts
+        #[arg(long, default_value = "5")]
+        max_attempts: u32,
+        /// Health check interval in seconds
+        #[arg(long, default_value = "10")]
+        check_interval: u64,
+        /// Display format (table, json, compact)
+        #[arg(short, long, default_value = "table")]
+        format: String,
+        /// Show detailed connection events
+        #[arg(long)]
+        verbose: bool,
     },
 }
 
@@ -286,6 +309,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Statistics { format, realtime, interval, layers, percentiles, distribution, time_range, stream_ids, analyze } => {
             cmd_statistics(&cli, format, *realtime, *interval, *layers, *percentiles, *distribution, time_range, stream_ids, *analyze, shutdown).await
         }
+        Commands::Monitor { auto_reconnect, max_attempts, check_interval, format, verbose } => {
+            cmd_monitor(&cli, *auto_reconnect, *max_attempts, *check_interval, format, *verbose, shutdown).await
+        }
     }
 }
 
@@ -306,6 +332,19 @@ async fn create_client(cli: &Cli) -> Result<NyxControlClient<Channel>, Box<dyn s
     .await?;
     
     Ok(NyxControlClient::new(channel))
+}
+
+/// Create authenticated request with token if available
+fn create_authenticated_request<T>(cli: &Cli, request: T) -> Request<T> {
+    let mut req = Request::new(request);
+    
+    if let Some(token) = &cli.auth_token {
+        if let Ok(auth_value) = tonic::metadata::MetadataValue::try_from(format!("Bearer {}", token)) {
+            req.metadata_mut().insert("authorization", auth_value);
+        }
+    }
+    
+    req
 }
 
 async fn cmd_connect(
@@ -386,7 +425,7 @@ async fn cmd_connect(
         // Attempt connection with detailed error handling
         let connection_result = tokio::time::timeout(
             Duration::from_secs(connect_timeout),
-            client.open_stream(Request::new(request.clone()))
+            client.open_stream(create_authenticated_request(cli, request.clone()))
         ).await;
         
         spinner_task.abort();
@@ -478,15 +517,53 @@ async fn cmd_connect(
         println!("{}", style("🔗 Entering interactive mode with real-time monitoring").yellow());
         println!("{}", style("Type 'quit' to exit, 'status' for connection info, or any text to send").dim());
         
-        // Start connection monitoring in background
-        let monitoring_client = create_enhanced_client(cli).await?;
-        let stream_id_for_monitoring = stream_info.stream_id;
+        // Start enhanced connection monitoring with automatic reconnection
+        let monitoring_client = Arc::new(Mutex::new(create_enhanced_client(cli).await?));
+        let monitor_config = connection_monitor::ReconnectionConfig {
+            enabled: true,
+            max_attempts: 3,
+            initial_delay: Duration::from_millis(500),
+            max_delay: Duration::from_secs(10),
+            backoff_multiplier: 2.0,
+            jitter: true,
+            health_check_interval: Duration::from_secs(5),
+            health_check_timeout: Duration::from_secs(3),
+        };
+        
+        let (connection_monitor, mut event_receiver) = connection_monitor::ConnectionMonitor::new(
+            monitoring_client, 
+            cli.clone(), 
+            monitor_config
+        );
+        
+        connection_monitor.start().await;
+        
+        // Handle connection events in background
+        let cli_clone = cli.clone();
         let monitoring_task = tokio::spawn(async move {
-            monitor_connection_health(monitoring_client, stream_id_for_monitoring).await;
+            while let Some(event) = event_receiver.recv().await {
+                match event {
+                    connection_monitor::ConnectionEvent::Disconnected { reason } => {
+                        println!("\n{} Connection lost: {}", style("⚠️").yellow(), reason);
+                    }
+                    connection_monitor::ConnectionEvent::ReconnectionStarted { attempt } => {
+                        println!("{} Attempting to reconnect (attempt {})...", style("🔄").cyan(), attempt);
+                    }
+                    connection_monitor::ConnectionEvent::ReconnectionSucceeded { attempt, duration } => {
+                        println!("{} Reconnected successfully (attempt {} in {:.2}s)", 
+                            style("✅").green(), attempt, duration.as_secs_f64());
+                    }
+                    connection_monitor::ConnectionEvent::ReconnectionFailed { attempt, error } => {
+                        println!("{} Reconnection attempt {} failed: {}", 
+                            style("❌").red(), attempt, error);
+                    }
+                    _ => {}
+                }
+            }
         });
         
         // Interactive session with enhanced functionality
-        let result = run_enhanced_interactive_session_with_transfers(&mut client, &stream_info, shutdown.clone()).await;
+        let result = run_enhanced_interactive_session_with_transfers(&mut client, &stream_info, cli, shutdown.clone()).await;
         
         monitoring_task.abort();
         
@@ -498,14 +575,14 @@ async fn cmd_connect(
         // Enhanced non-interactive mode with performance testing
         println!("{}", style("📤 Running connection test...").cyan());
         
-        let test_result = run_connection_test(&mut client, &stream_info).await?;
+        let test_result = run_connection_test(&mut client, &stream_info, cli).await?;
         display_connection_test_results(&test_result);
     }
     
     // Graceful stream closure
     println!("{}", style("🔌 Closing Nyx stream...").dim());
     let close_request = proto::StreamId { id: stream_info.stream_id };
-    match client.close_stream(Request::new(close_request)).await {
+    match client.close_stream(create_authenticated_request(cli, close_request)).await {
         Ok(_) => println!("{}", style("✅ Stream closed gracefully").green()),
         Err(e) => println!("{}", style(format!("⚠️  Stream close warning: {}", e)).yellow()),
     }
@@ -559,7 +636,7 @@ async fn create_enhanced_client(cli: &Cli) -> Result<NyxControlClient<Channel>, 
 }
 
 /// Monitor connection health in background
-async fn monitor_connection_health(mut client: NyxControlClient<Channel>, stream_id: u32) {
+async fn monitor_connection_health(mut client: NyxControlClient<Channel>, stream_id: u32, cli: &Cli) {
     let mut interval = tokio::time::interval(Duration::from_secs(5));
     
     loop {
@@ -567,7 +644,7 @@ async fn monitor_connection_health(mut client: NyxControlClient<Channel>, stream
         
         // Get stream statistics
         let stream_id_req = proto::StreamId { id: stream_id };
-        match client.get_stream_stats(Request::new(stream_id_req)).await {
+        match client.get_stream_stats(create_authenticated_request(cli, stream_id_req)).await {
             Ok(response) => {
                 let stats = response.into_inner();
                 if stats.avg_rtt_ms > 200.0 {
@@ -591,10 +668,11 @@ async fn monitor_connection_health(mut client: NyxControlClient<Channel>, stream
 async fn display_stream_status(
     client: &mut NyxControlClient<Channel>,
     stream_id: u32,
+    cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let stream_id_req = proto::StreamId { id: stream_id };
     
-    match client.get_stream_stats(Request::new(stream_id_req)).await {
+    match client.get_stream_stats(create_authenticated_request(cli, stream_id_req)).await {
         Ok(response) => {
             let stats = response.into_inner();
             println!("\n📊 Stream Status:");
@@ -746,6 +824,7 @@ impl FileTransferSession {
 async fn run_connection_test(
     client: &mut NyxControlClient<Channel>,
     stream_info: &proto::StreamResponse,
+    cli: &Cli,
 ) -> Result<ConnectionTestResult, Box<dyn std::error::Error>> {
     let test_data = b"Nyx Network Connection Test - Performance Validation";
     let test_start = Instant::now();
@@ -755,14 +834,14 @@ async fn run_connection_test(
         data: test_data.to_vec(),
     };
     
-    match client.send_data(Request::new(data_request)).await {
+    match client.send_data(create_authenticated_request(cli, data_request)).await {
         Ok(response) => {
             let data_response = response.into_inner();
             let test_duration = test_start.elapsed();
             
             // Get updated stream stats for RTT
             let stream_id_req = proto::StreamId { id: stream_info.stream_id };
-            let rtt = match client.get_stream_stats(Request::new(stream_id_req)).await {
+            let rtt = match client.get_stream_stats(create_authenticated_request(cli, stream_id_req)).await {
                 Ok(stats_response) => stats_response.into_inner().avg_rtt_ms,
                 Err(_) => 0.0,
             };
@@ -905,6 +984,7 @@ async fn send_file(
     stream_id: u32,
     file_path: &Path,
     config: FileTransferConfig,
+    cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error>> {
     println!("📤 Initiating file transfer: {}", file_path.display());
     
@@ -924,7 +1004,7 @@ async fn send_file(
         data: format!("FILE_METADATA:{}", metadata_json).into_bytes(),
     };
     
-    match client.send_data(Request::new(metadata_request)).await {
+    match client.send_data(create_authenticated_request(cli, metadata_request)).await {
         Ok(response) => {
             let data_response = response.into_inner();
             if !data_response.success {
@@ -990,7 +1070,7 @@ async fn send_file(
                     data: chunk_message,
                 };
                 
-                match client.send_data(Request::new(chunk_request)).await {
+                match client.send_data(create_authenticated_request(cli, chunk_request)).await {
                     Ok(response) => {
                         let data_response = response.into_inner();
                         if data_response.success {
@@ -1050,7 +1130,7 @@ async fn send_file(
         data: format!("FILE_COMPLETE:{}", metadata.transfer_id).into_bytes(),
     };
     
-    match client.send_data(Request::new(completion_request)).await {
+    match client.send_data(create_authenticated_request(cli, completion_request)).await {
         Ok(_) => {
             println!("✅ File transfer completed successfully!");
             println!("📊 Transfer statistics:");
@@ -1088,6 +1168,7 @@ async fn receive_file(
 async fn run_enhanced_interactive_session_with_transfers(
     client: &mut NyxControlClient<Channel>,
     stream_info: &proto::StreamResponse,
+    cli: &Cli,
     shutdown: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut stdin = tokio::io::stdin();
@@ -1124,7 +1205,7 @@ async fn run_enhanced_interactive_session_with_transfers(
                     println!("  - quit/exit         : Exit interactive mode");
                     continue;
                 } else if input == "status" {
-                    display_stream_status(client, stream_info.stream_id).await?;
+                    display_stream_status(client, stream_info.stream_id, cli).await?;
                     continue;
                 } else if input.starts_with("upload ") {
                     let file_path_str = input.strip_prefix("upload ").unwrap().trim();
@@ -1141,7 +1222,7 @@ async fn run_enhanced_interactive_session_with_transfers(
                     }
                     
                     // Execute file upload
-                    match send_file(client, stream_info.stream_id, &file_path, transfer_config.clone()).await {
+                    match send_file(client, stream_info.stream_id, &file_path, transfer_config.clone(), cli).await {
                         Ok(_) => {
                             println!("✅ File upload completed successfully!");
                         }
@@ -1189,7 +1270,7 @@ async fn run_enhanced_interactive_session_with_transfers(
                         data: format!("TEXT_MESSAGE:{}", message).into_bytes(),
                     };
                     
-                    match client.send_data(Request::new(data_request)).await {
+                    match client.send_data(create_authenticated_request(cli, data_request)).await {
                         Ok(response) => {
                             let data_response = response.into_inner();
                             let send_duration = send_start.elapsed();
@@ -1237,7 +1318,7 @@ async fn cmd_status(
     let mut client = create_client(cli).await?;
     
     loop {
-        let request = Request::new(proto::Empty {});
+        let request = create_authenticated_request(cli, proto::Empty {});
         let response = client.get_info(request).await?;
         let status = response.into_inner();
         
@@ -1366,8 +1447,11 @@ async fn cmd_bench(
     progress_task.abort();
     pb.finish_with_message("Benchmark completed");
     
+    // Perform enhanced analysis
+    let analysis = benchmark::BenchmarkRunner::analyze_benchmark_results(&result);
+    
     // Display results
-    display_benchmark_results(&result, &cli.language, detailed).await?;
+    display_benchmark_results(&result, &analysis, &cli.language, detailed).await?;
     
     Ok(())
 }
@@ -1375,6 +1459,7 @@ async fn cmd_bench(
 /// Display comprehensive benchmark results with layer-specific metrics
 async fn display_benchmark_results(
     result: &benchmark::BenchmarkResult,
+    analysis: &benchmark::BenchmarkAnalysis,
     language: &str,
     detailed: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -1543,6 +1628,298 @@ async fn display_benchmark_results(
         let mut args = HashMap::new();
         args.insert("p99_latency", format!("{:.1}ms", result.percentiles.p99.as_millis()));
         println!("{}", localize(language, "benchmark_p99_latency", Some(&args)).unwrap_or_else(|_| format!("99th percentile latency: {}", args["p99_latency"])));
+        
+        // Enhanced analysis display
+        println!("\n{}", style("Enhanced Performance Analysis:").bold().cyan());
+        
+        // Overall performance score
+        let efficiency_color = if analysis.overall_performance.efficiency_score >= 80.0 {
+            console::Color::Green
+        } else if analysis.overall_performance.efficiency_score >= 60.0 {
+            console::Color::Yellow
+        } else {
+            console::Color::Red
+        };
+        
+        println!("Overall Efficiency Score: {}", 
+            style(format!("{:.1}/100", analysis.overall_performance.efficiency_score))
+                .fg(efficiency_color).bold());
+        
+        // Latency consistency
+        println!("Latency Consistency Score: {:.1}/100", analysis.latency_analysis.consistency_score);
+        println!("Outlier Requests: {:.1}%", analysis.latency_analysis.outlier_percentage);
+        
+        // Throughput efficiency
+        println!("Throughput Efficiency: {:.1}%", analysis.throughput_analysis.efficiency);
+        
+        // Bottleneck indicators
+        if !analysis.throughput_analysis.bottleneck_indicators.is_empty() {
+            println!("\n{}", style("Bottleneck Indicators:").bold().yellow());
+            for bottleneck in &analysis.throughput_analysis.bottleneck_indicators {
+                println!("⚠️  {}", bottleneck);
+            }
+        }
+        
+        // Error patterns
+        if !analysis.error_analysis.error_patterns.is_empty() {
+            println!("\n{}", style("Error Patterns:").bold().red());
+            for pattern in &analysis.error_analysis.error_patterns {
+                println!("❌ {}", pattern);
+            }
+        }
+        
+        // Recommendations
+        if !analysis.recommendations.is_empty() {
+            println!("\n{}", style("Performance Recommendations:").bold().blue());
+            for (i, recommendation) in analysis.recommendations.iter().enumerate() {
+                println!("{}. {}", i + 1, recommendation);
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// Monitor connection quality with automatic reconnection
+async fn cmd_monitor(
+    cli: &Cli,
+    auto_reconnect: bool,
+    max_attempts: u32,
+    check_interval: u64,
+    format: &str,
+    verbose: bool,
+    shutdown: Arc<AtomicBool>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use connection_monitor::{ConnectionMonitor, ReconnectionConfig, ConnectionEvent};
+    use console::style;
+    use comfy_table::{Table, presets::UTF8_FULL};
+    
+    println!("{}", style("Starting connection quality monitor...").cyan());
+    
+    // Create client
+    let client = Arc::new(Mutex::new(create_client(cli).await?));
+    
+    // Configure reconnection
+    let config = ReconnectionConfig {
+        enabled: auto_reconnect,
+        max_attempts,
+        initial_delay: Duration::from_millis(500),
+        max_delay: Duration::from_secs(30),
+        backoff_multiplier: 2.0,
+        jitter: true,
+        health_check_interval: Duration::from_secs(check_interval),
+        health_check_timeout: Duration::from_secs(5),
+    };
+    
+    // Create monitor
+    let (monitor, mut event_receiver) = ConnectionMonitor::new(client, cli.clone(), config);
+    
+    // Start monitoring
+    monitor.start().await;
+    
+    println!("{}", style("Connection monitor started").green());
+    if auto_reconnect {
+        println!("Auto-reconnection: {} (max {} attempts)", 
+            style("enabled").green(), max_attempts);
+    } else {
+        println!("Auto-reconnection: {}", style("disabled").yellow());
+    }
+    println!("Health check interval: {}s", check_interval);
+    println!("Press Ctrl+C to stop monitoring\n");
+    
+    // Display initial status
+    let mut last_display = Instant::now();
+    let display_interval = Duration::from_secs(5);
+    
+    // Event handling loop
+    loop {
+        tokio::select! {
+            // Handle connection events
+            event = event_receiver.recv() => {
+                match event {
+                    Some(event) => {
+                        handle_connection_event(&event, verbose).await;
+                    }
+                    None => break, // Channel closed
+                }
+            }
+            
+            // Periodic status display
+            _ = sleep(Duration::from_secs(1)) => {
+                if last_display.elapsed() >= display_interval {
+                    display_connection_status(&monitor, format).await?;
+                    last_display = Instant::now();
+                }
+            }
+            
+            // Check for shutdown
+            _ = sleep(Duration::from_millis(100)) => {
+                if shutdown.load(Ordering::Relaxed) {
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Stop monitoring
+    monitor.stop();
+    println!("\n{}", style("Connection monitor stopped").yellow());
+    
+    Ok(())
+}
+
+/// Handle connection events
+async fn handle_connection_event(event: &connection_monitor::ConnectionEvent, verbose: bool) {
+    use connection_monitor::ConnectionEvent;
+    use console::style;
+    
+    match event {
+        ConnectionEvent::Connected => {
+            println!("{} {}", style("✅").green(), style("Connection established").green());
+        }
+        ConnectionEvent::Disconnected { reason } => {
+            println!("{} {} ({})", 
+                style("❌").red(), 
+                style("Connection lost").red(), 
+                style(reason).dim());
+        }
+        ConnectionEvent::QualityChanged { old_quality, new_quality } => {
+            if verbose || old_quality.status != new_quality.status {
+                println!("{} Connection quality: {} → {} (Score: {:.1})", 
+                    style("🔄").cyan(),
+                    style(format!("{:?}", old_quality.status)).fg(old_quality.status_color()),
+                    style(format!("{:?}", new_quality.status)).fg(new_quality.status_color()),
+                    new_quality.stability_score);
+            }
+        }
+        ConnectionEvent::ReconnectionStarted { attempt } => {
+            println!("{} {} (attempt {}/{})", 
+                style("🔄").cyan(), 
+                style("Reconnection started").cyan(), 
+                attempt, 
+                5); // TODO: Get max attempts from config
+        }
+        ConnectionEvent::ReconnectionSucceeded { attempt, duration } => {
+            println!("{} {} (attempt {} succeeded in {:.2}s)", 
+                style("✅").green(), 
+                style("Reconnection successful").green(), 
+                attempt,
+                duration.as_secs_f64());
+        }
+        ConnectionEvent::ReconnectionFailed { attempt, error } => {
+            println!("{} {} (attempt {} failed: {})", 
+                style("❌").red(), 
+                style("Reconnection failed").red(), 
+                attempt,
+                style(error).dim());
+        }
+        ConnectionEvent::ReconnectionExhausted { total_attempts } => {
+            println!("{} {} ({} attempts exhausted)", 
+                style("💀").red(), 
+                style("Reconnection failed permanently").red(), 
+                total_attempts);
+        }
+    }
+}
+
+/// Display current connection status
+async fn display_connection_status(
+    monitor: &connection_monitor::ConnectionMonitor,
+    format: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use console::style;
+    use comfy_table::{Table, presets::UTF8_FULL};
+    
+    let quality = monitor.get_quality().await;
+    
+    match format {
+        "json" => {
+            println!("{}", serde_json::to_string_pretty(&quality)?);
+        }
+        "compact" => {
+            println!("{} {} | Latency: {:.1}ms | Stability: {:.1}% | Grade: {}", 
+                style("Status:").bold(),
+                style(format!("{:?}", quality.status)).fg(quality.status_color()),
+                quality.avg_latency_ms,
+                quality.stability_score,
+                quality.quality_grade());
+        }
+        _ => {
+            // Clear screen for table display
+            execute!(std::io::stdout(), Clear(ClearType::All), MoveTo(0, 0))?;
+            
+            println!("{}", style("Connection Quality Monitor").bold().cyan());
+            println!("{}", style("─".repeat(50)).dim());
+            
+            let mut table = Table::new();
+            table.load_preset(UTF8_FULL);
+            table.set_header(vec!["Metric", "Value"]);
+            
+            table.add_row(vec![
+                "Status", 
+                &format!("{:?}", quality.status)
+            ]);
+            table.add_row(vec![
+                "Description", 
+                quality.status_description()
+            ]);
+            table.add_row(vec![
+                "Quality Grade", 
+                &quality.quality_grade().to_string()
+            ]);
+            table.add_row(vec![
+                "Average Latency", 
+                &format!("{:.1} ms", quality.avg_latency_ms)
+            ]);
+            table.add_row(vec![
+                "Stability Score", 
+                &format!("{:.1}%", quality.stability_score)
+            ]);
+            table.add_row(vec![
+                "Packet Loss Rate", 
+                &format!("{:.2}%", quality.packet_loss_rate * 100.0)
+            ]);
+            table.add_row(vec![
+                "Successful Checks", 
+                &quality.successful_checks.to_string()
+            ]);
+            table.add_row(vec![
+                "Failed Checks", 
+                &quality.failed_checks.to_string()
+            ]);
+            table.add_row(vec![
+                "Connection Uptime", 
+                &format!("{:.1}s", quality.uptime.as_secs_f64())
+            ]);
+            
+            if let Some(last_success) = quality.last_success {
+                table.add_row(vec![
+                    "Last Success", 
+                    &last_success.format("%H:%M:%S").to_string()
+                ]);
+            }
+            
+            if let Some(last_failure) = quality.last_failure {
+                table.add_row(vec![
+                    "Last Failure", 
+                    &last_failure.format("%H:%M:%S").to_string()
+                ]);
+            }
+            
+            println!("{}", table);
+            
+            // Display status indicator
+            let status_indicator = match quality.status {
+                connection_monitor::ConnectionStatus::Healthy => "🟢 Healthy",
+                connection_monitor::ConnectionStatus::Degraded => "🟡 Degraded", 
+                connection_monitor::ConnectionStatus::Unstable => "🟠 Unstable",
+                connection_monitor::ConnectionStatus::Disconnected => "🔴 Disconnected",
+                connection_monitor::ConnectionStatus::Reconnecting => "🔵 Reconnecting",
+                connection_monitor::ConnectionStatus::Failed => "⚫ Failed",
+            };
+            
+            println!("\n{} {}", style("Current Status:").bold(), status_indicator);
+        }
     }
     
     Ok(())
@@ -1551,9 +1928,10 @@ async fn display_benchmark_results(
 /// Collect comprehensive statistics data from the daemon
 async fn collect_statistics_data(
     client: &mut NyxControlClient<Channel>,
+    cli: &Cli,
 ) -> Result<StatisticsData, Box<dyn std::error::Error>> {
     // Get daemon info
-    let daemon_info_response = client.get_info(Request::new(proto::Empty {})).await?;
+    let daemon_info_response = client.get_info(create_authenticated_request(cli, proto::Empty {})).await?;
     let daemon_info = daemon_info_response.into_inner();
     
     // Simulate collecting comprehensive statistics
@@ -1860,48 +2238,123 @@ async fn cmd_statistics(
     let mut client = create_client(cli).await?;
     
     if realtime {
-        println!("{}", style("Starting real-time statistics display...").green());
-        println!("{}", style("Press Ctrl+C to exit").dim());
+        println!("{}", style("Starting enhanced real-time statistics display...").green());
+        println!("{}", style("Interactive controls: 'q' quit, 'p' pause, 'e' export, 's' snapshot").dim());
+        
+        // Enable raw mode for keyboard input
+        crossterm::terminal::enable_raw_mode()?;
+        
+        let mut paused = false;
+        let mut latency_history: Vec<(chrono::DateTime<chrono::Utc>, f64)> = Vec::new();
+        
+        // Keyboard input handling
+        let (key_sender, mut key_receiver) = tokio::sync::mpsc::unbounded_channel();
+        
+        // Spawn keyboard input task
+        let key_sender_clone = key_sender.clone();
+        tokio::spawn(async move {
+            use crossterm::event::{self, Event, KeyCode};
+            
+            loop {
+                if let Ok(Event::Key(key_event)) = event::read() {
+                    if key_sender_clone.send(key_event.code).is_err() {
+                        break;
+                    }
+                }
+            }
+        });
         
         loop {
+            // Handle keyboard input
+            while let Ok(key) = key_receiver.try_recv() {
+                match key {
+                    crossterm::event::KeyCode::Char('q') => {
+                        println!("\n{}", style("Exiting real-time monitor...").yellow());
+                        crossterm::terminal::disable_raw_mode()?;
+                        return Ok(());
+                    }
+                    crossterm::event::KeyCode::Char('p') => {
+                        paused = !paused;
+                        let status = if paused { "paused" } else { "resumed" };
+                        println!("\n{} Monitor {}", style("⏸️").yellow(), status);
+                    }
+                    crossterm::event::KeyCode::Char('e') => {
+                        // Export current data
+                        let stats_data = collect_statistics_data(&mut client, cli).await?;
+                        let filename = format!("nyx_stats_{}.json", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+                        renderer.export_to_file(&stats_data, &filename, "json")?;
+                    }
+                    crossterm::event::KeyCode::Char('s') => {
+                        // Save snapshot
+                        let stats_data = collect_statistics_data(&mut client, cli).await?;
+                        let filename = format!("nyx_snapshot_{}.txt", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+                        renderer.export_to_file(&stats_data, &filename, "txt")?;
+                    }
+                    crossterm::event::KeyCode::Char('c') => {
+                        // Export to CSV
+                        let stats_data = collect_statistics_data(&mut client, cli).await?;
+                        let filename = format!("nyx_stats_{}.csv", chrono::Utc::now().format("%Y%m%d_%H%M%S"));
+                        renderer.export_to_file(&stats_data, &filename, "csv")?;
+                    }
+                    _ => {}
+                }
+            }
+            
             if shutdown.load(Ordering::Relaxed) {
                 break;
             }
             
-            // Collect current statistics from daemon
-            let stats_data = collect_statistics_data(&mut client).await?;
-            
-            // Add to analyzer if enabled
-            if let Some(ref mut analyzer) = analyzer {
-                analyzer.add_data_point(stats_data.clone());
+            if !paused {
+                // Collect current statistics from daemon
+                let stats_data = collect_statistics_data(&mut client, cli).await?;
                 
-                // Perform analysis periodically
-                if let Ok(analysis) = analyzer.analyze() {
-                    if !analysis.alerts.is_empty() {
-                        println!("\n{}", style("⚠️  Performance Alerts:").bold().yellow());
-                        for alert in &analysis.alerts {
-                            println!("  • {}", alert.message);
-                        }
-                    }
+                // Add to latency history for trend analysis
+                latency_history.push((stats_data.timestamp, stats_data.summary.avg_latency_ms));
+                if latency_history.len() > 60 {
+                    latency_history.remove(0);
+                }
+                
+                // Add to analyzer if enabled
+                if let Some(ref mut analyzer) = analyzer {
+                    analyzer.add_data_point(stats_data.clone());
                     
-                    if !analysis.recommendations.is_empty() {
-                        println!("\n{}", style("💡 Recommendations:").bold().blue());
-                        for rec in analysis.recommendations.iter().take(3) {
-                            println!("  • {}: {}", rec.title, rec.description);
+                    // Perform analysis periodically
+                    if let Ok(analysis) = analyzer.analyze() {
+                        if !analysis.alerts.is_empty() {
+                            println!("\n{}", style("⚠️  Performance Alerts:").bold().yellow());
+                            for alert in &analysis.alerts {
+                                println!("  • {}", alert.message);
+                            }
+                        }
+                        
+                        if !analysis.recommendations.is_empty() {
+                            println!("\n{}", style("💡 Recommendations:").bold().blue());
+                            for rec in analysis.recommendations.iter().take(3) {
+                                println!("  • {}: {}", rec.title, rec.description);
+                            }
                         }
                     }
                 }
+                
+                // Display statistics with trend chart
+                renderer.display_real_time(&stats_data).await?;
+                
+                // Display latency trend chart if we have enough data
+                if latency_history.len() >= 10 {
+                    let trend_chart = renderer.create_latency_trend_chart(&latency_history)?;
+                    println!("\n{}", trend_chart);
+                }
             }
-            
-            // Display statistics
-            renderer.display_real_time(&stats_data).await?;
             
             // Wait for next update
             sleep(Duration::from_secs(interval)).await;
         }
+        
+        // Disable raw mode on exit
+        crossterm::terminal::disable_raw_mode()?;
     } else {
         // Single snapshot mode
-        let stats_data = collect_statistics_data(&mut client).await?;
+        let stats_data = collect_statistics_data(&mut client, cli).await?;
         
         // Perform analysis if requested
         if let Some(ref mut analyzer) = analyzer {

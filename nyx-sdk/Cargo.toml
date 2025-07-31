@@ -48,14 +48,18 @@ futures = "0.3"
 humantime = "2.1"
 chrono = { version = "0.4", features = ["serde"] }
 
+# Random number generation for jitter
+fastrand = "2.0"
+
 # Optional features
-uuid = { version = "1.6", features = ["v4", "serde"], optional = true }
+uuid = { version = "1.8", features = ["v4", "serde"], optional = true }
+tracing-subscriber = "0.3.19"
 
 [build-dependencies]
 tonic-build = "0.10"
 
 [features]
-default = []
+default = ["uuid"]
 # Enable stream reconnection with automatic retry
 reconnect = ["backoff", "uuid"]
 # Enable comprehensive error propagation

@@ -53,12 +53,18 @@ config = "0.14"
 socket2 = "0.5"
 hickory-resolver = "0.24"
 
+# Logging
+log = "0.4"
+
 # Metrics and telemetry
 metrics = "0.22"
 metrics-exporter-prometheus = "0.13"
 opentelemetry = { version = "0.21", features = ["metrics", "trace"] }
 opentelemetry-otlp = { version = "0.14", features = ["tokio"] }
 opentelemetry-semantic-conventions = "0.13"
+
+# HTTP server for Prometheus metrics
+axum = "0.7"
 
 # Crypto and security
 rand = "0.8"
@@ -73,6 +79,13 @@ priority-queue = "1.3"
 # Path and routing
 petgraph = "0.6"
 geo = "0.27"
+
+# DHT and peer discovery
+libp2p = { version = "0.53", features = ["kad", "noise", "yamux", "tcp", "tokio", "macros"] }
+trust-dns-resolver = "0.23"
+
+# Database for peer persistence
+rusqlite = { version = "0.30", features = ["bundled", "chrono"] }
 
 [build-dependencies]
 tonic-build = "0.10" 

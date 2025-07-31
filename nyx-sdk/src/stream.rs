@@ -6,23 +6,24 @@
 //! for seamless integration with existing async I/O code, along with automatic reconnection,
 //! comprehensive statistics, and state management.
 
-use crate::config::NyxConfig;
 use crate::error::{NyxError, NyxResult};
 use crate::proto::nyx_control_client::NyxControlClient;
 use crate::daemon::ConnectionInfo;
+use crate::retry::{RetryExecutor, RetryStrategy};
 
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio::sync::{RwLock, Mutex};
 use tonic::transport::Channel;
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use bytes::{Bytes, BytesMut};
+use bytes::BytesMut;
 use futures_util::ready;
+use std::future::Future;
 // use pin_project_lite::pin_project;
 
 #[cfg(feature = "reconnect")]
@@ -58,16 +59,16 @@ impl Default for StreamOptions {
     }
 }
 
-impl Into<crate::proto::StreamOptions> for StreamOptions {
-    fn into(self) -> crate::proto::StreamOptions {
+impl From<StreamOptions> for crate::proto::StreamOptions {
+    fn from(opts: StreamOptions) -> crate::proto::StreamOptions {
         crate::proto::StreamOptions {
-            buffer_size: self.buffer_size as u32,
-            timeout_ms: self.operation_timeout.as_millis() as u32,
+            buffer_size: opts.buffer_size as u32,
+            timeout_ms: opts.operation_timeout.as_millis() as u32,
             multipath: false,
             max_paths: 1,
             path_strategy: "lowest_latency".to_string(),
-            auto_reconnect: self.auto_reconnect,
-            max_retry_attempts: self.max_reconnect_attempts,
+            auto_reconnect: opts.auto_reconnect,
+            max_retry_attempts: opts.max_reconnect_attempts,
             compression: false,
             cipher_suite: "chacha20poly1305".to_string(),
         }
@@ -127,6 +128,7 @@ pub struct NyxStream {
     stats: Arc<RwLock<StreamStats>>,
     read_buffer: Arc<Mutex<BytesMut>>,
     write_buffer: Arc<Mutex<BytesMut>>,
+    retry_executor: RetryExecutor,
     #[cfg(feature = "reconnect")]
     reconnect_manager: Option<Arc<ReconnectionManager>>,
 }
@@ -146,6 +148,16 @@ impl NyxStream {
             ..Default::default()
         };
 
+        // Create retry strategy for stream operations
+        let retry_strategy = RetryStrategy {
+            max_attempts: 2, // Fewer retries for stream operations
+            initial_delay: Duration::from_millis(50),
+            max_delay: Duration::from_secs(5),
+            backoff_multiplier: 1.5,
+            jitter: true,
+            max_total_time: Some(options.operation_timeout),
+        };
+
         let stream = Self {
             stream_id,
             target: target.clone(),
@@ -156,9 +168,10 @@ impl NyxStream {
             stats: Arc::new(RwLock::new(stats)),
             read_buffer: Arc::new(Mutex::new(BytesMut::with_capacity(options.buffer_size))),
             write_buffer: Arc::new(Mutex::new(BytesMut::with_capacity(options.buffer_size))),
+            retry_executor: RetryExecutor::new(retry_strategy),
             #[cfg(feature = "reconnect")]
             reconnect_manager: if options.auto_reconnect {
-                Some(Arc::new(ReconnectionManager::new(target, options.clone())))
+                Some(Arc::new(ReconnectionManager::new(target.clone(), options.clone())))
             } else {
                 None
             },
@@ -180,7 +193,7 @@ impl NyxStream {
 
     /// Get current stream state
     pub async fn state(&self) -> StreamState {
-        *self.state.read().await
+        self.state.read().await.clone()
     }
 
     /// Get stream statistics
@@ -245,7 +258,7 @@ impl NyxStream {
                 }
                 Err(e) => {
                     *self.state.write().await = StreamState::Error;
-                    error!("Failed to reconnect stream {}: {}", self.stream_id, e);
+                    warn!("Failed to reconnect stream {}: {}", self.stream_id, e);
                     Err(e)
                 }
             }
@@ -265,22 +278,33 @@ impl NyxStream {
         let data = write_buffer.split().freeze();
         let bytes_to_send = data.len();
         
-        let mut client = self.client.lock().await;
-        let request = crate::proto::DataRequest {
-            stream_id: self.stream_id.to_string(),
-            data: data.to_vec(),
-        };
+        // Use retry logic for sending data
+        let result = self.retry_executor.execute(|| async {
+            let mut client = self.client.lock().await;
+            let request_data = crate::proto::DataRequest {
+                stream_id: self.stream_id.to_string(),
+                data: data.to_vec(),
+            };
 
-        match client.send_data(tonic::Request::new(request)).await {
-            Ok(response) => {
-                let data_response = response.into_inner();
-                if !data_response.success {
-                    return Err(NyxError::stream_error(
-                        format!("Failed to send data: {}", data_response.error),
-                        Some(self.stream_id)
-                    ));
+            let request = tonic::Request::new(request_data);
+            match client.send_data(request).await {
+                Ok(response) => {
+                    let data_response = response.into_inner();
+                    if !data_response.success {
+                        Err(NyxError::stream_error(
+                            format!("Failed to send data: {}", data_response.error),
+                            Some(self.stream_id)
+                        ))
+                    } else {
+                        Ok(data_response)
+                    }
                 }
-                
+                Err(e) => Err(NyxError::from(e))
+            }
+        }).await;
+
+        match result {
+            Ok(_) => {
                 // Update statistics
                 if self.options.collect_stats {
                     let mut stats = self.stats.write().await;
@@ -298,38 +322,56 @@ impl NyxStream {
                 new_buffer.extend_from_slice(&write_buffer);
                 *write_buffer = new_buffer;
                 
-                Err(NyxError::from(e))
+                Err(e)
             }
         }
     }
 
-    /// Internal read implementation
+    /// Internal read implementation with actual data streaming
     async fn read_internal(&mut self, buf: &mut ReadBuf<'_>) -> NyxResult<()> {
         let mut read_buffer = self.read_buffer.lock().await;
         
         // If buffer is empty, try to receive data from daemon
         if read_buffer.is_empty() {
-            // In a real implementation, this would be a streaming gRPC call
-            // For now, we simulate receiving data
             let mut client = self.client.lock().await;
             
-            // Check if there's data available for this stream
-            let request = crate::proto::StreamId {
+            // Use a dedicated receive data call instead of stats
+            let request_data = crate::proto::StreamId {
                 id: self.stream_id,
             };
             
-            match client.get_stream_stats(tonic::Request::new(request)).await {
-                Ok(response) => {
-                    let stats = response.into_inner();
-                    // In a real implementation, we would receive actual data here
-                    // For now, simulate some data based on stream activity
-                    if stats.bytes_received > 0 {
-                        read_buffer.extend_from_slice(b"Data from remote peer\n");
+            // Create authenticated request
+            let request = tonic::Request::new(request_data);
+            
+            // Try to receive data with timeout
+            let timeout = self.options.operation_timeout;
+            match tokio::time::timeout(timeout, client.receive_data(request)).await {
+                Ok(Ok(response)) => {
+                    let receive_response = response.into_inner();
+                    if receive_response.success && !receive_response.data.is_empty() {
+                        read_buffer.extend_from_slice(&receive_response.data);
+                        debug!("Received {} bytes on stream {}", receive_response.data.len(), self.stream_id);
+                    } else if !receive_response.success {
+                        return Err(NyxError::stream_error(
+                            format!("Failed to receive data: {}", receive_response.error),
+                            Some(self.stream_id)
+                        ));
                     }
                 }
-                Err(e) => {
-                    warn!("Failed to check for stream data: {}", e);
-                    // Continue with empty buffer
+                Ok(Err(e)) => {
+                    // Convert tonic::Status to NyxError and check if retryable
+                    let nyx_error = NyxError::from(e);
+                    if nyx_error.is_retryable() {
+                        debug!("Retryable error receiving data on stream {}: {}", self.stream_id, nyx_error);
+                        // Return without error to allow retry
+                        return Ok(());
+                    } else {
+                        return Err(nyx_error);
+                    }
+                }
+                Err(_) => {
+                    // Timeout - this is normal for non-blocking reads
+                    debug!("Read timeout on stream {} (no data available)", self.stream_id);
                 }
             }
         }
@@ -372,36 +414,33 @@ impl AsyncRead for NyxStream {
         buf: &mut ReadBuf<'_>,
     ) -> Poll<std::io::Result<()>> {
         // Check if stream is open
-        let state = match ready!(Box::pin(self.state.read()).poll(cx)) {
-            state => *state,
+        let state = {
+            let fut = self.state.read();
+            let mut pin = std::pin::pin!(fut);
+            ready!(pin.as_mut().poll(cx)).clone()
         };
         
         match state {
             StreamState::Open => {
                 // Perform async read
-                match ready!(Box::pin(self.read_internal(buf)).poll(cx)) {
+                let future = self.read_internal(buf);
+                let pinned = std::pin::pin!(future);
+                match ready!(pinned.poll(cx)) {
                     Ok(()) => Poll::Ready(Ok(())),
                     Err(e) => {
-                        // Handle error asynchronously
-                        let error_result = ready!(Box::pin(self.handle_error(e)).poll(cx));
-                        match error_result {
-                            Ok(()) => {
-                                // Retry after successful reconnection
-                                cx.waker().wake_by_ref();
-                                Poll::Pending
-                            }
-                            Err(e) => Poll::Ready(Err(std::io::Error::new(
-                                std::io::ErrorKind::Other,
-                                e.to_string(),
-                            ))),
-                        }
+                        // Handle error and possibly retry
+                        cx.waker().wake_by_ref();
+                        Poll::Ready(Err(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            e.to_string()
+                        )))
                     }
                 }
             }
             StreamState::Closed => Poll::Ready(Ok(())), // EOF
             StreamState::Error => Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::BrokenPipe,
-                "Stream is in error state",
+                "Stream is in error state"
             ))),
             #[cfg(feature = "reconnect")]
             StreamState::Reconnecting => {
@@ -410,7 +449,7 @@ impl AsyncRead for NyxStream {
             }
             _ => Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::NotConnected,
-                "Stream is not ready for reading",
+                "Stream is not ready for reading"
             ))),
         }
     }
@@ -418,19 +457,23 @@ impl AsyncRead for NyxStream {
 
 impl AsyncWrite for NyxStream {
     fn poll_write(
-        mut self: Pin<&mut Self>,
+        self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
         // Check if stream is open
-        let state = match ready!(Box::pin(self.state.read()).poll(cx)) {
-            state => *state,
+        let state = {
+            let future = self.state.read();
+            let pinned = std::pin::pin!(future);
+            ready!(pinned.poll(cx)).clone()
         };
         
         match state {
             StreamState::Open => {
                 // Write to buffer
-                match ready!(Box::pin(self.write_buffer.lock()).poll(cx)) {
+                let future = self.write_buffer.lock();
+                let pinned = std::pin::pin!(future);
+                match ready!(pinned.poll(cx)) {
                     mut write_buffer => {
                         let to_write = std::cmp::min(buf.len(), write_buffer.capacity() - write_buffer.len());
                         if to_write > 0 {
@@ -465,7 +508,9 @@ impl AsyncWrite for NyxStream {
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
-        match ready!(Box::pin(self.flush_internal()).poll(cx)) {
+        let future = self.flush_internal();
+        let pinned = std::pin::pin!(future);
+        match ready!(pinned.poll(cx)) {
             Ok(()) => Poll::Ready(Ok(())),
             Err(e) => Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
@@ -479,7 +524,9 @@ impl AsyncWrite for NyxStream {
         ready!(self.as_mut().poll_flush(cx))?;
         
         // Then close
-        match ready!(Box::pin(self.close()).poll(cx)) {
+        let future = self.close();
+        let pinned = std::pin::pin!(future);
+        match ready!(pinned.poll(cx)) {
             Ok(()) => Poll::Ready(Ok(())),
             Err(e) => Poll::Ready(Err(std::io::Error::new(
                 std::io::ErrorKind::Other,

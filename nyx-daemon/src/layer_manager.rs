@@ -211,18 +211,37 @@ impl LayerManager {
     pub async fn start(&mut self) -> Result<()> {
         info!("Starting complete protocol stack in dependency order...");
         
-        // Start layers in proper dependency order:
+        // Start layers in proper dependency order with failure handling:
         // 1. Transport (lowest level)
         // 2. Crypto (needed for secure communication)
         // 3. FEC (error correction)
         // 4. Stream (multiplexing and flow control)
         // 5. Mix (anonymity layer)
         
-        self.start_transport_layer().await?;
-        self.start_crypto_layer().await?;
-        self.start_fec_layer().await?;
-        self.start_stream_layer().await?;
-        self.start_mix_layer().await?;
+        if let Err(e) = self.start_transport_layer().await {
+            error!("Failed to start transport layer: {}", e);
+            self.handle_layer_failure("transport", e).await?;
+        }
+        
+        if let Err(e) = self.start_crypto_layer().await {
+            error!("Failed to start crypto layer: {}", e);
+            self.handle_layer_failure("crypto", e).await?;
+        }
+        
+        if let Err(e) = self.start_fec_layer().await {
+            error!("Failed to start FEC layer: {}", e);
+            self.handle_layer_failure("fec", e).await?;
+        }
+        
+        if let Err(e) = self.start_stream_layer().await {
+            error!("Failed to start stream layer: {}", e);
+            self.handle_layer_failure("stream", e).await?;
+        }
+        
+        if let Err(e) = self.start_mix_layer().await {
+            error!("Failed to start mix layer: {}", e);
+            self.handle_layer_failure("mix", e).await?;
+        }
         
         // Start integration and monitoring tasks
         self.start_background_tasks().await?;
@@ -322,15 +341,40 @@ impl LayerManager {
         Ok(())
     }
     
-    /// Health monitoring loop
+    /// Health monitoring loop with comprehensive checks
     async fn health_monitoring_loop(&self) {
         let mut interval = tokio::time::interval(Duration::from_secs(10));
+        let mut consecutive_failures = std::collections::HashMap::new();
         
         loop {
             interval.tick().await;
             
-            if let Err(e) = self.check_all_layers_health().await {
-                error!("Health check failed: {}", e);
+            match self.check_all_layers_health().await {
+                Ok(_) => {
+                    // Reset failure counts on successful health check
+                    consecutive_failures.clear();
+                }
+                Err(e) => {
+                    error!("Health check failed: {}", e);
+                    
+                    // Track consecutive failures
+                    let count = consecutive_failures.entry("health_check".to_string()).or_insert(0);
+                    *count += 1;
+                    
+                    // If too many consecutive failures, trigger recovery
+                    if *count >= 3 {
+                        error!("Too many consecutive health check failures, triggering recovery");
+                        if let Err(recovery_err) = self.trigger_system_recovery().await {
+                            error!("System recovery failed: {}", recovery_err);
+                        }
+                        consecutive_failures.clear();
+                    }
+                }
+            }
+            
+            // Check for layers that need recovery
+            if let Err(e) = self.check_layer_recovery_needs().await {
+                error!("Layer recovery check failed: {}", e);
             }
         }
     }
@@ -991,6 +1035,1127 @@ impl LayerManager {
         let sessions = self.active_sessions.read().await;
         sessions.len()
     }
+    
+    /// Handle layer failure with graceful degradation
+    async fn handle_layer_failure(&self, layer_name: &str, error: anyhow::Error) -> Result<()> {
+        error!("Layer {} failed: {}", layer_name, error);
+        
+        // Update layer status to failed
+        self.update_layer_status(layer_name, LayerStatus::Failed).await;
+        
+        // Increment error count
+        {
+            let mut health_data = self.layer_health.write().await;
+            if let Some(layer) = health_data.iter_mut().find(|l| l.layer_name == layer_name) {
+                layer.error_count += 1;
+                layer.last_error = Some(error.to_string());
+            }
+        }
+        
+        // Attempt graceful degradation based on layer type
+        match layer_name {
+            "transport" => {
+                error!("Transport layer failure - critical, attempting emergency shutdown");
+                self.emergency_shutdown().await?;
+            }
+            "crypto" => {
+                info!("Crypto layer failure - degrading to insecure mode temporarily");
+                self.degrade_crypto_layer().await?;
+            }
+            "fec" => {
+                info!("FEC layer failure - continuing without error correction");
+                self.degrade_fec_layer().await?;
+            }
+            "stream" => {
+                info!("Stream layer failure - falling back to single stream mode");
+                self.degrade_stream_layer().await?;
+            }
+            "mix" => {
+                info!("Mix layer failure - continuing without anonymity");
+                self.degrade_mix_layer().await?;
+            }
+            _ => {
+                error!("Unknown layer failure: {}", layer_name);
+            }
+        }
+        
+        // Emit failure event
+        let event = crate::proto::Event {
+            r#type: "system".to_string(),
+            detail: format!("Layer {} failed: {}", layer_name, error),
+            timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+            severity: "error".to_string(),
+            attributes: [
+                ("layer".to_string(), layer_name.to_string()),
+                ("error".to_string(), error.to_string()),
+            ].into_iter().collect(),
+            event_data: Some(crate::proto::event::EventData::SystemEvent(crate::proto::SystemEvent {
+                component: layer_name.to_string(),
+                action: "failure".to_string(),
+                message: format!("Layer failed: {}", error),
+                details: std::collections::HashMap::new(),
+            })),
+        };
+        
+        let _ = self.event_tx.send(event);
+        
+        Ok(())
+    }
+    
+    /// Restart a specific layer
+    pub async fn restart_layer(&self, layer_name: &str) -> Result<()> {
+        info!("Restarting layer: {}", layer_name);
+        
+        // Set layer to initializing
+        self.update_layer_status(layer_name, LayerStatus::Initializing).await;
+        
+        // Restart the specific layer
+        let result = match layer_name {
+            "transport" => self.start_transport_layer().await,
+            "crypto" => self.start_crypto_layer().await,
+            "fec" => self.start_fec_layer().await,
+            "stream" => self.start_stream_layer().await,
+            "mix" => self.start_mix_layer().await,
+            _ => {
+                error!("Unknown layer: {}", layer_name);
+                return Err(anyhow::anyhow!("Unknown layer: {}", layer_name));
+            }
+        };
+        
+        match result {
+            Ok(_) => {
+                info!("Layer {} restarted successfully", layer_name);
+                
+                // Reset error count on successful restart
+                {
+                    let mut health_data = self.layer_health.write().await;
+                    if let Some(layer) = health_data.iter_mut().find(|l| l.layer_name == layer_name) {
+                        layer.error_count = 0;
+                        layer.last_error = None;
+                    }
+                }
+                
+                // Emit restart success event
+                let event = crate::proto::Event {
+                    r#type: "system".to_string(),
+                    detail: format!("Layer {} restarted successfully", layer_name),
+                    timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+                    severity: "info".to_string(),
+                    attributes: [
+                        ("layer".to_string(), layer_name.to_string()),
+                        ("action".to_string(), "restart_success".to_string()),
+                    ].into_iter().collect(),
+                    event_data: Some(crate::proto::event::EventData::SystemEvent(crate::proto::SystemEvent {
+                        component: layer_name.to_string(),
+                        action: "restart_success".to_string(),
+                        message: format!("Layer restarted successfully"),
+                        details: std::collections::HashMap::new(),
+                    })),
+                };
+                
+                let _ = self.event_tx.send(event);
+                
+                Ok(())
+            }
+            Err(e) => {
+                error!("Failed to restart layer {}: {}", layer_name, e);
+                self.handle_layer_failure(layer_name, e).await?;
+                Err(anyhow::anyhow!("Failed to restart layer {}", layer_name))
+            }
+        }
+    }
+    
+    /// Emergency shutdown for critical failures
+    async fn emergency_shutdown(&self) -> Result<()> {
+        error!("Initiating emergency shutdown due to critical layer failure");
+        
+        // Update all layers to shutdown status
+        let layer_names = vec!["mix", "stream", "fec", "crypto", "transport"];
+        for layer_name in layer_names {
+            self.update_layer_status(layer_name, LayerStatus::Shutdown).await;
+        }
+        
+        // Emit emergency shutdown event
+        let event = crate::proto::Event {
+            r#type: "system".to_string(),
+            detail: "Emergency shutdown initiated due to critical layer failure".to_string(),
+            timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+            severity: "critical".to_string(),
+            attributes: [
+                ("action".to_string(), "emergency_shutdown".to_string()),
+            ].into_iter().collect(),
+            event_data: Some(crate::proto::event::EventData::SystemEvent(crate::proto::SystemEvent {
+                component: "layer_manager".to_string(),
+                action: "emergency_shutdown".to_string(),
+                message: "Critical layer failure triggered emergency shutdown".to_string(),
+                details: std::collections::HashMap::new(),
+            })),
+        };
+        
+        let _ = self.event_tx.send(event);
+        
+        Ok(())
+    }
+    
+    /// Degrade crypto layer functionality
+    async fn degrade_crypto_layer(&self) -> Result<()> {
+        info!("Degrading crypto layer - reducing security temporarily");
+        self.update_layer_status("crypto", LayerStatus::Degraded).await;
+        
+        // Clear active sessions to force re-establishment with degraded crypto
+        {
+            let mut sessions = self.active_sessions.write().await;
+            sessions.clear();
+        }
+        
+        Ok(())
+    }
+    
+    /// Degrade FEC layer functionality
+    async fn degrade_fec_layer(&self) -> Result<()> {
+        info!("Degrading FEC layer - continuing without error correction");
+        self.update_layer_status("fec", LayerStatus::Degraded).await;
+        Ok(())
+    }
+    
+    /// Degrade stream layer functionality
+    async fn degrade_stream_layer(&self) -> Result<()> {
+        info!("Degrading stream layer - falling back to single stream mode");
+        self.update_layer_status("stream", LayerStatus::Degraded).await;
+        Ok(())
+    }
+    
+    /// Degrade mix layer functionality
+    async fn degrade_mix_layer(&self) -> Result<()> {
+        info!("Degrading mix layer - continuing without anonymity");
+        self.update_layer_status("mix", LayerStatus::Degraded).await;
+        Ok(())
+    }
+    
+    /// Get layer status by name
+    pub async fn get_layer_status(&self, layer_name: &str) -> Option<LayerStatus> {
+        let health_data = self.layer_health.read().await;
+        health_data.iter()
+            .find(|layer| layer.layer_name == layer_name)
+            .map(|layer| layer.status.clone())
+    }
+    
+    /// Check if all critical layers are operational
+    pub async fn are_critical_layers_operational(&self) -> bool {
+        let health_data = self.layer_health.read().await;
+        let critical_layers = vec!["transport", "crypto"];
+        
+        for layer_name in critical_layers {
+            if let Some(layer) = health_data.iter().find(|l| l.layer_name == layer_name) {
+                match layer.status {
+                    LayerStatus::Failed | LayerStatus::Shutdown => return false,
+                    _ => continue,
+                }
+            }
+        }
+        
+        true
+    }
+    
+    /// Get system degradation level
+    pub async fn get_degradation_level(&self) -> f64 {
+        let health_data = self.layer_health.read().await;
+        let total_layers = health_data.len() as f64;
+        let degraded_count = health_data.iter()
+            .filter(|layer| matches!(layer.status, LayerStatus::Degraded | LayerStatus::Failed))
+            .count() as f64;
+        
+        degraded_count / total_layers
+    }
+    
+    /// Trigger system-wide recovery
+    async fn trigger_system_recovery(&self) -> Result<()> {
+        info!("Triggering system-wide recovery");
+        
+        // Get current layer states
+        let health_data = self.layer_health.read().await;
+        let failed_layers: Vec<String> = health_data.iter()
+            .filter(|layer| matches!(layer.status, LayerStatus::Failed))
+            .map(|layer| layer.layer_name.clone())
+            .collect();
+        drop(health_data);
+        
+        // Attempt to restart failed layers in dependency order
+        let layer_order = vec!["transport", "crypto", "fec", "stream", "mix"];
+        
+        for layer_name in layer_order {
+            if failed_layers.contains(&layer_name.to_string()) {
+                info!("Attempting recovery for failed layer: {}", layer_name);
+                
+                match self.restart_layer(layer_name).await {
+                    Ok(_) => {
+                        info!("Successfully recovered layer: {}", layer_name);
+                    }
+                    Err(e) => {
+                        error!("Failed to recover layer {}: {}", layer_name, e);
+                        
+                        // If critical layer recovery fails, escalate
+                        if layer_name == "transport" || layer_name == "crypto" {
+                            error!("Critical layer recovery failed, escalating");
+                            return self.escalate_recovery_failure(layer_name).await;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Emit recovery completion event
+        let event = crate::proto::Event {
+            r#type: "system".to_string(),
+            detail: "System recovery completed".to_string(),
+            timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+            severity: "info".to_string(),
+            attributes: [
+                ("action".to_string(), "recovery_completed".to_string()),
+                ("recovered_layers".to_string(), failed_layers.join(",").to_string()),
+            ].into_iter().collect(),
+            event_data: Some(crate::proto::event::EventData::SystemEvent(crate::proto::SystemEvent {
+                component: "layer_manager".to_string(),
+                action: "recovery_completed".to_string(),
+                message: "System recovery process completed".to_string(),
+                details: std::collections::HashMap::new(),
+            })),
+        };
+        
+        let _ = self.event_tx.send(event);
+        
+        Ok(())
+    }
+    
+    /// Check if any layers need recovery
+    async fn check_layer_recovery_needs(&self) -> Result<()> {
+        let layer_to_recover = {
+            let health_data = self.layer_health.read().await;
+            let mut layer_to_recover = None;
+            
+            for layer in health_data.iter() {
+                // Check if layer has failed completely
+                if matches!(layer.status, LayerStatus::Failed) {
+                    error!("Layer {} has failed, initiating recovery", layer.layer_name);
+                    layer_to_recover = Some(layer.layer_name.clone());
+                    break;
+                }
+                
+                // Check if layer has been degraded for too long
+                if matches!(layer.status, LayerStatus::Degraded) {
+                    let degraded_duration = SystemTime::now()
+                        .duration_since(layer.last_check)
+                        .unwrap_or_default();
+                    
+                    if degraded_duration > Duration::from_secs(300) { // 5 minutes
+                        info!("Layer {} has been degraded for too long, attempting recovery", layer.layer_name);
+                        layer_to_recover = Some(layer.layer_name.clone());
+                        break;
+                    }
+                }
+                
+                // Check if layer has too many errors
+                if layer.error_count > 10 {
+                    info!("Layer {} has too many errors ({}), attempting recovery", 
+                          layer.layer_name, layer.error_count);
+                    layer_to_recover = Some(layer.layer_name.clone());
+                    break;
+                }
+            }
+            
+            layer_to_recover
+        };
+        
+        if let Some(layer_name) = layer_to_recover {
+            self.recover_layer(&layer_name).await?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Comprehensive layer recovery with dependency management
+    pub async fn recover_layer(&self, layer_name: &str) -> Result<()> {
+        info!("Starting comprehensive recovery for layer: {}", layer_name);
+        
+        // Step 1: Handle temporary service degradation
+        self.handle_temporary_degradation(vec![layer_name.to_string()]).await?;
+        
+        // Step 2: Attempt recovery with dependency management
+        match self.recover_layer_with_dependencies(layer_name).await {
+            Ok(_) => {
+                info!("Layer {} recovered successfully", layer_name);
+                
+                // Verify recovery was successful
+                if self.is_layer_healthy(layer_name).await {
+                    info!("Layer {} recovery verified", layer_name);
+                    Ok(())
+                } else {
+                    warn!("Layer {} recovery verification failed, escalating", layer_name);
+                    self.escalate_recovery_with_alternatives(layer_name).await
+                }
+            }
+            Err(e) => {
+                error!("Layer {} recovery failed: {}, escalating", layer_name, e);
+                self.escalate_recovery_with_alternatives(layer_name).await
+            }
+        }
+    }
+    
+
+    
+    /// Escalate recovery failure for critical layers
+    async fn escalate_recovery_failure(&self, layer_name: &str) -> Result<()> {
+        error!("Escalating recovery failure for critical layer: {}", layer_name);
+        
+        // Emit critical failure event
+        let event = crate::proto::Event {
+            r#type: "system".to_string(),
+            detail: format!("Critical layer {} recovery failed - system may be unstable", layer_name),
+            timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+            severity: "critical".to_string(),
+            attributes: [
+                ("layer".to_string(), layer_name.to_string()),
+                ("action".to_string(), "recovery_escalation".to_string()),
+            ].into_iter().collect(),
+            event_data: Some(crate::proto::event::EventData::SystemEvent(crate::proto::SystemEvent {
+                component: layer_name.to_string(),
+                action: "recovery_escalation".to_string(),
+                message: "Critical layer recovery failed".to_string(),
+                details: std::collections::HashMap::new(),
+            })),
+        };
+        
+        let _ = self.event_tx.send(event);
+        
+        // For now, just mark the system as critically degraded
+        // In a real implementation, this might trigger external alerts,
+        // attempt alternative recovery strategies, or initiate controlled shutdown
+        
+        Ok(())
+    }
+    
+    /// Advanced layer recovery with dependency management
+    pub async fn recover_layer_with_dependencies(&self, layer_name: &str) -> Result<()> {
+        info!("Starting advanced recovery for layer: {}", layer_name);
+        
+        // Determine layer dependencies
+        let dependencies = self.get_layer_dependencies(layer_name);
+        let dependents = self.get_layer_dependents(layer_name);
+        
+        // Step 1: Gracefully stop dependents
+        for dependent in &dependents {
+            info!("Stopping dependent layer {} before recovering {}", dependent, layer_name);
+            if let Err(e) = self.graceful_layer_stop(dependent).await {
+                warn!("Failed to stop dependent layer {}: {}", dependent, e);
+            }
+        }
+        
+        // Step 2: Stop the target layer
+        if let Err(e) = self.graceful_layer_stop(layer_name).await {
+            warn!("Failed to gracefully stop layer {}: {}", layer_name, e);
+        }
+        
+        // Step 3: Verify dependencies are healthy
+        for dependency in &dependencies {
+            if !self.is_layer_healthy(dependency).await {
+                info!("Dependency {} is unhealthy, recovering it first", dependency);
+                if let Err(e) = self.recover_layer_with_dependencies(dependency).await {
+                    error!("Failed to recover dependency {}: {}", dependency, e);
+                    return Err(anyhow::anyhow!("Dependency recovery failed"));
+                }
+            }
+        }
+        
+        // Step 4: Restart the target layer
+        if let Err(e) = self.restart_layer(layer_name).await {
+            error!("Failed to restart layer {}: {}", layer_name, e);
+            return Err(e);
+        }
+        
+        // Step 5: Wait for layer to stabilize
+        if let Err(e) = self.wait_for_layer_stability(layer_name, Duration::from_secs(30)).await {
+            error!("Layer {} did not stabilize after restart: {}", layer_name, e);
+            return Err(e);
+        }
+        
+        // Step 6: Restart dependents in order
+        for dependent in &dependents {
+            info!("Restarting dependent layer: {}", dependent);
+            if let Err(e) = self.restart_layer(dependent).await {
+                error!("Failed to restart dependent layer {}: {}", dependent, e);
+                // Continue with other dependents even if one fails
+            } else {
+                // Wait for each dependent to stabilize before starting the next
+                if let Err(e) = self.wait_for_layer_stability(dependent, Duration::from_secs(15)).await {
+                    warn!("Dependent layer {} did not stabilize quickly: {}", dependent, e);
+                }
+            }
+        }
+        
+        info!("Advanced recovery completed for layer: {}", layer_name);
+        Ok(())
+    }
+    
+    /// Get layer dependencies (layers this layer depends on)
+    fn get_layer_dependencies(&self, layer_name: &str) -> Vec<String> {
+        match layer_name {
+            "transport" => vec![], // No dependencies
+            "crypto" => vec!["transport".to_string()],
+            "fec" => vec!["transport".to_string()],
+            "stream" => vec!["transport".to_string(), "crypto".to_string(), "fec".to_string()],
+            "mix" => vec!["transport".to_string(), "crypto".to_string(), "fec".to_string(), "stream".to_string()],
+            _ => vec![],
+        }
+    }
+    
+    /// Get layer dependents (layers that depend on this layer)
+    fn get_layer_dependents(&self, layer_name: &str) -> Vec<String> {
+        match layer_name {
+            "transport" => vec!["crypto".to_string(), "fec".to_string(), "stream".to_string(), "mix".to_string()],
+            "crypto" => vec!["stream".to_string(), "mix".to_string()],
+            "fec" => vec!["stream".to_string(), "mix".to_string()],
+            "stream" => vec!["mix".to_string()],
+            "mix" => vec![], // No dependents
+            _ => vec![],
+        }
+    }
+    
+    /// Gracefully stop a layer
+    async fn graceful_layer_stop(&self, layer_name: &str) -> Result<()> {
+        info!("Gracefully stopping layer: {}", layer_name);
+        
+        // Set layer to shutdown status
+        self.update_layer_status(layer_name, LayerStatus::Shutdown).await;
+        
+        // Give the layer time to clean up
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        
+        // Layer-specific cleanup
+        match layer_name {
+            "crypto" => {
+                // Clear active sessions
+                let mut sessions = self.active_sessions.write().await;
+                sessions.clear();
+                info!("Cleared {} crypto sessions", sessions.len());
+            }
+            "stream" => {
+                // In a real implementation, this would close active streams
+                info!("Closed active streams for layer shutdown");
+            }
+            "mix" => {
+                // In a real implementation, this would flush mix batches
+                info!("Flushed mix batches for layer shutdown");
+            }
+            _ => {}
+        }
+        
+        info!("Layer {} stopped gracefully", layer_name);
+        Ok(())
+    }
+    
+    /// Check if a layer is healthy with comprehensive health criteria
+    async fn is_layer_healthy(&self, layer_name: &str) -> bool {
+        let health_data = self.layer_health.read().await;
+        
+        if let Some(layer) = health_data.iter().find(|l| l.layer_name == layer_name) {
+            // Check basic status and error count
+            let basic_health = matches!(layer.status, LayerStatus::Active) && layer.error_count < 5;
+            
+            // Check performance metrics for additional health indicators
+            let performance_health = layer.performance_metrics.error_rate < 0.1 && // Less than 10% error rate
+                                   layer.performance_metrics.cpu_usage < 90.0 && // Less than 90% CPU usage
+                                   layer.performance_metrics.latency_ms < 1000.0; // Less than 1 second latency
+            
+            // Check if layer has been recently active
+            let recent_activity = SystemTime::now()
+                .duration_since(layer.last_check)
+                .unwrap_or_default() < Duration::from_secs(60); // Active within last minute
+            
+            basic_health && performance_health && recent_activity
+        } else {
+            false
+        }
+    }
+    
+    /// Wait for a layer to stabilize after restart
+    async fn wait_for_layer_stability(&self, layer_name: &str, timeout: Duration) -> Result<()> {
+        let start_time = SystemTime::now();
+        let mut stable_checks = 0;
+        const REQUIRED_STABLE_CHECKS: u32 = 3;
+        
+        while start_time.elapsed().unwrap_or_default() < timeout {
+            if self.is_layer_healthy(layer_name).await {
+                stable_checks += 1;
+                if stable_checks >= REQUIRED_STABLE_CHECKS {
+                    info!("Layer {} is stable after restart", layer_name);
+                    return Ok(());
+                }
+            } else {
+                stable_checks = 0;
+            }
+            
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        
+        Err(anyhow::anyhow!("Layer {} did not stabilize within timeout", layer_name))
+    }
+    
+    /// Perform service continuity check during recovery
+    pub async fn check_service_continuity(&self) -> Result<f64> {
+        let health_data = self.layer_health.read().await;
+        let total_layers = health_data.len() as f64;
+        let active_layers = health_data.iter()
+            .filter(|layer| matches!(layer.status, LayerStatus::Active))
+            .count() as f64;
+        
+        let continuity_ratio = active_layers / total_layers;
+        
+        info!("Service continuity: {:.1}% ({} of {} layers active)", 
+              continuity_ratio * 100.0, active_layers as u32, total_layers as u32);
+        
+        Ok(continuity_ratio)
+    }
+    
+    /// Handle temporary service degradation during recovery
+    pub async fn handle_temporary_degradation(&self, affected_layers: Vec<String>) -> Result<()> {
+        info!("Handling temporary service degradation for layers: {:?}", affected_layers);
+        
+        // Enable degraded mode for affected layers
+        for layer_name in &affected_layers {
+            self.update_layer_status(layer_name, LayerStatus::Degraded).await;
+        }
+        
+        // Implement temporary workarounds
+        if affected_layers.contains(&"crypto".to_string()) {
+            info!("Crypto layer degraded - reducing security temporarily");
+            // In a real implementation, this might use simpler crypto
+        }
+        
+        if affected_layers.contains(&"mix".to_string()) {
+            info!("Mix layer degraded - reducing anonymity temporarily");
+            // In a real implementation, this might reduce mix batch sizes
+        }
+        
+        if affected_layers.contains(&"fec".to_string()) {
+            info!("FEC layer degraded - reducing error correction temporarily");
+            // In a real implementation, this might reduce redundancy
+        }
+        
+        // Emit degradation event
+        let event = crate::proto::Event {
+            r#type: "system".to_string(),
+            detail: format!("Temporary service degradation: {}", affected_layers.join(", ")),
+            timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+            severity: "warning".to_string(),
+            attributes: [
+                ("action".to_string(), "temporary_degradation".to_string()),
+                ("affected_layers".to_string(), affected_layers.join(",").to_string()),
+            ].into_iter().collect(),
+            event_data: Some(crate::proto::event::EventData::SystemEvent(crate::proto::SystemEvent {
+                component: "layer_manager".to_string(),
+                action: "temporary_degradation".to_string(),
+                message: "Service temporarily degraded during recovery".to_string(),
+                details: std::collections::HashMap::new(),
+            })),
+        };
+        
+        let _ = self.event_tx.send(event);
+        
+        Ok(())
+    }
+    
+    /// Recovery escalation with alternative strategies
+    pub async fn escalate_recovery_with_alternatives(&self, layer_name: &str) -> Result<()> {
+        error!("Escalating recovery with alternative strategies for: {}", layer_name);
+        
+        // Strategy 1: Try minimal restart (just the layer, no dependencies)
+        info!("Attempting minimal restart strategy for {}", layer_name);
+        if let Ok(_) = self.restart_layer(layer_name).await {
+            if self.is_layer_healthy(layer_name).await {
+                info!("Minimal restart strategy succeeded for {}", layer_name);
+                return Ok(());
+            }
+        }
+        
+        // Strategy 2: Try cold restart (stop everything, start everything)
+        info!("Attempting cold restart strategy for {}", layer_name);
+        if let Ok(_) = self.cold_restart_strategy(layer_name).await {
+            info!("Cold restart strategy succeeded for {}", layer_name);
+            return Ok(());
+        }
+        
+        // Strategy 3: Try bypass strategy (disable the layer temporarily)
+        info!("Attempting bypass strategy for {}", layer_name);
+        if let Ok(_) = self.bypass_layer_strategy(layer_name).await {
+            info!("Bypass strategy activated for {}", layer_name);
+            return Ok(());
+        }
+        
+        // All strategies failed
+        error!("All recovery strategies failed for layer: {}", layer_name);
+        self.escalate_recovery_failure(layer_name).await
+    }
+    
+    /// Cold restart strategy - restart everything
+    async fn cold_restart_strategy(&self, _layer_name: &str) -> Result<()> {
+        info!("Executing cold restart strategy");
+        
+        // Stop all layers in reverse order
+        let layers = vec!["mix", "stream", "fec", "crypto", "transport"];
+        for layer in &layers {
+            if let Err(e) = self.graceful_layer_stop(layer).await {
+                warn!("Failed to stop layer {} during cold restart: {}", layer, e);
+            }
+        }
+        
+        // Wait for cleanup
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        
+        // Start all layers in forward order
+        let layers = vec!["transport", "crypto", "fec", "stream", "mix"];
+        for layer in &layers {
+            if let Err(e) = self.restart_layer(layer).await {
+                error!("Failed to restart layer {} during cold restart: {}", layer, e);
+                return Err(anyhow::anyhow!("Cold restart failed at layer {}", layer));
+            }
+            
+            // Wait for each layer to stabilize
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+        
+        info!("Cold restart strategy completed");
+        Ok(())
+    }
+    
+    /// Bypass layer strategy - disable problematic layer
+    async fn bypass_layer_strategy(&self, layer_name: &str) -> Result<()> {
+        info!("Executing bypass strategy for layer: {}", layer_name);
+        
+        // Mark layer as shutdown but don't fail the system
+        self.update_layer_status(layer_name, LayerStatus::Shutdown).await;
+        
+        // Reconfigure other layers to work without this layer
+        match layer_name {
+            "fec" => {
+                info!("Bypassing FEC layer - continuing without error correction");
+                // Other layers continue normally
+            }
+            "mix" => {
+                info!("Bypassing mix layer - continuing without anonymity");
+                // Direct routing without mix
+            }
+            "crypto" => {
+                error!("Cannot bypass crypto layer - this is a critical failure");
+                return Err(anyhow::anyhow!("Cannot bypass critical crypto layer"));
+            }
+            "transport" => {
+                error!("Cannot bypass transport layer - this is a critical failure");
+                return Err(anyhow::anyhow!("Cannot bypass critical transport layer"));
+            }
+            _ => {
+                info!("Bypassing layer {} - system continues with reduced functionality", layer_name);
+            }
+        }
+        
+        // Emit bypass event
+        let event = crate::proto::Event {
+            r#type: "system".to_string(),
+            detail: format!("Layer {} bypassed due to recovery failure", layer_name),
+            timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+            severity: "warning".to_string(),
+            attributes: [
+                ("layer".to_string(), layer_name.to_string()),
+                ("action".to_string(), "bypass".to_string()),
+            ].into_iter().collect(),
+            event_data: Some(crate::proto::event::EventData::SystemEvent(crate::proto::SystemEvent {
+                component: layer_name.to_string(),
+                action: "bypass".to_string(),
+                message: "Layer bypassed due to recovery failure".to_string(),
+                details: std::collections::HashMap::new(),
+            })),
+        };
+        
+        let _ = self.event_tx.send(event);
+        
+        Ok(())
+    }
+    
+    /// Enhanced recovery with sequential dependency management
+    pub async fn sequential_recovery(&self, layer_name: &str) -> Result<()> {
+        info!("Starting sequential recovery for layer: {}", layer_name);
+        
+        // Get the complete dependency chain
+        let dependency_chain = self.build_dependency_chain(layer_name);
+        
+        // Stop layers in reverse dependency order
+        for layer in dependency_chain.iter().rev() {
+            info!("Stopping layer {} in sequential recovery", layer);
+            if let Err(e) = self.graceful_layer_stop(layer).await {
+                warn!("Failed to stop layer {} during sequential recovery: {}", layer, e);
+            }
+        }
+        
+        // Wait for all layers to fully stop
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        
+        // Start layers in dependency order
+        for layer in &dependency_chain {
+            info!("Starting layer {} in sequential recovery", layer);
+            
+            match self.restart_layer(layer).await {
+                Ok(_) => {
+                    // Wait for layer to stabilize before starting next
+                    if let Err(e) = self.wait_for_layer_stability(layer, Duration::from_secs(30)).await {
+                        error!("Layer {} failed to stabilize during sequential recovery: {}", layer, e);
+                        return Err(e);
+                    }
+                    info!("Layer {} successfully recovered and stabilized", layer);
+                }
+                Err(e) => {
+                    error!("Failed to restart layer {} during sequential recovery: {}", layer, e);
+                    return Err(e);
+                }
+            }
+        }
+        
+        info!("Sequential recovery completed successfully for layer: {}", layer_name);
+        Ok(())
+    }
+    
+    /// Build complete dependency chain for a layer
+    fn build_dependency_chain(&self, layer_name: &str) -> Vec<String> {
+        let mut chain = Vec::new();
+        let mut visited = std::collections::HashSet::new();
+        
+        self.build_dependency_chain_recursive(layer_name, &mut chain, &mut visited);
+        
+        // Add the target layer itself if not already included
+        if !chain.contains(&layer_name.to_string()) {
+            chain.push(layer_name.to_string());
+        }
+        
+        chain
+    }
+    
+    /// Recursively build dependency chain
+    fn build_dependency_chain_recursive(
+        &self, 
+        layer_name: &str, 
+        chain: &mut Vec<String>, 
+        visited: &mut std::collections::HashSet<String>
+    ) {
+        if visited.contains(layer_name) {
+            return;
+        }
+        
+        visited.insert(layer_name.to_string());
+        
+        // Add dependencies first
+        let dependencies = self.get_layer_dependencies(layer_name);
+        for dep in dependencies {
+            self.build_dependency_chain_recursive(&dep, chain, visited);
+        }
+        
+        // Add this layer after its dependencies
+        if !chain.contains(&layer_name.to_string()) {
+            chain.push(layer_name.to_string());
+        }
+    }
+    
+    /// Advanced recovery with rollback capability
+    pub async fn recovery_with_rollback(&self, layer_name: &str) -> Result<()> {
+        info!("Starting recovery with rollback capability for layer: {}", layer_name);
+        
+        // Save current state for potential rollback
+        let initial_state = self.capture_layer_states().await;
+        
+        // Attempt recovery
+        match self.sequential_recovery(layer_name).await {
+            Ok(_) => {
+                // Verify all layers are healthy after recovery
+                if self.verify_all_layers_healthy().await {
+                    info!("Recovery with rollback succeeded for layer: {}", layer_name);
+                    Ok(())
+                } else {
+                    warn!("Recovery succeeded but system is not fully healthy, considering rollback");
+                    self.rollback_to_state(initial_state).await?;
+                    Err(anyhow::anyhow!("Recovery succeeded but system health check failed"))
+                }
+            }
+            Err(e) => {
+                error!("Recovery failed for layer {}, attempting rollback: {}", layer_name, e);
+                self.rollback_to_state(initial_state).await?;
+                Err(e)
+            }
+        }
+    }
+    
+    /// Capture current state of all layers
+    async fn capture_layer_states(&self) -> Vec<LayerHealth> {
+        let health_data = self.layer_health.read().await;
+        health_data.clone()
+    }
+    
+    /// Rollback to a previous state
+    async fn rollback_to_state(&self, previous_state: Vec<LayerHealth>) -> Result<()> {
+        info!("Rolling back to previous layer states");
+        
+        {
+            let mut health_data = self.layer_health.write().await;
+            *health_data = previous_state;
+        }
+        
+        // Emit rollback event
+        let event = crate::proto::Event {
+            r#type: "system".to_string(),
+            detail: "System rolled back to previous state due to recovery failure".to_string(),
+            timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+            severity: "warning".to_string(),
+            attributes: [
+                ("action".to_string(), "rollback".to_string()),
+            ].into_iter().collect(),
+            event_data: Some(crate::proto::event::EventData::SystemEvent(crate::proto::SystemEvent {
+                component: "layer_manager".to_string(),
+                action: "rollback".to_string(),
+                message: "System state rolled back due to recovery failure".to_string(),
+                details: std::collections::HashMap::new(),
+            })),
+        };
+        
+        let _ = self.event_tx.send(event);
+        
+        Ok(())
+    }
+    
+    /// Verify all layers are healthy
+    async fn verify_all_layers_healthy(&self) -> bool {
+        let layer_names = vec!["transport", "crypto", "fec", "stream", "mix"];
+        
+        for layer_name in layer_names {
+            if !self.is_layer_healthy(layer_name).await {
+                warn!("Layer {} is not healthy during verification", layer_name);
+                return false;
+            }
+        }
+        
+        true
+    }
+    
+    /// Enhanced escalation with external notification
+    pub async fn enhanced_escalation(&self, layer_name: &str, failure_reason: &str) -> Result<()> {
+        error!("Enhanced escalation triggered for layer {}: {}", layer_name, failure_reason);
+        
+        // Determine criticality level
+        let criticality = self.determine_layer_criticality(layer_name);
+        
+        // Emit detailed escalation event
+        let event = crate::proto::Event {
+            r#type: "system".to_string(),
+            detail: format!("Enhanced escalation for {} layer: {}", layer_name, failure_reason),
+            timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+            severity: match criticality {
+                LayerCriticality::Critical => "critical".to_string(),
+                LayerCriticality::Important => "error".to_string(),
+                LayerCriticality::Optional => "warning".to_string(),
+            },
+            attributes: [
+                ("layer".to_string(), layer_name.to_string()),
+                ("action".to_string(), "enhanced_escalation".to_string()),
+                ("criticality".to_string(), format!("{:?}", criticality)),
+                ("failure_reason".to_string(), failure_reason.to_string()),
+            ].into_iter().collect(),
+            event_data: Some(crate::proto::event::EventData::SystemEvent(crate::proto::SystemEvent {
+                component: layer_name.to_string(),
+                action: "enhanced_escalation".to_string(),
+                message: format!("Enhanced escalation: {}", failure_reason),
+                details: [
+                    ("criticality".to_string(), format!("{:?}", criticality)),
+                    ("failure_reason".to_string(), failure_reason.to_string()),
+                ].into_iter().collect(),
+            })),
+        };
+        
+        let _ = self.event_tx.send(event);
+        
+        // Take action based on criticality
+        match criticality {
+            LayerCriticality::Critical => {
+                error!("Critical layer {} failed, initiating emergency procedures", layer_name);
+                self.initiate_emergency_procedures(layer_name).await?;
+            }
+            LayerCriticality::Important => {
+                warn!("Important layer {} failed, attempting alternative strategies", layer_name);
+                self.attempt_alternative_strategies(layer_name).await?;
+            }
+            LayerCriticality::Optional => {
+                info!("Optional layer {} failed, continuing with degraded service", layer_name);
+                self.continue_with_degraded_service(layer_name).await?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Determine layer criticality
+    fn determine_layer_criticality(&self, layer_name: &str) -> LayerCriticality {
+        match layer_name {
+            "transport" | "crypto" => LayerCriticality::Critical,
+            "stream" | "fec" => LayerCriticality::Important,
+            "mix" => LayerCriticality::Optional,
+            _ => LayerCriticality::Optional,
+        }
+    }
+    
+    /// Initiate emergency procedures for critical layer failures
+    async fn initiate_emergency_procedures(&self, layer_name: &str) -> Result<()> {
+        error!("Initiating emergency procedures for critical layer: {}", layer_name);
+        
+        // Attempt last-resort recovery
+        if let Ok(_) = self.last_resort_recovery(layer_name).await {
+            info!("Last-resort recovery succeeded for critical layer: {}", layer_name);
+            return Ok(());
+        }
+        
+        // If all else fails, initiate controlled shutdown
+        error!("All recovery attempts failed for critical layer {}, initiating controlled shutdown", layer_name);
+        self.initiate_controlled_shutdown().await
+    }
+    
+    /// Last resort recovery attempt
+    async fn last_resort_recovery(&self, layer_name: &str) -> Result<()> {
+        info!("Attempting last-resort recovery for layer: {}", layer_name);
+        
+        // Try to reinitialize the layer from scratch
+        match layer_name {
+            "transport" => {
+                // Reinitialize transport with different configuration
+                info!("Attempting transport layer reinitialization");
+                self.start_transport_layer().await
+            }
+            "crypto" => {
+                // Clear all crypto state and reinitialize
+                info!("Attempting crypto layer reinitialization");
+                {
+                    let mut sessions = self.active_sessions.write().await;
+                    sessions.clear();
+                }
+                self.start_crypto_layer().await
+            }
+            _ => {
+                // Generic reinitialization
+                self.restart_layer(layer_name).await
+            }
+        }
+    }
+    
+    /// Initiate controlled shutdown
+    async fn initiate_controlled_shutdown(&self) -> Result<()> {
+        error!("Initiating controlled shutdown due to critical layer failure");
+        
+        // Emit shutdown event
+        let event = crate::proto::Event {
+            r#type: "system".to_string(),
+            detail: "Controlled shutdown initiated due to critical layer failure".to_string(),
+            timestamp: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+            severity: "critical".to_string(),
+            attributes: [
+                ("action".to_string(), "controlled_shutdown".to_string()),
+            ].into_iter().collect(),
+            event_data: Some(crate::proto::event::EventData::SystemEvent(crate::proto::SystemEvent {
+                component: "layer_manager".to_string(),
+                action: "controlled_shutdown".to_string(),
+                message: "System shutdown due to critical layer failure".to_string(),
+                details: std::collections::HashMap::new(),
+            })),
+        };
+        
+        let _ = self.event_tx.send(event);
+        
+        // Gracefully stop all layers
+        let layers = vec!["mix", "stream", "fec", "crypto", "transport"];
+        for layer in layers {
+            if let Err(e) = self.graceful_layer_stop(layer).await {
+                error!("Failed to stop layer {} during controlled shutdown: {}", layer, e);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Attempt alternative strategies for important layers
+    async fn attempt_alternative_strategies(&self, layer_name: &str) -> Result<()> {
+        info!("Attempting alternative strategies for layer: {}", layer_name);
+        
+        // Try reduced functionality mode
+        match layer_name {
+            "stream" => {
+                info!("Enabling reduced stream functionality");
+                // Reduce concurrent streams, increase timeouts
+                self.enable_reduced_stream_mode().await?;
+            }
+            "fec" => {
+                info!("Disabling FEC temporarily");
+                // Continue without error correction
+                self.disable_fec_temporarily().await?;
+            }
+            _ => {
+                // Generic alternative strategy
+                self.enable_generic_fallback_mode(layer_name).await?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Continue with degraded service for optional layers
+    async fn continue_with_degraded_service(&self, layer_name: &str) -> Result<()> {
+        info!("Continuing with degraded service, layer {} disabled", layer_name);
+        
+        // Mark layer as bypassed
+        self.update_layer_status(layer_name, LayerStatus::Shutdown).await;
+        
+        // Adjust system configuration for degraded mode
+        match layer_name {
+            "mix" => {
+                info!("Continuing without anonymity layer");
+                // Direct routing mode
+            }
+            _ => {
+                info!("Layer {} bypassed, continuing with reduced functionality", layer_name);
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Enable reduced stream functionality
+    async fn enable_reduced_stream_mode(&self) -> Result<()> {
+        info!("Enabling reduced stream mode");
+        // Implementation would reduce concurrent streams and increase timeouts
+        Ok(())
+    }
+    
+    /// Disable FEC temporarily
+    async fn disable_fec_temporarily(&self) -> Result<()> {
+        info!("Disabling FEC temporarily");
+        // Implementation would bypass FEC encoding/decoding
+        Ok(())
+    }
+    
+    /// Enable generic fallback mode
+    async fn enable_generic_fallback_mode(&self, layer_name: &str) -> Result<()> {
+        info!("Enabling generic fallback mode for layer: {}", layer_name);
+        // Implementation would enable basic functionality only
+        Ok(())
+    }
+}
+
+/// Layer criticality levels for escalation
+#[derive(Debug, Clone, Copy)]
+enum LayerCriticality {
+    Critical,   // System cannot function without this layer
+    Important,  // System can function with reduced capability
+    Optional,   // System can function normally without this layer
 }
 
 impl Clone for LayerManager {

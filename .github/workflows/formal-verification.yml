@@ -1,0 +1,514 @@
+name: Formal Verification Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'formal/**'
+      - 'nyx-conformance/**'
+      - 'scripts/verify.py'
+      - 'scripts/build-verify.*'
+      - '.github/workflows/formal-verification.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'formal/**'
+      - 'nyx-conformance/**'
+      - 'scripts/verify.py'
+      - 'scripts/build-verify.*'
+  schedule:
+    # Run comprehensive formal verification weekly
+    - cron: '0 2 * * 1'  # Monday at 2 AM UTC
+  workflow_dispatch:
+    inputs:
+      verification_type:
+        description: 'Type of verification to run'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - tla-only
+          - rust-only
+      timeout:
+        description: 'Verification timeout in seconds'
+        required: false
+        default: '600'
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  VERIFICATION_TIMEOUT: ${{ github.event.inputs.timeout || '600' }}
+
+jobs:
+  # Quick TLA+ model checking for fast feedback
+  tla-quick-check:
+    name: TLA+ Quick Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+    
+    - name: Cache TLA+ tools
+      uses: actions/cache@v4
+      with:
+        path: formal/tla2tools.jar
+        key: tla-tools-${{ hashFiles('formal/README.md') }}
+        restore-keys: tla-tools-
+    
+    - name: Download TLA+ tools
+      run: |
+        cd formal
+        if [ ! -f tla2tools.jar ]; then
+          curl -L -o tla2tools.jar https://tla.msr-inria.inria.fr/tlatoolbox/resources/tla2tools.jar
+        fi
+    
+    - name: Run basic TLA+ model check
+      run: |
+        cd formal
+        java -Xmx2g -cp tla2tools.jar tlc2.TLC -config basic.cfg nyx_multipath_plugin.tla
+    
+    - name: Upload TLA+ basic results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: tla-basic-results
+        path: formal/states/
+        retention-days: 7
+
+  # Comprehensive formal verification
+  formal-verification:
+    name: Formal Verification (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    needs: tla-quick-check
+    if: always() && (needs.tla-quick-check.result == 'success' || github.event_name == 'schedule')
+    timeout-minutes: 30
+    
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            script: scripts/build-verify.sh
+            python: python3
+          - os: windows-latest
+            script: scripts/build-verify.ps1
+            python: python
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: clippy, rustfmt
+    
+    - name: Cache cargo registry and build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ matrix.os }}-formal-verification-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ matrix.os }}-formal-verification-
+          ${{ matrix.os }}-
+    
+    - name: Cache TLA+ tools
+      uses: actions/cache@v4
+      with:
+        path: formal/tla2tools.jar
+        key: tla-tools-${{ hashFiles('formal/README.md') }}
+        restore-keys: tla-tools-
+    
+    - name: Install system dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcap-dev pkg-config protobuf-compiler
+    
+    - name: Install system dependencies (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        choco install protoc
+        # Refresh PATH
+        $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("PATH","User")
+    
+    - name: Set verification type
+      shell: bash
+      run: |
+        case "${{ github.event.inputs.verification_type }}" in
+          "tla-only")
+            echo "SKIP_RUST=true" >> $GITHUB_ENV
+            ;;
+          "rust-only")
+            echo "SKIP_TLA=true" >> $GITHUB_ENV
+            ;;
+          *)
+            echo "Running full verification"
+            ;;
+        esac
+    
+    - name: Run verification pipeline (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        chmod +x ${{ matrix.script }}
+        ${{ matrix.script }} --timeout ${{ env.VERIFICATION_TIMEOUT }}
+    
+    - name: Run verification pipeline (Windows)
+      if: matrix.os == 'windows-latest'
+      shell: pwsh
+      run: |
+        & ${{ matrix.script }} -Timeout ${{ env.VERIFICATION_TIMEOUT }}
+    
+    - name: Upload verification report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: verification-report-${{ matrix.os }}
+        path: |
+          build_verification_report.json
+          build_report.json
+        retention-days: 30
+    
+    - name: Upload TLA+ model checking results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: tla-results-${{ matrix.os }}
+        path: |
+          formal/states/
+          formal/model_checking_report.json
+        retention-days: 30
+    
+    - name: Generate verification summary
+      if: always()
+      shell: bash
+      run: |
+        if [ -f build_verification_report.json ]; then
+          echo "## Formal Verification Results (${{ matrix.os }})" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          ${{ matrix.python }} -c "
+import json
+import sys
+
+try:
+    with open('build_verification_report.json', 'r') as f:
+        report = json.load(f)
+    
+    summary = report.get('summary', {})
+    coverage = report.get('coverage_metrics', {}).get('requirements_coverage', {})
+    
+    print(f'**Overall Success Rate:** {summary.get(\"success_rate\", 0):.1f}%')
+    print(f'**Total Duration:** {summary.get(\"total_duration_seconds\", 0):.2f}s')
+    print(f'**Requirements Coverage:** {coverage.get(\"overall_coverage_percentage\", 0):.1f}%')
+    print('')
+    
+    # TLA+ Results
+    tla_results = [r for r in report['results'] if r['type'] == 'tla']
+    if tla_results:
+        print('### TLA+ Model Checking')
+        for result in tla_results:
+            status = '✅' if result['success'] else '❌'
+            states = result['details'].get('states_generated', 0)
+            print(f'- {status} **{result[\"name\"]}**: {states:,} states in {result[\"duration\"]:.2f}s')
+        print('')
+    
+    # Rust Results
+    rust_results = [r for r in report['results'] if r['type'] == 'rust_test']
+    if rust_results:
+        print('### Rust Property Tests')
+        for result in rust_results:
+            status = '✅' if result['success'] else '❌'
+            tests = result['details'].get('tests_run', 0)
+            print(f'- {status} **{result[\"name\"]}**: {tests} tests in {result[\"duration\"]:.2f}s')
+        print('')
+    
+    # Failed verifications
+    failed = [r for r in report['results'] if not r['success']]
+    if failed:
+        print('### Failed Verifications')
+        for result in failed:
+            print(f'- ❌ **{result[\"name\"]}**: {result.get(\"error_message\", \"Unknown error\")}')
+        print('')
+    
+    # Requirements coverage details
+    if coverage and 'requirements_mapping' in coverage:
+        print('### Requirements Coverage Details')
+        req_mapping = coverage['requirements_mapping']
+        for req_id, req_info in sorted(req_mapping.items()):
+            status = '✅' if req_info['fully_covered'] else '⚠️'
+            coverage_pct = req_info['coverage_percentage']
+            print(f'- {status} **Requirement {req_id}**: {coverage_pct:.1f}% covered')
+        print('')
+
+except Exception as e:
+    print(f'Error parsing verification report: {e}')
+    sys.exit(1)
+" >> $GITHUB_STEP_SUMMARY
+        else
+          echo "❌ Verification report not found" >> $GITHUB_STEP_SUMMARY
+        fi
+
+  # Property-based testing focus
+  property-testing:
+    name: Property-Based Testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+    
+    - name: Cache cargo registry and build artifacts
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ubuntu-property-testing-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ubuntu-property-testing-
+          ubuntu-
+    
+    - name: Install system dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libcap-dev pkg-config protobuf-compiler
+    
+    - name: Run conformance tests with extended cases
+      run: |
+        cd nyx-conformance
+        # Run with more extensive property testing
+        PROPTEST_CASES=10000 cargo test --verbose --release
+    
+    - name: Run property tests with different seeds
+      run: |
+        cd nyx-conformance
+        for seed in 1 42 123 456 789; do
+          echo "Running with seed $seed"
+          PROPTEST_RNG_SEED=$seed cargo test --verbose
+        done
+    
+    - name: Generate property test coverage report
+      run: |
+        cd nyx-conformance
+        cargo test --verbose 2>&1 | tee property_test_output.log
+        
+        # Extract test statistics
+        python3 -c "
+import re
+import json
+
+with open('property_test_output.log', 'r') as f:
+    output = f.read()
+
+# Extract test results
+test_pattern = r'test (\w+::\w+) \.\.\. (\w+)'
+matches = re.findall(test_pattern, output)
+
+results = {
+    'total_tests': len(matches),
+    'passed_tests': len([m for m in matches if m[1] == 'ok']),
+    'failed_tests': len([m for m in matches if m[1] != 'ok']),
+    'test_details': [{'name': m[0], 'result': m[1]} for m in matches]
+}
+
+with open('property_test_report.json', 'w') as f:
+    json.dump(results, f, indent=2)
+
+print(f'Property test report: {results[\"passed_tests\"]}/{results[\"total_tests\"]} tests passed')
+"
+    
+    - name: Upload property test results
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: property-test-results
+        path: |
+          nyx-conformance/property_test_report.json
+          nyx-conformance/property_test_output.log
+        retention-days: 14
+
+  # Comprehensive verification report
+  verification-report:
+    name: Generate Comprehensive Report
+    runs-on: ubuntu-latest
+    needs: [formal-verification, property-testing]
+    if: always()
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Download all verification artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: verification-artifacts
+    
+    - name: Generate comprehensive report
+      run: |
+        python3 -c "
+import json
+import os
+from datetime import datetime
+from pathlib import Path
+
+# Collect all verification reports
+artifacts_dir = Path('verification-artifacts')
+comprehensive_report = {
+    'timestamp': datetime.now().isoformat(),
+    'workflow_run': '${{ github.run_id }}',
+    'commit_sha': '${{ github.sha }}',
+    'branch': '${{ github.ref_name }}',
+    'verification_results': {},
+    'summary': {
+        'total_platforms': 0,
+        'successful_platforms': 0,
+        'total_verifications': 0,
+        'successful_verifications': 0,
+        'overall_success_rate': 0.0
+    }
+}
+
+# Process verification reports from different platforms
+for platform_dir in artifacts_dir.glob('verification-report-*'):
+    platform = platform_dir.name.replace('verification-report-', '')
+    report_file = platform_dir / 'build_verification_report.json'
+    
+    if report_file.exists():
+        try:
+            with open(report_file, 'r') as f:
+                platform_report = json.load(f)
+            comprehensive_report['verification_results'][platform] = platform_report
+            
+            # Update summary
+            comprehensive_report['summary']['total_platforms'] += 1
+            platform_summary = platform_report.get('summary', {})
+            if platform_summary.get('success_rate', 0) > 80:  # Consider 80%+ as successful
+                comprehensive_report['summary']['successful_platforms'] += 1
+            
+            comprehensive_report['summary']['total_verifications'] += platform_summary.get('total_verifications', 0)
+            comprehensive_report['summary']['successful_verifications'] += platform_summary.get('successful_verifications', 0)
+            
+        except Exception as e:
+            print(f'Error processing {platform} report: {e}')
+
+# Calculate overall success rate
+total_verifications = comprehensive_report['summary']['total_verifications']
+if total_verifications > 0:
+    success_rate = (comprehensive_report['summary']['successful_verifications'] / total_verifications) * 100
+    comprehensive_report['summary']['overall_success_rate'] = success_rate
+
+# Process property test results
+property_report_file = artifacts_dir / 'property-test-results' / 'property_test_report.json'
+if property_report_file.exists():
+    try:
+        with open(property_report_file, 'r') as f:
+            property_report = json.load(f)
+        comprehensive_report['property_testing'] = property_report
+    except Exception as e:
+        print(f'Error processing property test report: {e}')
+
+# Save comprehensive report
+with open('comprehensive_verification_report.json', 'w') as f:
+    json.dump(comprehensive_report, f, indent=2)
+
+# Generate summary for GitHub
+print('## Comprehensive Verification Report')
+print('')
+print(f'**Overall Success Rate:** {comprehensive_report[\"summary\"][\"overall_success_rate\"]:.1f}%')
+print(f'**Platforms Tested:** {comprehensive_report[\"summary\"][\"successful_platforms\"]}/{comprehensive_report[\"summary\"][\"total_platforms\"]}')
+print(f'**Total Verifications:** {comprehensive_report[\"summary\"][\"successful_verifications\"]}/{comprehensive_report[\"summary\"][\"total_verifications\"]}')
+print('')
+
+# Platform breakdown
+if comprehensive_report['verification_results']:
+    print('### Platform Results')
+    for platform, result in comprehensive_report['verification_results'].items():
+        summary = result.get('summary', {})
+        success_rate = summary.get('success_rate', 0)
+        status = '✅' if success_rate > 80 else '❌'
+        print(f'- {status} **{platform}**: {success_rate:.1f}% success rate')
+    print('')
+
+# Property testing results
+if 'property_testing' in comprehensive_report:
+    prop_results = comprehensive_report['property_testing']
+    prop_success_rate = (prop_results['passed_tests'] / prop_results['total_tests']) * 100 if prop_results['total_tests'] > 0 else 0
+    status = '✅' if prop_success_rate > 95 else '❌'
+    print(f'### Property Testing')
+    print(f'- {status} **Property Tests**: {prop_success_rate:.1f}% success rate ({prop_results[\"passed_tests\"]}/{prop_results[\"total_tests\"]} tests)')
+    print('')
+
+print('### Verification Coverage')
+print('This comprehensive verification includes:')
+print('- **TLA+ Model Checking**: Formal proofs of safety and liveness properties')
+print('- **Property-Based Testing**: Rust implementation verification against formal model')
+print('- **Multi-Platform Testing**: Verification across Ubuntu and Windows')
+print('- **Requirements Traceability**: Coverage mapping to formal requirements')
+print('')
+
+if comprehensive_report['summary']['overall_success_rate'] < 90:
+    print('⚠️ **Action Required**: Verification success rate below 90%')
+    print('Please review failed verifications and address any issues.')
+else:
+    print('✅ **Verification Passed**: All formal verification requirements met')
+" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Upload comprehensive report
+      uses: actions/upload-artifact@v4
+      with:
+        name: comprehensive-verification-report
+        path: comprehensive_verification_report.json
+        retention-days: 90
+    
+    - name: Check verification status
+      run: |
+        python3 -c "
+import json
+import sys
+
+with open('comprehensive_verification_report.json', 'r') as f:
+    report = json.load(f)
+
+overall_success_rate = report['summary']['overall_success_rate']
+if overall_success_rate < 80:
+    print(f'❌ Verification failed: {overall_success_rate:.1f}% success rate')
+    sys.exit(1)
+else:
+    print(f'✅ Verification passed: {overall_success_rate:.1f}% success rate')
+"

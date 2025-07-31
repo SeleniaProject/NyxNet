@@ -29,6 +29,10 @@ use nyx_transport::{Transport, PacketHandler};
 
 // Internal modules
 mod metrics;
+mod alert_system;
+mod alert_system_enhanced;
+mod alert_system_test;
+mod prometheus_exporter;
 mod stream_manager;
 mod path_builder;
 mod session_manager;
@@ -37,7 +41,11 @@ mod health_monitor;
 mod event_system;
 mod layer_manager;
 
+#[cfg(test)]
+mod layer_recovery_test;
+
 use metrics::MetricsCollector;
+use prometheus_exporter::{PrometheusExporter, PrometheusExporterBuilder};
 use stream_manager::{StreamManager, StreamManagerConfig};
 use path_builder::{PathBuilder, PathBuilderConfig};
 use session_manager::{SessionManager, SessionManagerConfig};
@@ -118,6 +126,18 @@ impl ControlService {
         let metrics = Arc::new(MetricsCollector::new());
         let _metrics_task = Arc::clone(&metrics).start_collection();
         
+        // Initialize Prometheus exporter
+        let prometheus_addr = "127.0.0.1:9090".parse().unwrap();
+        let prometheus_exporter = PrometheusExporterBuilder::new()
+            .with_server_addr(prometheus_addr)
+            .with_update_interval(Duration::from_secs(15))
+            .build(Arc::clone(&metrics))?;
+        
+        // Start Prometheus metrics server and collection
+        prometheus_exporter.start_server().await?;
+        prometheus_exporter.start_collection().await?;
+        info!("Prometheus metrics server started on {}", prometheus_addr);
+        
         // Initialize stream manager
         let stream_config = StreamManagerConfig::default();
         let stream_manager = StreamManager::new(
@@ -152,7 +172,7 @@ impl ControlService {
         
         // Initialize configuration manager
         info!("Initializing configuration manager...");
-        let config_manager = Arc::new(ConfigManager::new(config.clone()));
+        let config_manager = Arc::new(ConfigManager::new(config.clone(), event_tx.clone()));
         info!("Configuration manager initialized");
         
         // Initialize health monitor

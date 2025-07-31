@@ -42,7 +42,7 @@ blake3 = { version = "1.5", features = ["pure"] }
 sha2 = "0.10"
 chacha20poly1305 = { version = "0.9", default-features = false, features=["alloc"] }
 hkdf = "0.12"
-rand_core = { version = "0.9" }
+rand_core = { version = "0.9", features = ["os_rng"] }
 rand_core_06 = { package = "rand_core", version = "0.6", features=["std","getrandom"] }
 
 # HPKE RFC9180 implementation (optional)
@@ -63,6 +63,10 @@ rpassword = "7.3"
 serde = { version = "1", features=["derive"], optional = true }
 serde_json = { version = "1", optional = true }
 
+# Async runtime for key rotation scheduling
+tokio = { version = "1.0", features = ["time", "sync", "rt", "rt-multi-thread", "macros"] }
+
 [dev-dependencies]
 hex-literal = "0.4"
 filetime = { version = "0.2", optional = false }
+rand_chacha = "0.3"

@@ -1,5 +1,5 @@
 #![allow(clippy::unwrap_used)]
-use nyx_stream::capability::{Capability, encode_caps, decode_caps, negotiate};
+use nyx_stream::{Capability, encode_caps, decode_caps, negotiate};
 
 #[test]
 fn capability_data_roundtrip() {

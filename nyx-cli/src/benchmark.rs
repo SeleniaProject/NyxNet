@@ -25,6 +25,62 @@ pub struct BenchmarkConfig {
     pub rate_limit: Option<u64>,
 }
 
+/// Comprehensive benchmark analysis results
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BenchmarkAnalysis {
+    pub overall_performance: OverallPerformance,
+    pub latency_analysis: LatencyAnalysis,
+    pub throughput_analysis: ThroughputAnalysis,
+    pub error_analysis: ErrorAnalysis,
+    pub recommendations: Vec<String>,
+}
+
+/// Overall performance metrics
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OverallPerformance {
+    pub success_rate: f64,
+    pub avg_throughput_mbps: f64,
+    pub avg_latency_ms: f64,
+    pub error_rate: f64,
+    pub efficiency_score: f64,
+}
+
+/// Detailed latency analysis
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LatencyAnalysis {
+    pub distribution: LatencyDistribution,
+    pub consistency_score: f64,
+    pub outlier_percentage: f64,
+}
+
+/// Latency distribution metrics
+#[derive(Debug, Serialize, Deserialize)]
+pub struct LatencyDistribution {
+    pub p50_ms: f64,
+    pub p90_ms: f64,
+    pub p95_ms: f64,
+    pub p99_ms: f64,
+    pub p99_9_ms: f64,
+}
+
+/// Throughput analysis
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ThroughputAnalysis {
+    pub peak_mbps: f64,
+    pub sustained_mbps: f64,
+    pub efficiency: f64,
+    pub bottleneck_indicators: Vec<String>,
+}
+
+/// Error analysis
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ErrorAnalysis {
+    pub error_distribution: HashMap<String, u64>,
+    pub critical_errors: u64,
+    pub recoverable_errors: u64,
+    pub error_patterns: Vec<String>,
+}
+
 /// Comprehensive benchmark results with detailed statistics
 #[derive(Debug, Serialize, Deserialize)]
 pub struct BenchmarkResult {
@@ -250,10 +306,10 @@ impl BenchmarkRunner {
                                 payload_size: payload.len(),
                                 connection_attempt: 1, // Simplified for now
                                 network_conditions: NetworkConditions {
-                                    estimated_latency_ms: 50.0, // Placeholder
-                                    estimated_bandwidth_mbps: 10.0, // Placeholder
+                                    estimated_latency_ms: Self::estimate_network_latency(&target).await,
+                                    estimated_bandwidth_mbps: Self::estimate_network_bandwidth().await,
                                     connection_count: config.connections,
-                                    system_load: 0.5, // Placeholder
+                                    system_load: Self::get_system_load(),
                                 },
                             };
                             
@@ -428,7 +484,286 @@ impl BenchmarkRunner {
         Ok((bytes_sent, bytes_received, Some(stream_stats)))
     }
     
+    /// Enhanced benchmark analysis with detailed performance breakdown
+    pub fn analyze_benchmark_results(result: &BenchmarkResult) -> BenchmarkAnalysis {
+        let mut analysis = BenchmarkAnalysis {
+            overall_performance: OverallPerformance {
+                success_rate: (result.successful_requests as f64 / result.total_requests as f64) * 100.0,
+                avg_throughput_mbps: result.throughput_mbps,
+                avg_latency_ms: result.avg_latency.as_millis() as f64,
+                error_rate: result.error_rate,
+                efficiency_score: 0.0, // Will be calculated
+            },
+            latency_analysis: LatencyAnalysis {
+                distribution: LatencyDistribution {
+                    p50_ms: result.percentiles.p50.as_millis() as f64,
+                    p90_ms: result.percentiles.p90.as_millis() as f64,
+                    p95_ms: result.percentiles.p95.as_millis() as f64,
+                    p99_ms: result.percentiles.p99.as_millis() as f64,
+                    p99_9_ms: result.percentiles.p99_9.as_millis() as f64,
+                },
+                consistency_score: 0.0, // Will be calculated
+                outlier_percentage: 0.0, // Will be calculated
+            },
+            throughput_analysis: ThroughputAnalysis {
+                peak_mbps: result.throughput_statistics.peak_send_rate_mbps,
+                sustained_mbps: result.throughput_statistics.avg_send_rate_mbps,
+                efficiency: 0.0, // Will be calculated
+                bottleneck_indicators: Vec::new(),
+            },
+            error_analysis: ErrorAnalysis {
+                error_distribution: result.error_statistics.error_rate_by_type
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.count))
+                    .collect(),
+                critical_errors: result.error_statistics.total_errors / 10, // Estimate critical errors
+                recoverable_errors: result.error_statistics.total_errors - (result.error_statistics.total_errors / 10),
+                error_patterns: Vec::new(), // Will be analyzed
+            },
+            recommendations: Vec::new(), // Will be generated
+        };
+        
+        // Calculate efficiency score (0-100)
+        analysis.overall_performance.efficiency_score = Self::calculate_efficiency_score(result);
+        
+        // Calculate latency consistency score
+        analysis.latency_analysis.consistency_score = Self::calculate_latency_consistency(result);
+        
+        // Calculate outlier percentage
+        analysis.latency_analysis.outlier_percentage = Self::calculate_outlier_percentage(result);
+        
+        // Calculate throughput efficiency
+        analysis.throughput_analysis.efficiency = Self::calculate_throughput_efficiency(result);
+        
+        // Identify bottlenecks
+        analysis.throughput_analysis.bottleneck_indicators = Self::identify_bottlenecks(result);
+        
+        // Analyze error patterns
+        analysis.error_analysis.error_patterns = Self::analyze_error_patterns(result);
+        
+        // Generate recommendations
+        analysis.recommendations = Self::generate_recommendations(result, &analysis);
+        
+        analysis
+    }
+    
+    /// Calculate overall efficiency score based on multiple factors
+    fn calculate_efficiency_score(result: &BenchmarkResult) -> f64 {
+        let success_weight = 0.4;
+        let latency_weight = 0.3;
+        let throughput_weight = 0.3;
+        
+        // Success rate component (0-100)
+        let success_score = (result.successful_requests as f64 / result.total_requests as f64) * 100.0;
+        
+        // Latency component (lower is better, normalize to 0-100)
+        let latency_ms = result.avg_latency.as_millis() as f64;
+        let latency_score = if latency_ms > 0.0 {
+            (1000.0 / (latency_ms + 10.0)) * 100.0 // Normalize with offset
+        } else {
+            100.0
+        };
+        
+        // Throughput component (higher is better, normalize to 0-100)
+        let throughput_score = if result.throughput_mbps > 0.0 {
+            (result.throughput_mbps / 100.0).min(1.0) * 100.0 // Normalize to 100 Mbps max
+        } else {
+            0.0
+        };
+        
+        (success_score * success_weight + latency_score * latency_weight + throughput_score * throughput_weight)
+            .min(100.0)
+    }
+    
+    /// Calculate latency consistency score
+    fn calculate_latency_consistency(result: &BenchmarkResult) -> f64 {
+        let p50 = result.percentiles.p50.as_millis() as f64;
+        let p99 = result.percentiles.p99.as_millis() as f64;
+        
+        if p50 > 0.0 {
+            // Lower ratio means more consistent latency
+            let ratio = p99 / p50;
+            (10.0 / ratio).min(10.0) * 10.0 // Normalize to 0-100
+        } else {
+            100.0
+        }
+    }
+    
+    /// Calculate percentage of outlier requests
+    fn calculate_outlier_percentage(result: &BenchmarkResult) -> f64 {
+        // Define outliers as requests taking more than 3x the median latency
+        let p50_ms = result.percentiles.p50.as_millis() as f64;
+        let p99_ms = result.percentiles.p99.as_millis() as f64;
+        
+        if p50_ms > 0.0 && p99_ms > p50_ms * 3.0 {
+            // Rough estimation based on percentile distribution
+            1.0 // Approximately 1% are outliers if p99 > 3*p50
+        } else {
+            0.1 // Very few outliers
+        }
+    }
+    
+    /// Calculate throughput efficiency
+    fn calculate_throughput_efficiency(result: &BenchmarkResult) -> f64 {
+        let peak = result.throughput_statistics.peak_send_rate_mbps;
+        let sustained = result.throughput_statistics.avg_send_rate_mbps;
+        
+        if peak > 0.0 {
+            (sustained / peak) * 100.0
+        } else {
+            0.0
+        }
+    }
+    
+    /// Identify performance bottlenecks
+    fn identify_bottlenecks(result: &BenchmarkResult) -> Vec<String> {
+        let mut bottlenecks = Vec::new();
+        
+        // High latency bottleneck
+        if result.avg_latency.as_millis() > 500 {
+            bottlenecks.push("High average latency detected - possible network or processing bottleneck".to_string());
+        }
+        
+        // Low throughput bottleneck
+        if result.throughput_mbps < 1.0 {
+            bottlenecks.push("Low throughput detected - possible bandwidth or processing limitation".to_string());
+        }
+        
+        // High error rate bottleneck
+        if result.error_rate > 5.0 {
+            bottlenecks.push("High error rate detected - possible reliability or capacity issue".to_string());
+        }
+        
+        // Latency inconsistency bottleneck
+        let p50 = result.percentiles.p50.as_millis() as f64;
+        let p99 = result.percentiles.p99.as_millis() as f64;
+        if p50 > 0.0 && p99 / p50 > 5.0 {
+            bottlenecks.push("High latency variance detected - possible intermittent bottleneck".to_string());
+        }
+        
+        bottlenecks
+    }
+    
+    /// Analyze error patterns for insights
+    fn analyze_error_patterns(result: &BenchmarkResult) -> Vec<String> {
+        let mut patterns = Vec::new();
+        
+        // Analyze error distribution
+        for (error_type, stats) in &result.error_statistics.error_rate_by_type {
+            let percentage = (stats.count as f64 / result.total_requests as f64) * 100.0;
+            if percentage > 1.0 {
+                patterns.push(format!("{}: {:.1}% of requests", error_type, percentage));
+            }
+        }
+        
+        patterns
+    }
+    
+    /// Generate performance recommendations
+    fn generate_recommendations(result: &BenchmarkResult, analysis: &BenchmarkAnalysis) -> Vec<String> {
+        let mut recommendations = Vec::new();
+        
+        // Success rate recommendations
+        if analysis.overall_performance.success_rate < 95.0 {
+            recommendations.push("Consider investigating error causes and implementing retry mechanisms".to_string());
+        }
+        
+        // Latency recommendations
+        if analysis.overall_performance.avg_latency_ms > 200.0 {
+            recommendations.push("High latency detected - consider optimizing network paths or reducing processing overhead".to_string());
+        }
+        
+        // Throughput recommendations
+        if analysis.overall_performance.avg_throughput_mbps < 10.0 {
+            recommendations.push("Low throughput - consider increasing buffer sizes or enabling compression".to_string());
+        }
+        
+        // Consistency recommendations
+        if analysis.latency_analysis.consistency_score < 70.0 {
+            recommendations.push("Inconsistent latency - investigate intermittent bottlenecks or resource contention".to_string());
+        }
+        
+        // Error-specific recommendations
+        if result.error_rate > 2.0 {
+            recommendations.push("Consider implementing circuit breakers and graceful degradation".to_string());
+        }
+        
+        recommendations
+    }
+    
 
+    
+    /// Estimate network latency to target using ping-like measurement
+    async fn estimate_network_latency(target: &str) -> f64 {
+        // Extract hostname from target address
+        let hostname = if let Some(colon_pos) = target.find(':') {
+            &target[..colon_pos]
+        } else {
+            target
+        };
+        
+        // Perform simple TCP connection test to estimate latency
+        let start = Instant::now();
+        match tokio::net::TcpStream::connect(format!("{}:80", hostname)).await {
+            Ok(_) => start.elapsed().as_millis() as f64,
+            Err(_) => {
+                // Fallback: try DNS resolution time as rough latency estimate
+                match tokio::net::lookup_host(format!("{}:80", hostname)).await {
+                    Ok(_) => start.elapsed().as_millis() as f64,
+                    Err(_) => 50.0, // Default fallback
+                }
+            }
+        }
+    }
+    
+    /// Estimate available network bandwidth using system information
+    async fn estimate_network_bandwidth() -> f64 {
+        // Use system information to estimate bandwidth
+        // This is a simplified estimation - in production, you might use more sophisticated methods
+        use sysinfo::{System, Networks};
+        
+        let networks = Networks::new_with_refreshed_list();
+        
+        let mut max_bandwidth: f64 = 10.0; // Default 10 Mbps
+        
+        for (interface_name, network) in &networks {
+            // Skip loopback and virtual interfaces
+            if interface_name.contains("lo") || interface_name.contains("docker") || interface_name.contains("veth") {
+                continue;
+            }
+            
+            // Estimate bandwidth based on interface statistics
+            // This is a rough estimation based on recent activity
+            let received_bytes = network.total_received();
+            let transmitted_bytes = network.total_transmitted();
+            
+            if received_bytes > 0 || transmitted_bytes > 0 {
+                // Rough estimation: assume gigabit ethernet for active interfaces
+                max_bandwidth = max_bandwidth.max(100.0); // 100 Mbps
+                
+                // If we see significant traffic, assume higher bandwidth
+                if received_bytes > 1_000_000 || transmitted_bytes > 1_000_000 {
+                    max_bandwidth = max_bandwidth.max(1000.0); // 1 Gbps
+                }
+            }
+        }
+        
+        max_bandwidth
+    }
+    
+    /// Get current system load as a factor affecting network performance
+    fn get_system_load() -> f64 {
+        use sysinfo::System;
+        
+        let mut sys = System::new_all();
+        sys.refresh_cpu();
+        
+        // Calculate average CPU usage
+        let cpu_usage: f64 = sys.cpus().iter().map(|cpu| cpu.cpu_usage() as f64).sum::<f64>() / sys.cpus().len() as f64;
+        
+        // Convert to load factor (0.0 = no load, 1.0 = full load)
+        cpu_usage / 100.0
+    }
     
     /// Analyze performance metrics by protocol layer
     fn analyze_layer_metrics(

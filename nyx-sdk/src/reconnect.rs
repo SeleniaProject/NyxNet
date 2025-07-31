@@ -23,7 +23,7 @@ use tokio::sync::{Mutex, RwLock};
 #[cfg(feature = "reconnect")]
 use tonic::transport::Channel;
 #[cfg(feature = "reconnect")]
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 #[cfg(feature = "reconnect")]
 use backoff::{ExponentialBackoff, backoff::Backoff};
 #[cfg(feature = "reconnect")]
@@ -271,7 +271,7 @@ impl ReconnectionManager {
             return Err(NyxError::stream_error(format!(
                 "Failed to reconnect stream: {}", 
                 stream_response.message
-            )));
+            ), None));
         }
         
         Ok(stream_response.stream_id)

@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 9c59cad9f68f58c0b9fd772c6248da42630b30a9a82993c16904ea7e5223dd3a # shrinks to base_latency = 40.22034961260587, latency_multiplier = 2.0, bandwidth = 136.14440354111, alpha = 0.5
+cc 72ee269a801b731862535afd2587bb14cafc283fd026ad97c2db793a9f361230 # shrinks to base_latency = 45.22364566570447, latency_multiplier = 5.125426956827394, bandwidth = 137.25238750695294, alpha = 0.8160534076493584

@@ -1,0 +1,198 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Nyx Daemon Overview",
+    "tags": ["nyx", "daemon", "network"],
+    "style": "dark",
+    "timezone": "browser",
+    "refresh": "30s",
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "panels": [
+      {
+        "id": 1,
+        "title": "System Health Score",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "nyx_dashboard_health_score",
+            "legendFormat": "Health Score"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "min": 0,
+            "max": 1,
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": 0},
+                {"color": "yellow", "value": 0.7},
+                {"color": "green", "value": 0.9}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Active Connections",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "nyx_active_streams",
+            "legendFormat": "Active Streams"
+          },
+          {
+            "expr": "nyx_connected_peers",
+            "legendFormat": "Connected Peers"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Network Throughput",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(nyx_bytes_sent_total[5m])",
+            "legendFormat": "Bytes Sent/sec"
+          },
+          {
+            "expr": "rate(nyx_bytes_received_total[5m])",
+            "legendFormat": "Bytes Received/sec"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Bytes/sec",
+            "min": 0
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 4,
+        "title": "System Performance",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "nyx_cpu_usage * 100",
+            "legendFormat": "CPU Usage %"
+          },
+          {
+            "expr": "nyx_memory_usage_mb",
+            "legendFormat": "Memory Usage MB"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Percentage / MB",
+            "min": 0
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "Network Latency",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "nyx_average_latency_ms",
+            "legendFormat": "Average Latency"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Milliseconds",
+            "min": 0
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8}
+      },
+      {
+        "id": 6,
+        "title": "Connection Success Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "nyx_connection_success_rate * 100",
+            "legendFormat": "Success Rate %"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Percentage",
+            "min": 0,
+            "max": 100
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 7,
+        "title": "Packet Loss Rate",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "nyx_packet_loss_rate * 100",
+            "legendFormat": "Packet Loss %"
+          }
+        ],
+        "yAxes": [
+          {
+            "label": "Percentage",
+            "min": 0
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      },
+      {
+        "id": 8,
+        "title": "Health Alerts",
+        "type": "table",
+        "targets": [
+          {
+            "expr": "nyx_health_high_cpu_usage",
+            "legendFormat": "High CPU"
+          },
+          {
+            "expr": "nyx_health_high_latency",
+            "legendFormat": "High Latency"
+          },
+          {
+            "expr": "nyx_health_high_packet_loss",
+            "legendFormat": "High Packet Loss"
+          },
+          {
+            "expr": "nyx_health_low_connection_success",
+            "legendFormat": "Low Connection Success"
+          }
+        ],
+        "transformations": [
+          {
+            "id": "organize",
+            "options": {
+              "excludeByName": {},
+              "indexByName": {},
+              "renameByName": {}
+            }
+          }
+        ],
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24}
+      }
+    ],
+    "templating": {
+      "list": []
+    },
+    "annotations": {
+      "list": []
+    },
+    "schemaVersion": 27,
+    "version": 1
+  }
+}

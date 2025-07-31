@@ -135,7 +135,7 @@ impl StatisticsRenderer {
         }
     }
 
-    /// Display statistics with real-time updates
+    /// Display statistics with real-time updates and interactive controls
     pub async fn display_real_time(&mut self, data: &StatisticsData) -> Result<()> {
         if self.last_update.elapsed() < self.config.update_interval {
             return Ok(());
@@ -146,10 +146,140 @@ impl StatisticsRenderer {
 
         let output = self.render(data)?;
         print!("{}", output);
+        
+        // Add interactive controls footer
+        self.display_interactive_controls()?;
+        
         io::stdout().flush()?;
-
         self.last_update = Instant::now();
         Ok(())
+    }
+    
+    /// Display interactive control instructions
+    fn display_interactive_controls(&self) -> Result<()> {
+        println!("\n{}", style("Interactive Controls:").bold().blue());
+        println!("{}", style("Press 'q' to quit, 'p' to pause, 'e' to export, 'f' to filter").dim());
+        println!("{}", style("Use arrow keys to navigate, 's' to save snapshot").dim());
+        Ok(())
+    }
+    
+    /// Export statistics data to file
+    pub fn export_to_file(&self, data: &StatisticsData, filename: &str, format: &str) -> Result<()> {
+        use std::fs::File;
+        use std::io::Write;
+        
+        let content = match format.to_lowercase().as_str() {
+            "json" => serde_json::to_string_pretty(data)?,
+            "csv" => self.export_to_csv(data)?,
+            "txt" => self.render_table(data)?,
+            _ => return Err(anyhow::anyhow!("Unsupported export format: {}", format)),
+        };
+        
+        let mut file = File::create(filename)?;
+        file.write_all(content.as_bytes())?;
+        
+        println!("{} Statistics exported to {}", style("✅").green(), filename);
+        Ok(())
+    }
+    
+    /// Export statistics to CSV format
+    fn export_to_csv(&self, data: &StatisticsData) -> Result<String> {
+        let mut csv = String::new();
+        
+        // CSV header
+        csv.push_str("timestamp,total_requests,successful_requests,failed_requests,success_rate,");
+        csv.push_str("avg_latency_ms,throughput_mbps,active_connections,uptime_seconds,");
+        csv.push_str("current_rps,current_latency_ms,current_throughput_mbps,current_error_rate\n");
+        
+        // CSV data
+        csv.push_str(&format!(
+            "{},{},{},{},{:.2},{:.2},{:.2},{},{},{:.2},{:.2},{:.2},{:.2}\n",
+            data.timestamp.format("%Y-%m-%d %H:%M:%S"),
+            data.summary.total_requests,
+            data.summary.successful_requests,
+            data.summary.failed_requests,
+            data.summary.success_rate,
+            data.summary.avg_latency_ms,
+            data.summary.throughput_mbps,
+            data.summary.active_connections,
+            data.summary.uptime_seconds,
+            data.real_time_metrics.current_rps,
+            data.real_time_metrics.current_latency_ms,
+            data.real_time_metrics.current_throughput_mbps,
+            data.real_time_metrics.current_error_rate
+        ));
+        
+        Ok(csv)
+    }
+    
+    /// Create a time series chart for latency trends
+    pub fn create_latency_trend_chart(&self, data_points: &[(DateTime<Utc>, f64)]) -> Result<String> {
+        let mut chart = String::new();
+        
+        if data_points.is_empty() {
+            return Ok("No data available for trend chart".to_string());
+        }
+        
+        chart.push_str(&format!("{}\n", style("Latency Trend (Last 60 seconds)").bold()));
+        
+        // Simple ASCII chart
+        let max_latency = data_points.iter().map(|(_, latency)| *latency).fold(0.0, f64::max);
+        let chart_height = 10;
+        let chart_width = 60;
+        
+        for row in (0..chart_height).rev() {
+            let threshold = (row as f64 / chart_height as f64) * max_latency;
+            
+            for col in 0..chart_width {
+                if col < data_points.len() {
+                    let (_, latency) = data_points[col];
+                    if latency >= threshold {
+                        chart.push('█');
+                    } else {
+                        chart.push(' ');
+                    }
+                } else {
+                    chart.push(' ');
+                }
+            }
+            chart.push_str(&format!(" {:.1}ms\n", threshold));
+        }
+        
+        // X-axis labels
+        chart.push_str(&"─".repeat(chart_width));
+        chart.push_str(" Time\n");
+        
+        Ok(chart)
+    }
+    
+    /// Apply filters to statistics data
+    pub fn apply_filters(&self, data: &StatisticsData) -> StatisticsData {
+        let mut filtered_data = data.clone();
+        
+        // Apply time range filter
+        if let Some(time_range) = &self.config.filter.time_range {
+            if data.timestamp < time_range.start || data.timestamp > time_range.end {
+                // Return empty data if outside time range
+                filtered_data.summary.total_requests = 0;
+                filtered_data.summary.successful_requests = 0;
+                filtered_data.summary.failed_requests = 0;
+            }
+        }
+        
+        // Apply latency filters
+        if let Some(min_latency) = self.config.filter.min_latency_ms {
+            if data.summary.avg_latency_ms < min_latency {
+                filtered_data.summary.total_requests = 0;
+            }
+        }
+        
+        if let Some(max_latency) = self.config.filter.max_latency_ms {
+            if data.summary.avg_latency_ms > max_latency {
+                filtered_data.summary.total_requests = 0;
+            }
+        }
+        
+        filtered_data
     }
 
     /// Render statistics as a comprehensive table
@@ -545,13 +675,6 @@ impl StatisticsRenderer {
             data.summary.active_connections,
             data.real_time_metrics.connection_health.overall_health_score * 100.0
         ))
-    }
-
-    /// Apply filters to statistics data
-    pub fn apply_filters(&self, data: &StatisticsData) -> StatisticsData {
-        // For now, return data as-is. In a full implementation, this would
-        // filter based on time range, connection types, stream IDs, etc.
-        data.clone()
     }
 
     // Helper methods for formatting and indicators

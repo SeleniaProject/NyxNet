@@ -1,4 +1,4 @@
-use nyx_stream::capability::{Capability, encode_caps, decode_caps, negotiate, NegotiationError};
+use nyx_stream::{Capability, encode_caps, decode_caps, negotiate, NegotiationError};
 use nyx_stream::management::ERR_UNSUPPORTED_CAP;
 
 #[test]

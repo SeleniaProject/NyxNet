@@ -8,6 +8,11 @@ pub mod tx;
 pub mod stream_frame;
 pub mod ack;
 pub mod state;
+pub mod async_stream;
+pub mod frame_handler;
+pub mod flow_controller;
+pub mod error_handler;
+pub mod resource_manager;
 #[cfg(feature = "plugin")]
 pub mod plugin;
 #[cfg(feature = "plugin")]
@@ -49,6 +54,11 @@ mod receiver;
 pub use receiver::MultipathReceiver;
 mod sequencer;
 pub use sequencer::Sequencer;
+pub use async_stream::{NyxAsyncStream, StreamError, StreamState as AsyncStreamState, CleanupConfig, StreamStats};
+pub use frame_handler::{FrameHandler, FrameHandlerError, FrameValidation, ReassembledData, FrameHandlerStats};
+pub use flow_controller::{FlowController, FlowControlError, FlowControlStats, CongestionState, RttEstimator};
+pub use error_handler::{StreamErrorHandler, ErrorContext, ErrorCategory, ErrorSeverity, RecoveryStrategy, RecoveryAction, ErrorHandlerStats};
+pub use resource_manager::{ResourceManager, ResourceInfo, ResourceType, ResourceError, ResourceLimits, ResourceStats};
 #[cfg(feature = "plugin")]
 pub use plugin::PluginHeader;
 #[cfg(feature = "plugin")]
@@ -63,7 +73,7 @@ pub struct PluginInfo;
 #[cfg(not(feature = "plugin"))]
 pub struct PluginRegistry;
 
-pub use capability::{Capability, FLAG_REQUIRED, encode_caps, decode_caps, negotiate, NegotiationError};
+pub use capability::{Capability, FLAG_REQUIRED, encode_caps, decode_caps, negotiate, NegotiationError, LOCAL_CAP_IDS};
 
 pub use management::{PingFrame, PongFrame, build_ping_frame, parse_ping_frame, build_pong_frame, parse_pong_frame,
     CloseFrame, build_close_frame, parse_close_frame,

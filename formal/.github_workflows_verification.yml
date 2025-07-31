@@ -1,0 +1,228 @@
+name: Formal Verification CI
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'formal/**'
+      - 'nyx-*/**/*.rs'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'formal/**'
+      - 'nyx-*/**/*.rs'
+
+jobs:
+  formal-verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install TLA+ Tools
+      run: |
+        wget https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+        mv tla2tools.jar formal/
+    
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install bc  # For floating point comparisons in bash
+    
+    - name: Run Model Checking
+      run: |
+        cd formal
+        python3 run_model_checking.py --timeout 1800 --output model_checking_results.json
+      continue-on-error: true
+    
+    - name: Generate Coverage Report
+      run: |
+        cd formal
+        python3 generate-verification-report.py --output coverage_report.json --ci-script
+    
+    - name: Analyze Counterexamples
+      if: failure()
+      run: |
+        cd formal
+        if ls *counterexample* 1> /dev/null 2>&1; then
+          for ce_file in *counterexample*; do
+            python3 counterexample_analyzer.py \
+              --input "$ce_file" \
+              --output "${ce_file%.txt}_analysis.json" \
+              --visualize \
+              --generate-test
+          done
+        fi
+    
+    - name: Upload Verification Artifacts
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: verification-results
+        path: |
+          formal/model_checking_results.json
+          formal/coverage_report.json
+          formal/*_analysis.json
+          formal/*_visualization.txt
+          formal/*_test.py
+    
+    - name: Check Verification Quality
+      run: |
+        cd formal
+        COVERAGE_SCORE=$(python3 -c "
+        import json
+        with open('coverage_report.json') as f:
+            data = json.load(f)
+        print(data['overall_assessment']['overall_score'])
+        ")
+        
+        echo "Coverage Score: $COVERAGE_SCORE"
+        
+        # Set status based on coverage
+        if (( $(echo "$COVERAGE_SCORE > 0.8" | bc -l) )); then
+          echo "✅ Verification quality: EXCELLENT"
+          echo "verification_status=excellent" >> $GITHUB_ENV
+        elif (( $(echo "$COVERAGE_SCORE > 0.7" | bc -l) )); then
+          echo "⚠️  Verification quality: GOOD"
+          echo "verification_status=good" >> $GITHUB_ENV
+        elif (( $(echo "$COVERAGE_SCORE > 0.5" | bc -l) )); then
+          echo "⚠️  Verification quality: FAIR"
+          echo "verification_status=fair" >> $GITHUB_ENV
+          exit 1
+        else
+          echo "❌ Verification quality: POOR"
+          echo "verification_status=poor" >> $GITHUB_ENV
+          exit 1
+        fi
+    
+    - name: Comment PR with Results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          
+          // Read coverage report
+          const coverageData = JSON.parse(fs.readFileSync('formal/coverage_report.json', 'utf8'));
+          const overall = coverageData.overall_assessment;
+          
+          // Create comment body
+          let comment = `## 🔍 Formal Verification Results\n\n`;
+          comment += `**Overall Score:** ${(overall.overall_score * 100).toFixed(1)}%\n`;
+          comment += `**Readiness Level:** ${overall.readiness_level}\n\n`;
+          
+          if (overall.strengths.length > 0) {
+            comment += `### ✅ Strengths\n`;
+            overall.strengths.forEach(strength => {
+              comment += `- ${strength}\n`;
+            });
+            comment += `\n`;
+          }
+          
+          if (overall.weaknesses.length > 0) {
+            comment += `### ⚠️ Areas for Improvement\n`;
+            overall.weaknesses.forEach(weakness => {
+              comment += `- ${weakness}\n`;
+            });
+            comment += `\n`;
+          }
+          
+          // Add improvement plan
+          if (coverageData.improvement_plan.length > 0) {
+            comment += `### 🔧 Top Improvement Actions\n`;
+            coverageData.improvement_plan.slice(0, 3).forEach((item, index) => {
+              comment += `${index + 1}. ${item.task} (${item.impact} impact)\n`;
+            });
+          }
+          
+          // Post comment
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+
+  optimization-analysis:
+    runs-on: ubuntu-latest
+    needs: formal-verification
+    if: always()
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install TLA+ Tools
+      run: |
+        wget https://github.com/tlaplus/tlaplus/releases/download/v1.8.0/tla2tools.jar
+        mv tla2tools.jar formal/
+    
+    - name: Run Optimization Analysis
+      run: |
+        cd formal
+        python3 optimize_model_checking.py \
+          --config comprehensive.cfg \
+          --compare \
+          --bounded \
+          --output optimization_analysis.json
+    
+    - name: Upload Optimization Results
+      uses: actions/upload-artifact@v3
+      with:
+        name: optimization-results
+        path: |
+          formal/optimization_analysis.json
+          formal/*_optimized.cfg
+          formal/*_bounded.cfg
+
+  security-analysis:
+    runs-on: ubuntu-latest
+    needs: formal-verification
+    if: always()
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Security Property Verification
+      run: |
+        cd formal
+        echo "🔒 Running security-focused verification..."
+        
+        # Create security-focused configuration
+        cat > security_focus.cfg << EOF
+        SPECIFICATION FairSpec
+        INVARIANTS TypeInvariant Inv_CryptoStateConsistency Inv_CapabilityConsistency
+                   Inv_ErrorConsistency ValidStateTransition ProtocolCorrectness
+        PROPERTIES SuccessfulCryptoHandshake SuccessfulCapabilityNegotiation
+        CONSTANTS NodeCount = 8
+                  CapSet = {1,2,3,4,5}
+                  MaxStreams = 2
+                  MaxRetries = 2
+                  TimeoutLimit = 30
+        SYMMETRY NodeSymmetry
+        EOF
+        
+        # Run security verification
+        python3 run_model_checking.py \
+          --timeout 900 \
+          --config-dir . \
+          --output security_verification.json
+    
+    - name: Upload Security Results
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-verification
+        path: formal/security_verification.json

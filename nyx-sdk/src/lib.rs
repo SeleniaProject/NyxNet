@@ -38,6 +38,8 @@ pub mod daemon;
 pub mod stream;
 pub mod error;
 pub mod events;
+pub mod proto;
+pub mod retry;
 
 #[cfg(feature = "reconnect")]
 pub mod reconnect;
@@ -46,16 +48,11 @@ pub mod reconnect;
 pub use config::{NyxConfig, ConfigBuilder, NetworkConfig, SecurityConfig};
 pub use daemon::{NyxDaemon, ConnectionInfo, DaemonStatus, NodeInfo};
 pub use stream::{NyxStream, StreamOptions, StreamState, StreamStats};
-pub use error::{NyxError, NyxResult, ErrorKind};
+pub use error::{NyxError, NyxResult, ErrorKind, ErrorSeverity};
 pub use events::{NyxEvent, EventHandler, EventCallback};
+pub use retry::{RetryStrategy, RetryExecutor, CircuitBreaker, retry, retry_with_strategy};
 
-// Generated gRPC client code
-mod proto {
-    tonic::include_proto!("nyx.api");
-}
-
-use proto::nyx_control_client::NyxControlClient;
-pub use proto::StreamResponse;
+pub use proto::NyxControlClient;
 
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -71,7 +68,8 @@ pub fn default_daemon_endpoint() -> String {
 
 /// Initialize the SDK with default logging configuration
 pub fn init() {
-    tracing_subscriber::fmt::init();
+    use tracing_subscriber::fmt;
+    fmt::init();
 }
 
 /// Initialize the SDK with custom tracing subscriber
@@ -81,4 +79,42 @@ where
 {
     tracing::subscriber::set_global_default(subscriber)
         .expect("Failed to set tracing subscriber");
-} 
+}
+
+/// Create a new SDK client with default configuration
+pub async fn connect() -> crate::error::NyxResult<crate::daemon::NyxDaemon> {
+    let config = crate::config::NyxConfig::default();
+    crate::daemon::NyxDaemon::connect(config).await
+}
+
+/// Create a new SDK client with custom configuration
+pub async fn connect_with_config(config: crate::config::NyxConfig) -> crate::error::NyxResult<crate::daemon::NyxDaemon> {
+    crate::daemon::NyxDaemon::connect(config).await
+}
+
+/// Create a new SDK client from environment variables
+pub async fn connect_from_env() -> crate::error::NyxResult<crate::daemon::NyxDaemon> {
+    let config = crate::config::NyxConfig::from_env()?;
+    crate::daemon::NyxDaemon::connect(config).await
+}
+
+/// Create a new SDK client from configuration file
+pub async fn connect_from_file<P: AsRef<std::path::Path>>(path: P) -> crate::error::NyxResult<crate::daemon::NyxDaemon> {
+    let config = crate::config::NyxConfig::load_with_env(path).await?;
+    crate::daemon::NyxDaemon::connect(config).await
+}
+
+/// Utility function to create a simple event handler
+pub fn create_logging_handler(name: impl Into<String>) -> std::sync::Arc<dyn crate::events::EventHandler> {
+    std::sync::Arc::new(crate::events::LoggingEventHandler::new(name))
+}
+
+/// Utility function to create a filtered event handler
+pub fn create_filtered_handler(
+    handler: std::sync::Arc<dyn crate::events::EventHandler>,
+    filter: crate::events::EventFilter,
+) -> std::sync::Arc<dyn crate::events::EventHandler> {
+    std::sync::Arc::new(crate::events::FilteredEventHandler::new(handler, filter))
+}
+
+ 

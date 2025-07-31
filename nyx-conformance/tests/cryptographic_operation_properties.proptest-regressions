@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 0f76b1d6721c4a91588a61393973a0660b3a9e3fc7dd529696a5547ecdf7fe65 # shrinks to ikm = [52, 114, 83, 97], length = 1
