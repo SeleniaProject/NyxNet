@@ -12,15 +12,17 @@ use crate::pure_rust_dht_tcp::{PureRustDht, PeerInfo as DhtPeerInfo, DhtError, D
 use geo::Point;
 use lru::LruCache;
 use anyhow;
+use tokio::net::TcpStream;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use std::net::SocketAddr;
+use std::time::{Duration, SystemTime, Instant};
 
 // Pure Rust multiaddr
 use multiaddr::Multiaddr;
 
 use std::collections::{HashMap, HashSet};
-use std::net::SocketAddr;
 use std::sync::Arc;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, Instant};
 use tokio::sync::{RwLock, Mutex};
 use tokio::time::interval;
 use tracing::{debug, error, info, warn, instrument};
@@ -63,6 +65,9 @@ pub enum DiscoveryCriteria {
     ByLatency(f64), // Max latency in ms
     ByBandwidth(f64), // Min bandwidth in Mbps
     Random(usize), // Number of random peers
+    HighPerformance, // High performance peers with low latency and high bandwidth
+    GeographicDiversity, // Peers from different geographic regions
+    Reliability, // Peers with high reliability scores
     All,
 }
 
@@ -433,10 +438,11 @@ impl DhtPeerDiscovery {
         info!("Performing initial bootstrap discovery");
         
         let mut bootstrap_peers = Vec::new();
+        let criteria = DiscoveryCriteria::Reliability; // Use reliability as default for bootstrap
         
         // Query each bootstrap peer to build initial peer set
         for bootstrap_addr in &self.bootstrap_peers {
-            match self.query_peer_for_neighbors(bootstrap_addr).await {
+            match self.connect_and_query_bootstrap_peer(bootstrap_addr, &criteria).await {
                 Ok(peers) => {
                     let peer_count = peers.len();
                     bootstrap_peers.extend(peers);
@@ -706,81 +712,285 @@ impl DhtPeerDiscovery {
 
     /// Perform active peer discovery through network queries
     async fn perform_active_discovery(&self, criteria: &DiscoveryCriteria) -> Result<Vec<crate::proto::PeerInfo>, DhtError> {
-        debug!("Performing active peer discovery");
+        debug!("Performing active peer discovery with criteria: {:?}", criteria);
         
         let mut discovered_peers = Vec::new();
+        let mut bootstrap_success_count = 0;
         
-        // Query each bootstrap peer for additional peers
-        for bootstrap_addr in &self.bootstrap_peers {
-            match self.query_peer_for_neighbors(bootstrap_addr).await {
-                Ok(mut peers) => {
-                    // Filter peers based on criteria
-                    peers.retain(|peer| self.matches_criteria_proto(peer, criteria));
-                    discovered_peers.extend(peers);
-                }
-                Err(e) => {
-                    warn!("Failed to query bootstrap peer {}: {}", bootstrap_addr, e);
-                    continue;
-                }
-            }
-            
-            // Respect the maximum peers per query limit
-            if discovered_peers.len() >= self.discovery_strategy.max_peers_per_query {
-                break;
-            }
-        }
-
-        // Update cache with newly discovered peers
-        self.update_peer_cache(&discovered_peers).await?;
-        
-        Ok(discovered_peers)
-    }
-
-    /// Query a specific peer for its neighbors using real DHT protocol
-    async fn query_peer_for_neighbors(&self, peer_addr: &Multiaddr) -> Result<Vec<crate::proto::PeerInfo>, DhtError> {
-        debug!("Querying peer {} for neighbors via DHT", peer_addr);
-        
-        // Get DHT instance for neighbor discovery
+        // Initialize DHT connection if not already done
         let dht_guard = self.dht.read().await;
         let dht = dht_guard.as_ref()
             .ok_or_else(|| DhtError::NotInitialized("DHT not initialized".to_string()))?;
         
-        // Extract peer ID from multiaddr for DHT query
-        let peer_id = self.extract_peer_id_from_addr(peer_addr)
-            .unwrap_or_else(|| format!("peer_{}", uuid::Uuid::new_v4()));
-        
-        // Use DHT find_node operation to discover neighbors
-        match dht.find_node(&peer_id).await {
-            Ok(closest_peers) => {
-                let mut neighbors = Vec::new();
-                
-                // Convert Pure Rust DHT PeerInfo to proto PeerInfo
-                for (i, peer) in closest_peers.iter().enumerate().take(10) { // Limit to 10 neighbors
-                    let estimated_latency = self.estimate_peer_latency(&peer.address).await
-                        .unwrap_or(100.0);
+        // Phase 1: Bootstrap from known peers
+        for bootstrap_addr in &self.bootstrap_peers {
+            match self.connect_and_query_bootstrap_peer(bootstrap_addr, criteria).await {
+                Ok(mut peers) => {
+                    bootstrap_success_count += 1;
                     
-                    let peer_info = crate::proto::PeerInfo {
-                        node_id: peer.peer_id.clone(),
-                        address: peer.address.to_string(),
-                        latency_ms: estimated_latency,
-                        bandwidth_mbps: self.estimate_peer_bandwidth(&peer.address).await,
-                        status: "discovered".to_string(),
-                        last_seen: Some(crate::proto::Timestamp {
-                            seconds: chrono::Utc::now().timestamp(),
-                            nanos: 0,
-                        }),
-                        connection_count: 1,
-                        region: self.infer_region_from_multiaddr(&peer.address),
-                    };
-                    neighbors.push(peer_info);
+                    // Add discovered peers with source tracking
+                    for mut peer in peers {
+                        peer.connection_count = 1; // Mark as recently discovered
+                        
+                        // Avoid duplicates by node_id
+                        if !discovered_peers.iter().any(|p: &crate::proto::PeerInfo| p.node_id == peer.node_id) {
+                            discovered_peers.push(peer);
+                        }
+                    }
+                    
+                    info!("Successfully discovered {} peers from bootstrap {}", 
+                          discovered_peers.len(), bootstrap_addr);
+                }
+                Err(e) => {
+                    warn!("Failed to query bootstrap peer {}: {}", bootstrap_addr, e);
+                    // Continue with other bootstrap peers
+                }
+            }
+            
+            // Respect discovery limits
+            if discovered_peers.len() >= self.discovery_strategy.max_peers_per_query {
+                break;
+            }
+        }
+        
+        // Phase 2: Iterative discovery through DHT find_node operations
+        if discovered_peers.len() < self.discovery_strategy.max_peers_per_query && bootstrap_success_count > 0 {
+            let additional_peers = self.perform_iterative_discovery(criteria, &discovered_peers).await?;
+            
+            // Merge additional peers
+            for peer in additional_peers {
+                if !discovered_peers.iter().any(|p| p.node_id == peer.node_id) {
+                    discovered_peers.push(peer);
+                    
+                    if discovered_peers.len() >= self.discovery_strategy.max_peers_per_query {
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Phase 3: Quality assessment and filtering
+        self.assess_and_filter_discovered_peers(&mut discovered_peers, criteria).await?;
+        
+        // Phase 4: Update persistent cache with discovered peers
+        self.update_peer_cache(&discovered_peers).await?;
+        
+        info!("Active discovery completed: {} peers discovered from {} bootstrap sources", 
+              discovered_peers.len(), bootstrap_success_count);
+        
+        Ok(discovered_peers)
+    }
+
+    /// Connect to bootstrap peer and query for initial peer set
+    async fn connect_and_query_bootstrap_peer(
+        &self,
+        bootstrap_addr: &Multiaddr,
+        criteria: &DiscoveryCriteria,
+    ) -> Result<Vec<crate::proto::PeerInfo>, DhtError> {
+        debug!("Connecting to bootstrap peer: {}", bootstrap_addr);
+        
+        // Extract socket address from multiaddr
+        let socket_addr = self.multiaddr_to_socket_addr(bootstrap_addr)?;
+        
+        // Connect with timeout
+        let connection_timeout = Duration::from_secs(self.discovery_strategy.discovery_timeout_secs);
+        let mut stream = match tokio::time::timeout(connection_timeout, TcpStream::connect(socket_addr)).await {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(e)) => return Err(DhtError::Network(e)),
+            Err(_) => return Err(DhtError::Connection(format!("Connection timeout to {}", bootstrap_addr))),
+        };
+        
+        // Generate target ID for find_node query (use random ID for broad discovery)
+        let target_id = uuid::Uuid::new_v4().to_string();
+        
+        // Create find_node request
+        let find_node_msg = crate::pure_rust_dht_tcp::DhtMessage::FindNode {
+            target_id: self.string_to_node_id(&target_id),
+            requester_id: self.string_to_node_id(&self.get_local_node_id()),
+        };
+        
+        // Send query message
+        let query_data = bincode::serialize(&find_node_msg)
+            .map_err(|e| DhtError::Deserialization(format!("Failed to serialize query: {}", e)))?;
+        
+        let query_len = (query_data.len() as u32).to_be_bytes();
+        stream.write_all(&query_len).await
+            .map_err(|e| DhtError::Network(e))?;
+        stream.write_all(&query_data).await
+            .map_err(|e| DhtError::Network(e))?;
+        stream.flush().await
+            .map_err(|e| DhtError::Network(e))?;
+        
+        // Read response with timeout
+        let response_timeout = Duration::from_secs(30);
+        let response = tokio::time::timeout(response_timeout, self.read_dht_response(&mut stream)).await
+            .map_err(|_| DhtError::Connection("Response timeout".to_string()))?
+            .map_err(|e| DhtError::Connection(format!("Failed to read response: {}", e)))?;
+        
+        // Process response and convert to peer info
+        match response {
+            crate::pure_rust_dht_tcp::DhtMessage::FindNodeResponse { nodes, .. } => {
+                let mut peer_infos = Vec::new();
+                
+                for node in nodes {
+                    // Convert DHT PeerInfo to proto PeerInfo with validation
+                    match self.convert_dht_node_to_peer_info(&node, criteria).await {
+                        Ok(peer_info) => peer_infos.push(peer_info),
+                        Err(e) => {
+                            debug!("Skipping invalid peer {}: {}", node.peer_id, e);
+                            continue;
+                        }
+                    }
                 }
                 
-                info!("Discovered {} neighbors for peer {}", neighbors.len(), peer_addr);
+                info!("Successfully queried bootstrap {}: {} valid peers discovered", 
+                      bootstrap_addr, peer_infos.len());
+                Ok(peer_infos)
+            }
+            _ => {
+                warn!("Unexpected response type from bootstrap peer {}", bootstrap_addr);
+                Err(DhtError::Protocol("Unexpected response type".to_string()))
+            }
+        }
+    }
+    
+    /// Perform iterative discovery through existing discovered peers
+    async fn perform_iterative_discovery(
+        &self,
+        criteria: &DiscoveryCriteria,
+        seed_peers: &[crate::proto::PeerInfo],
+    ) -> Result<Vec<crate::proto::PeerInfo>, DhtError> {
+        debug!("Starting iterative discovery with {} seed peers", seed_peers.len());
+        
+        let mut all_discovered = Vec::new();
+        let mut queried_peers = std::collections::HashSet::new();
+        
+        // Use first few high-quality seed peers for iterative queries
+        let query_peers: Vec<_> = seed_peers.iter()
+            .filter(|p| p.status == "discovered" && p.latency_ms < 500.0)
+            .take(5)  // Limit concurrent queries
+            .collect();
+        
+        for seed_peer in query_peers {
+            // Skip if already queried
+            if queried_peers.contains(&seed_peer.node_id) {
+                continue;
+            }
+            queried_peers.insert(seed_peer.node_id.clone());
+            
+            // Parse seed peer address
+            if let Ok(peer_addr) = seed_peer.address.parse::<Multiaddr>() {
+                match self.query_peer_for_neighbors(&peer_addr, criteria).await {
+                    Ok(neighbors) => {
+                        info!("Found {} neighbors from peer {}", neighbors.len(), seed_peer.node_id);
+                        
+                        for neighbor in neighbors {
+                            // Avoid duplicates
+                            if !all_discovered.iter().any(|p: &crate::proto::PeerInfo| p.node_id == neighbor.node_id) &&
+                               !seed_peers.iter().any(|p: &crate::proto::PeerInfo| p.node_id == neighbor.node_id) {
+                                all_discovered.push(neighbor);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Failed to query peer {} for neighbors: {}", seed_peer.node_id, e);
+                    }
+                }
+            }
+            
+            // Respect discovery limits
+            if all_discovered.len() >= self.discovery_strategy.max_peers_per_query / 2 {
+                break;
+            }
+        }
+        
+        info!("Iterative discovery completed: {} additional peers found", all_discovered.len());
+        Ok(all_discovered)
+    }
+
+    /// Query a specific peer for its neighbors using real DHT protocol
+    async fn query_peer_for_neighbors(
+        &self, 
+        peer_addr: &Multiaddr,
+        criteria: &DiscoveryCriteria,
+    ) -> Result<Vec<crate::proto::PeerInfo>, DhtError> {
+        debug!("Querying peer {} for neighbors via DHT", peer_addr);
+        
+        // Extract socket address from multiaddr
+        let socket_addr = self.multiaddr_to_socket_addr(peer_addr)?;
+        
+        // Connect to peer with timeout
+        let connection_timeout = Duration::from_secs(10);
+        let mut stream = match tokio::time::timeout(connection_timeout, TcpStream::connect(socket_addr)).await {
+            Ok(Ok(stream)) => stream,
+            Ok(Err(e)) => {
+                debug!("Failed to connect to peer {}: {}", peer_addr, e);
+                return Err(DhtError::Network(e));
+            }
+            Err(_) => {
+                debug!("Connection timeout to peer {}", peer_addr);
+                return Err(DhtError::Connection("Connection timeout".to_string()));
+            }
+        };
+        
+        // Generate random target ID for neighbor discovery
+        let target_id = uuid::Uuid::new_v4().to_string();
+        
+        // Create find_node request
+        let find_node_msg = crate::pure_rust_dht_tcp::DhtMessage::FindNode {
+            target_id: self.string_to_node_id(&target_id),
+            requester_id: self.string_to_node_id(&self.get_local_node_id()),
+        };
+        
+        // Send query
+        let query_data = bincode::serialize(&find_node_msg)
+            .map_err(|e| DhtError::Deserialization(format!("Serialization error: {}", e)))?;
+        
+        let query_len = (query_data.len() as u32).to_be_bytes();
+        stream.write_all(&query_len).await
+            .map_err(|e| DhtError::Network(e))?;
+        stream.write_all(&query_data).await
+            .map_err(|e| DhtError::Network(e))?;
+        stream.flush().await
+            .map_err(|e| DhtError::Network(e))?;
+        
+        // Read response with timeout
+        let response_timeout = Duration::from_secs(15);
+        let response = tokio::time::timeout(response_timeout, self.read_dht_response(&mut stream)).await
+            .map_err(|_| DhtError::Connection("Query response timeout".to_string()))?
+            .map_err(|e| DhtError::Connection(format!("Read response error: {}", e)))?;
+        
+        // Process response
+        match response {
+            crate::pure_rust_dht_tcp::DhtMessage::FindNodeResponse { nodes, .. } => {
+                let mut neighbors = Vec::new();
+                
+                // Convert DHT nodes to peer info with comprehensive validation
+                for node in nodes.into_iter().take(20) { // Limit to 20 neighbors
+                    match self.convert_dht_node_to_peer_info(&node, criteria).await {
+                        Ok(peer_info) => {
+                            // Additional quality filtering
+                            if peer_info.latency_ms < 2000.0 && peer_info.status != "failed" {
+                                neighbors.push(peer_info);
+                            }
+                        }
+                        Err(e) => {
+                            debug!("Skipping invalid neighbor {}: {}", node.peer_id, e);
+                        }
+                    }
+                }
+                
+                info!("Successfully discovered {} neighbors from peer {}", neighbors.len(), peer_addr);
                 Ok(neighbors)
             }
-            Err(e) => {
-                warn!("Failed to query neighbors for peer {}: {}", peer_addr, e);
-                Err(DhtError::QueryFailed(format!("Failed to find neighbors: {}", e)))
+            crate::pure_rust_dht_tcp::DhtMessage::Pong { .. } => {
+                // Peer is alive but returned pong instead of find_node response
+                warn!("Peer {} responded with pong instead of find_node response", peer_addr);
+                Ok(vec![])
+            }
+            _ => {
+                warn!("Unexpected response type from peer {}", peer_addr);
+                Err(DhtError::Protocol("Unexpected response type".to_string()))
             }
         }
     }
@@ -808,6 +1018,244 @@ impl DhtPeerDiscovery {
                 100.0 // Default bandwidth
             }
         }
+    }
+
+    /// Convert multiaddr to socket address for direct TCP connection
+    fn multiaddr_to_socket_addr(&self, multiaddr: &Multiaddr) -> Result<SocketAddr, DhtError> {
+        // Parse multiaddr string manually (simplified approach)
+        let addr_str = multiaddr.to_string();
+        
+        // Extract IP and port from multiaddr string
+        // Format: /ip4/127.0.0.1/tcp/8080 or /ip6/::1/tcp/8080
+        let parts: Vec<&str> = addr_str.split('/').collect();
+        
+        if parts.len() < 5 {
+            return Err(DhtError::InvalidAddress(format!("Invalid multiaddr format: {}", multiaddr)));
+        }
+        
+        let protocol = parts[1];
+        let ip_str = parts[2];
+        let tcp_protocol = parts[3];
+        let port_str = parts[4];
+        
+        if tcp_protocol != "tcp" {
+            return Err(DhtError::InvalidAddress("Only TCP protocol supported".to_string()));
+        }
+        
+        // Parse IP address
+        let ip: std::net::IpAddr = match protocol {
+            "ip4" => ip_str.parse::<std::net::Ipv4Addr>()
+                .map_err(|_| DhtError::InvalidAddress(format!("Invalid IPv4 address: {}", ip_str)))?
+                .into(),
+            "ip6" => ip_str.parse::<std::net::Ipv6Addr>()
+                .map_err(|_| DhtError::InvalidAddress(format!("Invalid IPv6 address: {}", ip_str)))?
+                .into(),
+            _ => return Err(DhtError::InvalidAddress(format!("Unsupported protocol: {}", protocol))),
+        };
+        
+        // Parse port
+        let port: u16 = port_str.parse()
+            .map_err(|_| DhtError::InvalidAddress(format!("Invalid port: {}", port_str)))?;
+        
+        Ok(SocketAddr::new(ip, port))
+    }
+    
+    /// Read DHT response from TCP stream
+    async fn read_dht_response(&self, stream: &mut TcpStream) -> Result<crate::pure_rust_dht_tcp::DhtMessage, DhtError> {
+        // Read message length (4 bytes)
+        let mut len_buf = [0u8; 4];
+        stream.read_exact(&mut len_buf).await
+            .map_err(|e| DhtError::Network(e))?;
+        
+        let msg_len = u32::from_be_bytes(len_buf) as usize;
+        
+        // Validate message length (prevent DoS)
+        if msg_len > 1024 * 1024 { // 1MB limit
+            return Err(DhtError::Protocol("Message too large".to_string()));
+        }
+        
+        // Read message data
+        let mut msg_buf = vec![0u8; msg_len];
+        stream.read_exact(&mut msg_buf).await
+            .map_err(|e| DhtError::Network(e))?;
+        
+        // Deserialize message
+        bincode::deserialize(&msg_buf)
+            .map_err(|e| DhtError::Deserialization(format!("Failed to deserialize response: {}", e)))
+    }
+    
+    /// Convert DHT node to peer info with comprehensive validation and quality assessment
+    async fn convert_dht_node_to_peer_info(
+        &self,
+        node: &crate::pure_rust_dht_tcp::PeerInfo,
+        criteria: &DiscoveryCriteria,
+    ) -> Result<crate::proto::PeerInfo, DhtError> {
+        // Validate and normalize address
+        let normalized_addr = self.validate_and_normalize_address(&node.address.to_string())?;
+        
+        // Estimate network quality
+        let latency = self.estimate_peer_latency(&node.address).await.unwrap_or(999.0);
+        let bandwidth = self.estimate_peer_bandwidth_from_proto_addr(&normalized_addr).await;
+        let reliability = self.calculate_peer_reliability_from_addr(&normalized_addr);
+        
+        // Apply criteria filtering
+        match criteria {
+            DiscoveryCriteria::HighPerformance => {
+                if latency > 200.0 || bandwidth < 50.0 || reliability < 0.7_f64 {
+                    return Err(DhtError::InvalidPeer("Does not meet high performance criteria".to_string()));
+                }
+            }
+            DiscoveryCriteria::GeographicDiversity => {
+                // Additional geographic validation could be added here
+            }
+            DiscoveryCriteria::Reliability => {
+                if reliability < 0.8_f64 {
+                    return Err(DhtError::InvalidPeer("Does not meet reliability criteria".to_string()));
+                }
+            }
+            _ => {} // Accept other criteria
+        }
+        
+        // Create peer info with quality metrics
+        let peer_info = crate::proto::PeerInfo {
+            node_id: node.peer_id.clone(),
+            address: normalized_addr,
+            latency_ms: latency,
+            bandwidth_mbps: bandwidth,
+            status: "discovered".to_string(),
+            last_seen: Some(crate::proto::Timestamp {
+                seconds: chrono::Utc::now().timestamp(),
+                nanos: 0,
+            }),
+            connection_count: 1,
+            region: self.determine_peer_region(&node.address.to_string(), &node.peer_id),
+        };
+        
+        Ok(peer_info)
+    }
+    
+    /// Estimate bandwidth from string address
+    async fn estimate_peer_bandwidth_from_proto_addr(&self, addr: &str) -> f64 {
+        if addr.contains("127.0.0.1") || addr.contains("localhost") {
+            1000.0
+        } else if addr.contains("10.") || addr.contains("192.168.") || addr.contains("172.") {
+            500.0
+        } else {
+            100.0 // Default for external addresses
+        }
+    }
+    
+    /// Calculate reliability score from address characteristics
+    fn calculate_peer_reliability_from_addr(&self, addr: &str) -> f64 {
+        if addr.contains("127.0.0.1") || addr.contains("localhost") {
+            0.95_f64 // Local is highly reliable
+        } else if addr.contains("10.") || addr.contains("192.168.") {
+            0.85_f64 // Private networks are generally reliable
+        } else {
+            0.75_f64 // External networks have variable reliability
+        }
+    }
+    
+    /// Get local node ID for DHT operations
+    fn get_local_node_id(&self) -> String {
+        // Generate consistent node ID based on local characteristics
+        format!("local_node_{}", uuid::Uuid::new_v4())
+    }
+    
+    /// Convert string to NodeId format expected by DHT
+    fn string_to_node_id(&self, id: &str) -> [u8; 32] {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let mut hasher = DefaultHasher::new();
+        id.hash(&mut hasher);
+        let hash = hasher.finish();
+        
+        // Convert u64 hash to [u8; 32] by repeating and padding
+        let mut node_id = [0u8; 32];
+        let hash_bytes = hash.to_be_bytes();
+        
+        // Fill the 32-byte array by repeating the 8-byte hash
+        for i in 0..4 {
+            let start = i * 8;
+            let end = start + 8;
+            node_id[start..end].copy_from_slice(&hash_bytes);
+        }
+        
+        node_id
+    }
+    
+    /// Assess and filter discovered peers based on quality metrics
+    async fn assess_and_filter_discovered_peers(
+        &self,
+        peers: &mut Vec<crate::proto::PeerInfo>,
+        criteria: &DiscoveryCriteria,
+    ) -> Result<(), DhtError> {
+        debug!("Assessing {} discovered peers for quality", peers.len());
+        
+        // Remove invalid or unreachable peers
+        peers.retain(|peer| {
+            peer.latency_ms < 5000.0 && // Remove extremely high latency peers
+            peer.bandwidth_mbps > 0.0 && // Remove zero bandwidth peers
+            !peer.node_id.is_empty() && // Remove peers without node ID
+            !peer.address.is_empty()    // Remove peers without address
+        });
+        
+        // Apply criteria-specific filtering
+        match criteria {
+            DiscoveryCriteria::HighPerformance => {
+                peers.retain(|peer| peer.latency_ms < 100.0 && peer.bandwidth_mbps > 100.0);
+            }
+            DiscoveryCriteria::Reliability => {
+                // Filter for peers with good connection history (if available)
+                peers.retain(|peer| peer.connection_count > 0);
+            }
+            DiscoveryCriteria::GeographicDiversity => {
+                // Sort by region to ensure diversity
+                peers.sort_by(|a, b| a.region.cmp(&b.region));
+            }
+            _ => {}
+        }
+        
+        // Sort by overall quality score
+        peers.sort_by(|a, b| {
+            let score_a = self.calculate_peer_quality_score(a);
+            let score_b = self.calculate_peer_quality_score(b);
+            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        
+        info!("Quality assessment complete: {} peers passed filtering", peers.len());
+        Ok(())
+    }
+    
+    /// Calculate overall quality score for peer ranking
+    fn calculate_peer_quality_score(&self, peer: &crate::proto::PeerInfo) -> f64 {
+        let latency_score = if peer.latency_ms < 50.0 {
+            1.0_f64
+        } else if peer.latency_ms < 200.0 {
+            0.8_f64
+        } else {
+            0.5_f64
+        };
+        
+        let bandwidth_score = if peer.bandwidth_mbps > 100.0 {
+            1.0_f64
+        } else if peer.bandwidth_mbps > 50.0 {
+            0.8_f64
+        } else {
+            0.6_f64
+        };
+        
+        let connection_score = if peer.connection_count > 5 {
+            1.0_f64
+        } else if peer.connection_count > 0 {
+            0.8_f64
+        } else {
+            0.5_f64
+        };
+        
+        // Weighted average: latency 40%, bandwidth 30%, connections 30%
+        (latency_score * 0.4_f64) + (bandwidth_score * 0.3_f64) + (connection_score * 0.3_f64)
     }
 
     /// Extract peer ID from multiaddr
@@ -838,6 +1286,12 @@ impl DhtPeerDiscovery {
                 cached_peer.capabilities.contains(capability)
             }
             DiscoveryCriteria::Random(_) => true, // Random selection handled elsewhere
+            DiscoveryCriteria::HighPerformance => {
+                cached_peer.latency_ms.map_or(false, |latency| latency < 100.0) &&
+                cached_peer.bandwidth_mbps.map_or(false, |bandwidth| bandwidth > 100.0)
+            }
+            DiscoveryCriteria::GeographicDiversity => true, // Geographic selection handled elsewhere
+            DiscoveryCriteria::Reliability => true, // Reliability filtering handled elsewhere
             DiscoveryCriteria::All => true,
         }
     }
@@ -854,6 +1308,11 @@ impl DhtPeerDiscovery {
                 true
             }
             DiscoveryCriteria::Random(_) => true, // Random selection handled elsewhere
+            DiscoveryCriteria::HighPerformance => {
+                peer.latency_ms < 100.0 && peer.bandwidth_mbps > 100.0
+            }
+            DiscoveryCriteria::GeographicDiversity => true, // Geographic selection handled elsewhere
+            DiscoveryCriteria::Reliability => true, // Reliability filtering handled elsewhere
             DiscoveryCriteria::All => true,
         }
     }

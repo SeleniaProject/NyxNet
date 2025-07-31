@@ -40,6 +40,8 @@ mod config_manager;
 mod health_monitor;
 mod event_system;
 mod layer_manager;
+mod pure_rust_dht;
+mod pure_rust_dht_tcp;
 
 #[cfg(test)]
 mod layer_recovery_test;
