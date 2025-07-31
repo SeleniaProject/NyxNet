@@ -35,7 +35,6 @@ tokio-test = "0.4"
 futures = "0.3"
 tracing = "0.1"
 tracing-subscriber = "0.3"
-nyx-daemon = { path = "../nyx-daemon" }
 
 [features]
 pq = ["nyx-crypto/kyber"]
