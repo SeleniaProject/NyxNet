@@ -29,7 +29,8 @@
 
 
 
-- [-] 1.3 Fix nyx-sdk dependency issues
+- [x] 1.3 Fix nyx-sdk dependency issues
+
 
 
 
@@ -40,6 +41,9 @@
   - Update retry mechanism dependencies
   - _Requirements: 2.1, 4.2_
 
+
+
+
 - [ ] 2. Resolve duplicate type definitions and structural issues
 
 
@@ -49,6 +53,8 @@
   - Fix invalid self parameters in standalone functions
   - Resolve struct field conflicts and missing fields
   - _Requirements: 5.1, 5.2, 1.1_
+
+
 
 
 
@@ -63,8 +69,12 @@
 
 
 
+
+
 - [ ] 2.2 Fix invalid function parameters in nyx-daemon/src/path_builder.rs
   - Convert standalone functions with self parameters to methods
+
+
   - Fix function signatures to match their intended usage
   - Resolve borrowing and ownership issues
   - _Requirements: 5.1, 5.2_
@@ -83,44 +93,81 @@
 
 
 
+
+
+
   - Update sysinfo API usage to match version 0.30
   - Fix function call sites with incorrect parameter counts
+
+
+
+
 
 
   - Update deprecated API method calls
   - _Requirements: 4.1, 4.2, 4.3_
 
-- [ ] 3.1 Update sysinfo API usage in nyx-cli/src/benchmark.rs
+- [x] 3.1 Update sysinfo API usage in nyx-cli/src/benchmark.rs
+
+
 
   - Replace SystemExt, NetworkExt, CpuExt trait usage with direct System methods
 
 
   - Update network and CPU monitoring code to use new API
+
+
+
+
   - Fix numeric type ambiguity in max() calls
   - _Requirements: 4.1, 4.2_
 
-- [ ] 3.2 Fix function parameter count mismatches
+- [x] 3.2 Fix function parameter count mismatches
+
+
+
 
   - Update function calls in nyx-cli/src/main.rs with correct parameter counts
+
+
   - Fix function calls in nyx-daemon/src/main.rs with missing arguments
   - Resolve method signature mismatches
   - _Requirements: 4.1, 4.2_
 
 
-- [ ] 3.3 Fix metrics and prometheus exporter API issues
+
+
+
+
+
+
+
+
+
+- [x] 3.3 Fix metrics and prometheus exporter API issues
+
+
+
 
   - Update metrics Registry usage to match current API
+
+
   - Fix prometheus exporter configuration
+
   - Resolve set_boxed_recorder vs set_global_recorder API changes
   - _Requirements: 4.1, 4.2_
 
 - [ ] 4. Fix async/await and Future type issues
 
 
+
+
   - Correct async function usage and Future type handling
   - Fix RwLock usage in async contexts
   - Resolve type system violations with async code
   - _Requirements: 3.1, 3.2, 3.3_
+
+
 
 - [ ] 4.1 Fix async RwLock usage in nyx-daemon/src/metrics.rs
 

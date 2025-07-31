@@ -12,6 +12,7 @@
 use anyhow::Result;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+use std::pin::Pin;
 use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, error, info, warn};
 
@@ -1435,14 +1436,15 @@ impl LayerManager {
     }
     
     /// Advanced layer recovery with dependency management
-    pub async fn recover_layer_with_dependencies(&self, layer_name: &str) -> Result<()> {
-        info!("Starting advanced recovery for layer: {}", layer_name);
-        
-        // Determine layer dependencies
-        let dependencies = self.get_layer_dependencies(layer_name);
-        let dependents = self.get_layer_dependents(layer_name);
-        
-        // Step 1: Gracefully stop dependents
+    pub fn recover_layer_with_dependencies<'a>(&'a self, layer_name: &'a str) -> Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            info!("Starting advanced recovery for layer: {}", layer_name);
+            
+            // Determine layer dependencies
+            let dependencies = self.get_layer_dependencies(layer_name);
+            let dependents = self.get_layer_dependents(layer_name);
+            
+            // Step 1: Gracefully stop dependents
         for dependent in &dependents {
             info!("Stopping dependent layer {} before recovering {}", dependent, layer_name);
             if let Err(e) = self.graceful_layer_stop(dependent).await {
@@ -1494,6 +1496,7 @@ impl LayerManager {
         
         info!("Advanced recovery completed for layer: {}", layer_name);
         Ok(())
+        })
     }
     
     /// Get layer dependencies (layers this layer depends on)

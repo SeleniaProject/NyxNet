@@ -9,7 +9,6 @@
 use crate::error::{NyxError, NyxResult, ErrorSeverity};
 use std::time::{Duration, Instant};
 use std::future::Future;
-use std::pin::Pin;
 use tokio::time::sleep;
 use tracing::{debug, warn, error};
 use serde::{Deserialize, Serialize};
@@ -140,9 +139,9 @@ impl RetryExecutor {
     }
     
     /// Execute an operation with retry logic
-    pub async fn execute<F, Fut, T>(&self, operation: F) -> NyxResult<T>
+    pub async fn execute<F, Fut, T>(&self, mut operation: F) -> NyxResult<T>
     where
-        F: Fn() -> Fut,
+        F: FnMut() -> Fut,
         Fut: Future<Output = NyxResult<T>>,
     {
         let mut context = RetryContext::new();
@@ -265,9 +264,9 @@ impl RetryExecutor {
 }
 
 /// Convenience function to retry an operation with default strategy
-pub async fn retry<F, Fut, T>(operation: F) -> NyxResult<T>
+pub async fn retry<F, Fut, T>(mut operation: F) -> NyxResult<T>
 where
-    F: Fn() -> Fut,
+    F: FnMut() -> Fut,
     Fut: Future<Output = NyxResult<T>>,
 {
     RetryExecutor::default().execute(operation).await
@@ -463,35 +462,47 @@ impl CircuitBreaker {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::time::{sleep, Duration};
+    use std::sync::{Arc, Mutex};
     
     #[tokio::test]
     async fn test_retry_success() {
-        let mut attempts = 0;
-        let result = retry(|| async {
-            attempts += 1;
-            if attempts < 3 {
-                Err(NyxError::network_error("temporary failure", None))
-            } else {
-                Ok("success")
+        let attempts = Arc::new(Mutex::new(0));
+        let attempts_clone = attempts.clone();
+        
+        let result = retry(move || {
+            let attempts = attempts_clone.clone();
+            async move {
+                let mut count = attempts.lock().unwrap();
+                *count += 1;
+                if *count < 3 {
+                    Err(NyxError::network_error("temporary failure", None))
+                } else {
+                    Ok("success")
+                }
             }
         }).await;
         
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "success");
-        assert_eq!(attempts, 3);
+        assert_eq!(*attempts.lock().unwrap(), 3);
     }
     
     #[tokio::test]
     async fn test_retry_failure() {
-        let mut attempts = 0;
-        let result = retry(|| async {
-            attempts += 1;
-            Err(NyxError::network_error("persistent failure", None))
+        let attempts = Arc::new(Mutex::new(0));
+        let attempts_clone = attempts.clone();
+        
+        let result: Result<String, _> = retry(move || {
+            let attempts = attempts_clone.clone();
+            async move {
+                let mut count = attempts.lock().unwrap();
+                *count += 1;
+                Err(NyxError::network_error("persistent failure", None))
+            }
         }).await;
         
         assert!(result.is_err());
-        assert_eq!(attempts, 3); // Default max attempts
+        assert_eq!(*attempts.lock().unwrap(), 3); // Default max attempts
     }
     
     #[tokio::test]

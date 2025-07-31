@@ -692,6 +692,7 @@ pub struct ScenarioResult {
 mod tests {
     use super::*;
     use tokio::time::sleep;
+    use rand::thread_rng;
 
     #[tokio::test]
     async fn test_adaptive_cover_generator() {

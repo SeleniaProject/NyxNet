@@ -720,7 +720,7 @@ impl BenchmarkRunner {
     async fn estimate_network_bandwidth() -> f64 {
         // Use system information to estimate bandwidth
         // This is a simplified estimation - in production, you might use more sophisticated methods
-        use sysinfo::{System, Networks};
+        use sysinfo::Networks;
         
         let networks = Networks::new_with_refreshed_list();
         
@@ -739,11 +739,11 @@ impl BenchmarkRunner {
             
             if received_bytes > 0 || transmitted_bytes > 0 {
                 // Rough estimation: assume gigabit ethernet for active interfaces
-                max_bandwidth = max_bandwidth.max(100.0); // 100 Mbps
+                max_bandwidth = f64::max(max_bandwidth, 100.0); // 100 Mbps
                 
                 // If we see significant traffic, assume higher bandwidth
                 if received_bytes > 1_000_000 || transmitted_bytes > 1_000_000 {
-                    max_bandwidth = max_bandwidth.max(1000.0); // 1 Gbps
+                    max_bandwidth = f64::max(max_bandwidth, 1000.0); // 1 Gbps
                 }
             }
         }

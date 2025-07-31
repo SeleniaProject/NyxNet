@@ -694,7 +694,10 @@ mod tests {
         let event = Event {
             r#type: "stream".to_string(),
             detail: "Test event".to_string(),
-            timestamp: Some(prost_types::Timestamp::from(SystemTime::now())),
+            timestamp: Some(crate::proto::Timestamp {
+                seconds: SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64,
+                nanos: SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos() as i32,
+            }),
             severity: "info".to_string(),
             attributes: HashMap::new(),
             event_data: Some(crate::proto::event::EventData::StreamEvent(StreamEvent {
@@ -702,6 +705,12 @@ mod tests {
                 action: "opened".to_string(),
                 target_address: "test".to_string(),
                 stats: None,
+                data: std::collections::HashMap::new(),
+                event_type: "test".to_string(),
+                timestamp: Some(crate::proto::Timestamp {
+                    seconds: SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64,
+                    nanos: SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos() as i32,
+                }),
             })),
         };
         
@@ -720,7 +729,10 @@ mod tests {
         let event = Event {
             r#type: "stream".to_string(),
             detail: "Test event".to_string(),
-            timestamp: Some(prost_types::Timestamp::from(SystemTime::now())),
+            timestamp: Some(crate::proto::Timestamp {
+                seconds: SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64,
+                nanos: SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos() as i32,
+            }),
             severity: "info".to_string(),
             attributes: HashMap::new(),
             event_data: None,
@@ -737,7 +749,10 @@ mod tests {
         let event = Event {
             r#type: "test".to_string(),
             detail: "Test event".to_string(),
-            timestamp: Some(prost_types::Timestamp::from(SystemTime::now())),
+            timestamp: Some(crate::proto::Timestamp {
+                seconds: SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64,
+                nanos: SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().subsec_nanos() as i32,
+            }),
             severity: "info".to_string(),
             attributes: HashMap::new(),
             event_data: None,

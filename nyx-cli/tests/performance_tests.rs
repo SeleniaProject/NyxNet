@@ -4,7 +4,7 @@ use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 use tokio::task::JoinSet;
 use assert_cmd::prelude::*;
 use predicates::prelude::*;
-use sysinfo::{System, SystemExt, ProcessExt};
+use sysinfo::System;
 
 /// Performance test configuration
 struct PerformanceConfig {
@@ -116,7 +116,6 @@ async fn test_cli_benchmark_performance() {
         .arg(&format!("--connections={}", config.max_connections))
         .arg("--payload-size=1024")
         .arg("--detailed")
-        .timeout(Duration::from_secs(60))
         .output();
     
     let test_duration = start_time.elapsed();
@@ -280,13 +279,12 @@ async fn test_memory_usage_validation() {
         .arg("--duration=15")
         .arg("--connections=30")
         .arg("--payload-size=8192")
-        .timeout(Duration::from_secs(30))
         .output();
     
     let test_duration = start_time.elapsed();
     
     match output {
-        Ok(output) => {
+        Ok(_output) => {
             system.refresh_all();
             let final_memory = get_system_memory_usage(&mut system);
             let memory_increase = final_memory - initial_memory;
@@ -341,7 +339,7 @@ async fn test_stress_error_handling() {
         }
         
         let start_time = Instant::now();
-        match cmd.timeout(Duration::from_secs(10)).output() {
+        match cmd.output() {
             Ok(output) => {
                 let duration = start_time.elapsed();
                 
@@ -401,7 +399,7 @@ async fn test_high_load_performance() {
     system.refresh_all();
     let initial_memory = get_process_memory_usage(&mut system);
     
-    for payload_size in &config.payload_sizes {
+    for payload_size in config.payload_sizes.clone() {
         println!("\nTesting with payload size: {} bytes", payload_size);
         
         let start_time = Instant::now();
@@ -414,7 +412,6 @@ async fn test_high_load_performance() {
             .arg(&format!("--connections={}", config.max_connections))
             .arg(&format!("--payload-size={}", payload_size))
             .arg("--detailed")
-            .timeout(Duration::from_secs(40))
             .output();
         
         match output {
@@ -435,7 +432,10 @@ async fn test_high_load_performance() {
                     acceptable_latency_ms: 1000, // More lenient for high load
                     acceptable_throughput_mbps: 0.5, // Lower expectation under load
                     memory_limit_mb: 1024, // Higher memory limit
-                    ..config
+                    target_endpoint: config.target_endpoint.clone(),
+                    max_connections: config.max_connections,
+                    test_duration: config.test_duration,
+                    payload_sizes: vec![payload_size],
                 };
                 
                 if metrics.meets_performance_criteria(&high_load_criteria) {

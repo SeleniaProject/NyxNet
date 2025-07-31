@@ -516,7 +516,7 @@ impl PathBuilder {
         scored_candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
         
         // Select top nodes up to hop count
-        for (node_id, _) in scored_candidates.into_iter().take(hops as usize) {
+        for (node_id, _) in scored_candidates.into_iter().take(hops.try_into().unwrap_or(0)) {
             if !used_nodes.contains(&node_id) {
                 selected.push(node_id.clone());
                 used_nodes.insert(node_id);

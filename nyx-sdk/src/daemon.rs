@@ -341,9 +341,7 @@ impl NyxDaemon {
         // Send to external handlers
         let handlers = self.event_handlers.lock().await;
         for handler in handlers.iter() {
-            if let Err(e) = handler.handle_event(event.clone()).await {
-                warn!("Event handler failed: {}", e);
-            }
+            handler.handle_event(event.clone()).await;
         }
     }
 

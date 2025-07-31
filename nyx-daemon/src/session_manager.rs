@@ -421,7 +421,7 @@ mod tests {
         let peer_id = [1u8; 32];
         let cid = manager.create_session(Some(peer_id)).await.unwrap();
         
-        assert!(manager.get_session(&cid).is_some());
+        assert!(manager.get_session(&cid).await.is_some());
         // The original test had an issue here: manager.get_peer_sessions(&peer_id) returns Vec<Session>,
         // but the comparison was with a single cid. Also, associate_session_with_peer is not implemented
         // to actually store peer_id in session. So, commenting out this assertion for now.
@@ -437,12 +437,12 @@ mod tests {
         
         // Update state
         manager.update_state(&cid, SessionState::Active).await.unwrap();
-        let session = manager.get_session(&cid).unwrap();
+        let session = manager.get_session(&cid).await.unwrap();
         assert_eq!(session.state, SessionState::Active);
         
         // Close session
         manager.close_session(&cid).await.unwrap();
-        assert!(manager.get_session(&cid).is_none());
+        assert!(manager.get_session(&cid).await.is_none());
     }
     
     #[test]

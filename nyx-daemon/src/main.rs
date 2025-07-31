@@ -713,7 +713,7 @@ impl NyxControl for ControlService {
                 custom_metrics.insert("failed_requests".to_string(), metrics.failed_requests.load(std::sync::atomic::Ordering::Relaxed) as f64);
                 
                 // Add bandwidth statistics
-                let bandwidth_samples = metrics.get_bandwidth_samples();
+                let bandwidth_samples = metrics.get_bandwidth_samples().await;
                 if !bandwidth_samples.is_empty() {
                     custom_metrics.insert("avg_bandwidth_mbps".to_string(), 
                         bandwidth_samples.iter().sum::<f64>() / bandwidth_samples.len() as f64);
@@ -724,7 +724,7 @@ impl NyxControl for ControlService {
                 }
                 
                 // Add CPU statistics
-                let cpu_samples = metrics.get_cpu_samples();
+                let cpu_samples = metrics.get_cpu_samples().await;
                 if !cpu_samples.is_empty() {
                     custom_metrics.insert("avg_cpu_usage".to_string(), 
                         cpu_samples.iter().sum::<f64>() / cpu_samples.len() as f64);
@@ -733,7 +733,7 @@ impl NyxControl for ControlService {
                 }
                 
                 // Add memory statistics
-                let memory_samples = metrics.get_memory_samples();
+                let memory_samples = metrics.get_memory_samples().await;
                 if !memory_samples.is_empty() {
                     custom_metrics.insert("avg_memory_usage".to_string(), 
                         memory_samples.iter().sum::<f64>() / memory_samples.len() as f64);
@@ -1011,6 +1011,30 @@ impl NyxControl for ControlService {
         });
         
         Ok(tonic::Response::new(tokio_stream::wrappers::ReceiverStream::new(rx)))
+    }
+    
+    /// Receive data from a stream
+    #[instrument(skip(self))]
+    async fn receive_data(
+        &self,
+        request: tonic::Request<proto::StreamId>,
+    ) -> Result<tonic::Response<proto::ReceiveResponse>, tonic::Status> {
+        self.total_requests.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        
+        let stream_id = request.into_inner().id;
+        
+        // Placeholder implementation - in a real implementation,
+        // this would receive data from the specified stream
+        let response = proto::ReceiveResponse {
+            success: true,
+            error: String::new(),
+            data: Vec::new(),
+            bytes_received: 0,
+            more_data_available: false,
+        };
+        
+        info!("Data receive request for stream {}", stream_id);
+        Ok(tonic::Response::new(response))
     }
 }
 

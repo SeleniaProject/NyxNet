@@ -17,6 +17,9 @@ use crate::teredo::{discover as teredo_discover, DEFAULT_SERVER, TeredoAddr};
 // timing obfuscator moved to upper layer
 use tokio::time::{sleep, Duration};
 
+pub mod ice;
+pub mod stun_server;
+
 #[cfg(feature = "quic")]
 pub mod quic;
 #[cfg(feature = "quic")]

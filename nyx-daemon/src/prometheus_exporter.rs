@@ -3,7 +3,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use metrics::{Counter, Gauge, Histogram, Key, Label, Unit};
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};

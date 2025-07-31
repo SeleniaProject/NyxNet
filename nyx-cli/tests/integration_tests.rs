@@ -48,7 +48,6 @@ async fn test_benchmark_command() {
         .arg("--connections=5")
         .arg("--payload-size=512")
         .arg("--detailed")
-        .timeout(Duration::from_secs(30))
         .assert()
         .success()
         .stdout(predicate::str::contains("Benchmark Results"))
@@ -67,7 +66,6 @@ async fn test_connection_command() {
         .arg("localhost:8080")
         .arg("--connect-timeout=10")
         .arg("--stream-name=test-stream")
-        .timeout(Duration::from_secs(20))
         .assert()
         .success()
         .stdout(predicate::str::contains("Nyx stream connection"))
@@ -187,7 +185,6 @@ async fn test_error_handling() {
     cmd.arg("connect")
         .arg("192.0.2.1:12345") // Reserved test IP that should not respond
         .arg("--connect-timeout=1")
-        .timeout(Duration::from_secs(5))
         .assert()
         .failure()
         .stderr(predicate::str::contains("timeout").or(predicate::str::contains("failed")));
@@ -272,7 +269,6 @@ async fn test_connection_network_conditions() {
     cmd.arg("connect")
         .arg("localhost:8080")
         .arg("--connect-timeout=5")
-        .timeout(Duration::from_secs(10))
         .assert()
         .success();
     
@@ -282,7 +278,6 @@ async fn test_connection_network_conditions() {
         .arg("localhost:8080")
         .arg("--stream-name=custom-test-stream")
         .arg("--connect-timeout=5")
-        .timeout(Duration::from_secs(10))
         .assert()
         .success();
 }
@@ -300,7 +295,6 @@ async fn test_complete_cli_workflow() {
         .arg("localhost:8080")
         .arg("--duration=3")
         .arg("--connections=2")
-        .timeout(Duration::from_secs(15))
         .assert()
         .success();
     

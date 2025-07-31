@@ -449,7 +449,8 @@ impl ConnectionMonitor {
                     let next_event_sender = event_sender.clone();
                     let next_reconnection_state = reconnection_state.clone();
                     
-                    tokio::spawn(async move {
+                    // Use spawn_blocking for thread-safe execution
+                    tokio::task::spawn_local(async move {
                         Self::handle_reconnection(
                             next_client,
                             next_cli,

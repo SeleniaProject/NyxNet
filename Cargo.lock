@@ -4882,7 +4882,6 @@ dependencies = [
  "nyx-control",
  "nyx-core",
  "nyx-crypto",
- "nyx-daemon",
  "nyx-fec",
  "nyx-mix",
  "nyx-stream",

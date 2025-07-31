@@ -1,4 +1,5 @@
-use nyx_stream::{FrameHeader, build_header, parse_header};
+use nyx_stream::{FrameHeader, build_header, parse_header, parse_header_ext};
+use nyx_stream::builder::build_header_ext;
 
 #[test]
 fn header_roundtrip() {
