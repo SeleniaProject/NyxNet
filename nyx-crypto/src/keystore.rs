@@ -126,7 +126,7 @@ impl PasswordStrength {
         // Avoid common patterns
         if !password.to_lowercase().contains("password") &&
            !password.to_lowercase().contains("123456") &&
-           !password.chars().collect::<std::collections::HashSet<_>>().len() < 3 {
+           password.chars().collect::<std::collections::HashSet<_>>().len() >= 3 {
             score += 1;
         }
         
@@ -539,7 +539,9 @@ mod tests {
 
     fn temp_file(name: &str) -> PathBuf {
         let mut p = env::temp_dir();
-        p.push(name);
+        // Use a unique filename to avoid conflicts between tests
+        let unique_name = format!("{}_{}", name, std::process::id());
+        p.push(unique_name);
         p
     }
 

@@ -1344,9 +1344,8 @@ mod tests {
         assert_eq!(rotated_context.send_nonce, 0); // Should be reset
     }
     
-    #[test]
-    fn safe_encryption_handler_with_rotation() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
+    #[tokio::test]
+    async fn safe_encryption_handler_with_rotation() {
         let mut rotation_manager = KeyRotationManager::new();
         let session_key = SessionKey::new([100u8; 32]);
         let context = EncryptionContext::new(session_key, 0);
@@ -1357,9 +1356,7 @@ mod tests {
             auto_rotate: true,
         };
         
-        rt.block_on(async {
-            rotation_manager.add_context(1, context.clone(), config).await.unwrap();
-        });
+        rotation_manager.add_context(1, context.clone(), config).await.unwrap();
         
         rotation_manager.set_rotation_callback(|_context_id, old_key| {
             let mut new_key = *old_key.as_bytes();
@@ -1388,9 +1385,8 @@ mod tests {
         let _ciphertext4 = handler.safe_encrypt(1, plaintext, aad).unwrap();
     }
     
-    #[test]
-    fn safe_encryption_handler_force_rotation() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
+    #[tokio::test]
+    async fn safe_encryption_handler_force_rotation() {
         let mut rotation_manager = KeyRotationManager::new();
         let session_key = SessionKey::new([200u8; 32]);
         let context = EncryptionContext::new(session_key, 0);
@@ -1401,9 +1397,7 @@ mod tests {
             auto_rotate: true,
         };
         
-        rt.block_on(async {
-            rotation_manager.add_context(1, context.clone(), config).await.unwrap();
-        });
+        rotation_manager.add_context(1, context.clone(), config).await.unwrap();
         
         rotation_manager.set_rotation_callback(|_context_id, old_key| {
             let mut new_key = *old_key.as_bytes();
@@ -1788,21 +1782,18 @@ mod integration_tests {
         assert_eq!(system.list_active_sessions().len(), 0);
     }
     
-    #[test]
-    fn nyx_encryption_system_with_rotation() {
+    #[tokio::test]
+    async fn nyx_encryption_system_with_rotation() {
         let mut rotation_manager = KeyRotationManager::new();
         let session_key = SessionKey::new([100u8; 32]);
         let context = EncryptionContext::new(session_key, 0);
         
-        // Use legacy sync method for backward compatibility test
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            rotation_manager.add_context(1, context.clone(), RotationConfig {
+        // Use async context properly for tokio runtime
+        rotation_manager.add_context(1, context.clone(), RotationConfig {
                 nonce_threshold: 2,
                 time_threshold: Duration::from_secs(1),
                 auto_rotate: true,
             }).await.unwrap();
-        });
         
         rotation_manager.set_rotation_callback(|_context_id, old_key| {
             let mut new_key = *old_key.as_bytes();
