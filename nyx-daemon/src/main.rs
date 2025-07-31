@@ -148,13 +148,22 @@ impl ControlService {
         let stream_manager = Arc::new(stream_manager);
         stream_manager.clone().start().await;
         
-        // Initialize path builder
-        info!("Initializing path builder...");
-        let bootstrap_peers = vec!["127.0.0.1:8080".to_string()]; // Placeholder bootstrap peers
+        // Initialize path builder with real DHT integration
+        info!("Initializing path builder with DHT support...");
+        let bootstrap_peers = vec![
+            "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWBootstrap1".to_string(),
+            "/ip4/127.0.0.1/tcp/4002/p2p/12D3KooWBootstrap2".to_string(),
+        ];
         let path_builder_config = path_builder::PathBuilderConfig::default();
-        let path_builder = Arc::new(PathBuilder::new(bootstrap_peers, path_builder_config).await.unwrap());
-        info!("Path builder created");
-        info!("Path builder started successfully");
+        let mut path_builder = PathBuilder::new(bootstrap_peers, path_builder_config).await
+            .map_err(|e| anyhow::anyhow!("Failed to create path builder: {}", e))?;
+        
+        // Start path builder DHT services
+        path_builder.start().await
+            .map_err(|e| anyhow::anyhow!("Failed to start path builder: {}", e))?;
+        
+        let path_builder = Arc::new(path_builder);
+        info!("Path builder with DHT support started successfully");
         
         // Initialize session manager
         info!("Initializing session manager...");

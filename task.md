@@ -1,131 +1,211 @@
-# Nyx Project Tasks
+# NyxNet Development Task List
 
-## 1. 高優先度 - デーモン統合 ✅ **完了**
+## 🚨 Critical Priority (Phase 1)
 
-### 1.1 デーモン統合 (nyx-daemon)
-- [x] 1.1.1 ストリーム管理API実装 - `open_stream`, `close_stream` の完全実装
-- [x] 1.1.2 イベント購読API実装 - `subscribe_events` の完全実装  
-- [x] 1.1.3 全レイヤー統合 - crypto, stream, mix, fec, transport の完全統合
-- [x] 1.1.4 DHT統合 - control plane との連携実装
-- [x] 1.1.5 PathBuilder統合 - 地理的多様性・帯域幅ベース経路選択実装
-- [x] 1.1.6 セッション管理 - CID ベースのセッション管理実装
-- [x] 1.1.7 設定管理 - 動的設定変更・reload 機能
-- [x] 1.1.8 エラーハンドリング - 包括的エラー処理・復旧機能
+### Core Network Infrastructure
+- [ ] **DHT (Distributed Hash Table) Implementation**
+  - [ ] Replace placeholder DHT implementation in `nyx-daemon/src/path_builder.rs`
+  - [ ] Implement real peer discovery mechanism
+  - [ ] Replace hardcoded "placeholder-node-1", "placeholder-node-2" with actual nodes
+  - [ ] Implement peer routing and lookup functionality
+  - [ ] Add DHT persistence and bootstrap mechanisms
 
-### 1.2 gRPC プロトコル拡張
-- [x] 1.2.1 NodeInfo拡張 - PID, active_streams, connected_peers, mix_routes 追加
-- [x] 1.2.2 パフォーマンス情報 - cover_traffic_rate, avg_latency, packet_loss_rate, bandwidth_utilization 追加
-- [x] 1.2.3 ストリーム詳細情報 - ストリーム毎の統計情報
-- [x] 1.2.4 リアルタイム統計 - 動的統計情報の gRPC ストリーミング
+- [ ] **libp2p Integration**
+  - [ ] Complete libp2p feature integration in network transport
+  - [ ] Implement P2P connection management
+  - [ ] Add peer authentication and encryption
+  - [ ] Implement multiaddress support for peer addressing
+  - [ ] Add network topology discovery
 
-## 2. CLI・SDK ✅ **完了**
+- [ ] **Path Builder Completion**
+  - [ ] Remove "full path building not implemented without libp2p" warning
+  - [ ] Implement actual onion routing path construction
+  - [ ] Add path validation and testing mechanisms
+  - [ ] Implement path performance monitoring
+  - [ ] Add fallback path selection strategies
 
-### 2.1 CLI機能完成 (nyx-cli)
-- [x] 2.1.1 ベンチマーク機能完成 - 実際のデータ送受信・統計計算・レイテンシ分析
-- [x] 2.1.2 詳細統計表示 - レイテンシ分布・パーセンタイル表示・多言語対応
-- [x] 2.1.3 接続機能完成 - 実際のストリーム確立・データ転送
-- [x] 2.1.4 エラー統計機能 - Prometheus メトリクス解析機能完成
+## 🟡 High Priority (Phase 2)
 
-### 2.2 SDK統合 (nyx-sdk)
-- [x] 2.2.1 実際のデーモン通信 - gRPC通信・接続プール・ヘルスモニタリング実装
-- [x] 2.2.2 ストリーム読み書き - AsyncRead/AsyncWrite の実際のデータ処理
-- [x] 2.2.3 自動再接続機能 - 完全な再接続ロジック実装
-- [x] 2.2.4 イベントシステム - 包括的イベント処理・コールバック
+### Mobile Platform Integration
+- [ ] **iOS Native Implementation**
+  - [ ] Implement `ios_get_battery_level()` using UIDevice.current.batteryLevel
+  - [ ] Implement `ios_is_charging()` using UIDevice.current.batteryState
+  - [ ] Implement `ios_is_screen_on()` with UIApplication state monitoring
+  - [ ] Implement `ios_is_low_power_mode()` using ProcessInfo.processInfo.isLowPowerModeEnabled
+  - [ ] Implement `ios_get_app_state()` with UIApplication.shared.applicationState
+  - [ ] Implement `ios_get_network_state()` using Network framework or Reachability
 
-## 3. ネットワーク・プロトコル 🔄 **部分完了**
+- [ ] **Android Native Implementation**
+  - [ ] Implement `android_get_battery_level()` using BatteryManager APIs
+  - [ ] Implement `android_is_charging()` using BatteryManager.BATTERY_STATUS_CHARGING
+  - [ ] Implement `android_is_screen_on()` using PowerManager.isInteractive()
+  - [ ] Implement `android_is_power_save_mode()` using PowerManager.isPowerSaveMode()
+  - [ ] Implement `android_get_app_state()` with ActivityManager lifecycle monitoring
+  - [ ] Implement `android_get_network_state()` using ConnectivityManager
 
-### 3.1 形式検証 (formal/)
-- [x] 3.1.1 TLA+ モデル基本実装 - multipath plugin モデル実装済み
-- [ ] 3.1.2 安全性証明 - liveness, safety プロパティの完全証明
-- [ ] 3.1.3 モデルチェック - TLC での包括的検証
-- [ ] 3.1.4 プロパティテスト - Rust での property-based testing 拡充
+- [ ] **Mobile FFI Bindings**
+  - [ ] Create Objective-C/Swift bridge for iOS functions
+  - [ ] Create JNI bindings for Android functions
+  - [ ] Add mobile platform detection and initialization
+  - [ ] Implement platform-specific error handling
+  - [ ] Add mobile-specific configuration management
 
-### 3.2 NAT穴あけ・ICE ✅ **完了**
-- [x] 3.2.1 STUN/TURN実装 - ICE-lite ハンドシェイク・候補収集実装
-- [x] 3.2.2 ICE候補収集 - host/srflx 候補収集・優先順位付け実装
-- [x] 3.2.3 IPv6対応 - Teredo トンネリング実装
-- [x] 3.2.4 TCP フォールバック - 制限的環境での接続確立実装
+## 🟠 Medium Priority (Phase 3)
 
-### 3.3 暗号機能 🔄 **部分完了**
-- [ ] 3.3.1 BIKE実装 - pqcrypto-bike クレート待ち（コンパイルエラー状態）
-- [x] 3.3.2 VDF実装完成 - Wesolowski VDF 完全実装（証明・検証機能付き）
-- [x] 3.3.3 RSA accumulator - cMix での証明検証機能実装
-- [x] 3.3.4 鍵管理 - HPKE・Noise_Nyx・セッション鍵管理実装
+### CLI Monitoring & Analytics
+- [ ] **Real-time Dashboard Implementation**
+  - [ ] Replace "Real-time monitoring will be implemented in future tasks" placeholders
+  - [ ] Implement `display_realtime_dashboard()` function
+  - [ ] Add interactive terminal UI with real-time updates
+  - [ ] Implement connection quality visualization
+  - [ ] Add performance metrics display panels
 
-## 4. モバイル・WASM 🔄 **部分完了**
+- [ ] **Performance Monitoring Panels**
+  - [ ] Implement `display_performance_metrics_panel()` function
+  - [ ] Replace "Performance metrics monitoring will be implemented in future tasks"
+  - [ ] Add bandwidth utilization monitoring
+  - [ ] Implement CPU and memory usage visualization
+  - [ ] Add network latency trend analysis
 
-### 4.1 モバイル統合 (nyx-core/mobile)
-- [x] 4.1.1 モバイル基盤実装 - PowerState・デバイス状態監視構造実装
-- [ ] 4.1.2 iOS FFI実装 - UIKit/Core Foundation との実際の連携  
-- [ ] 4.1.3 Android JNI実装 - Android API との実際の連携
-- [x] 4.1.4 バッテリー監視 - 電力プロファイル・状態管理実装
-- [ ] 4.1.5 プッシュ通知統合 - FCM/APNS の完全実装
+- [ ] **Advanced Visualization**
+  - [ ] Implement `display_latency_monitoring_panel()` function
+  - [ ] Implement `display_hop_path_visualization()` function
+  - [ ] Add network topology visualization
+  - [ ] Implement connection flow diagrams
+  - [ ] Add error rate and success rate charts
 
-### 4.2 WASM機能 (nyx-sdk-wasm) 🔄 **部分完了**
-- [ ] 4.2.1 WebTransport統合 - ブラウザでの実際の通信実装
-- [x] 4.2.2 Service Worker実装 - プッシュ通知・バックグラウンド処理実装
-- [x] 4.2.3 Noise暗号化 - WASM での Noise_Nyx ハンドシェイク実装
-- [x] 4.2.4 WebPush統合 - VAPID・プッシュ購読実装
+### System Metrics & Monitoring
+- [ ] **Platform-specific Metrics**
+  - [ ] Replace placeholder file descriptor monitoring implementation
+  - [ ] Implement actual thread count monitoring
+  - [ ] Complete disk usage monitoring with sysinfo 0.30 API
+  - [ ] Replace placeholder network health calculations
+  - [ ] Add memory usage trend analysis
 
-## 5. 開発・運用 ✅ **完了**
+- [ ] **Alert System Enhancement**
+  - [ ] Complete alert threshold configuration
+  - [ ] Implement email notification handler
+  - [ ] Add webhook notification support
+  - [ ] Implement alert suppression rules
+  - [ ] Add alert escalation mechanisms
 
-### 5.1 テスト・品質保証
-- [x] 5.1.1 Conformance テスト実装 - 69ケース実装済み（目標達成）
-- [x] 5.1.2 E2E テスト自動化 - Kubernetes環境での自動テスト（kind-e2e）
-- [x] 5.1.3 ファズテスト実装 - cargo-fuzz での包括的テスト
-- [ ] 5.1.4 パフォーマンステスト - 1Gbps目標の性能検証
-- [x] 5.1.5 セキュリティテスト - MIRI・ASAN・MSAN での包括的検証
+### Security & Sandboxing
+- [ ] **Seccomp Implementation**
+  - [ ] Enable seccomp sandbox for Linux platforms
+  - [ ] Replace "placeholder for future implementation" in `nyx-core/src/sandbox.rs`
+  - [ ] Add syscall filtering and restrictions
+  - [ ] Implement privilege dropping mechanisms
+  - [ ] Add container security hardening
 
-### 5.2 ドキュメント ✅ **完了**
-- [x] 5.2.1 API ドキュメント - 全クレートの包括的ドキュメント実装
-- [x] 5.2.2 デプロイガイド - Kubernetes/Docker での本格運用ガイド
-- [x] 5.2.3 プロトコル仕様 - v1.0仕様書・設計文書完成
-- [x] 5.2.4 開発者ガイド - プラグイン開発ガイド・アーキテクチャ解説
-- [x] 5.2.5 多言語ドキュメント - 日本語・英語・中国語版完成
+### Cryptography Fixes
+- [ ] **BIKE Implementation Fixes**
+  - [ ] Resolve BIKE compilation errors blocking post-quantum crypto
+  - [ ] Update dependencies for BIKE algorithm
+  - [ ] Add fallback mechanisms for BIKE failures
+  - [ ] Implement BIKE key generation and exchange
+  - [ ] Add BIKE performance optimization
 
-### 5.3 CI/CD・インフラ ✅ **完了**
-- [x] 5.3.1 GitHub Actions完成 - 包括的CI/CDパイプライン（11ワークフロー）
-- [x] 5.3.2 Docker実装 - multi-stage build・セキュリティ強化
-- [x] 5.3.3 Helm Chart完成 - 本格運用向けKubernetes デプロイ
-- [x] 5.3.4 監視システム - Prometheus/Grafana ダッシュボード完成
-- [x] 5.3.5 テレメトリ - 包括的メトリクス収集・エクスポート実装
+## 🟢 Lower Priority (Phase 4)
 
-## 6. 拡張機能 ✅ **完了**
+### File Transfer Enhancements
+- [ ] **Bidirectional File Transfer**
+  - [ ] Implement daemon-side file receiving functionality
+  - [ ] Replace "File receiving functionality requires daemon-side implementation"
+  - [ ] Add file transfer progress synchronization
+  - [ ] Implement transfer resumption after network interruption
+  - [ ] Add file integrity verification for received files
 
-### 6.1 プラグインシステム
-- [x] 6.1.1 プラグイン基盤 - 動的プラグインロード・レジストリ実装
-- [x] 6.1.2 サンドボックス実装 - Windows/macOS セキュアプラグイン実行環境
-- [x] 6.1.3 プラグインAPI - IPC・地理統計・ディスパッチAPI実装
-- [x] 6.1.4 プラグイン管理 - 設定・フラグ管理・エラーハンドリング
+### External Integrations
+- [ ] **Prometheus Integration**
+  - [ ] Replace "Prometheus integration not available" placeholder
+  - [ ] Implement comprehensive metrics export
+  - [ ] Add custom metric collection endpoints
+  - [ ] Implement Grafana dashboard configurations
+  - [ ] Add alertmanager integration
 
-### 6.2 高度な機能 🔄 **部分完了**
-- [x] 6.2.1 負荷分散 - マルチパス・負荷分散・帯域幅重み付け実装
-- [x] 6.2.2 地理的分散 - 地理的多様性・分散経路選択実装
-- [x] 6.2.3 統計分析 - リアルタイム統計・パフォーマンス分析実装
-- [ ] 6.2.4 管理UI - Web ベースの管理インターフェース
+- [ ] **JSON/YAML Serialization**
+  - [ ] Implement JSON format for NodeInfo in CLI status command
+  - [ ] Implement YAML format for NodeInfo in CLI status command
+  - [ ] Add structured configuration export
+  - [ ] Implement settings import/export functionality
+
+### Advanced Features
+- [ ] **Enhanced Connection Monitoring**
+  - [ ] Implement connection quality scoring algorithms
+  - [ ] Add predictive connection failure detection
+  - [ ] Implement automatic connection optimization
+  - [ ] Add bandwidth adaptation mechanisms
+  - [ ] Implement smart routing decisions
+
+- [ ] **Performance Optimization**
+  - [ ] Implement connection pooling optimization
+  - [ ] Add adaptive buffer size management
+  - [ ] Implement traffic shaping mechanisms
+  - [ ] Add load balancing for multiple paths
+  - [ ] Optimize memory usage patterns
+
+## 🔧 Infrastructure & Documentation
+
+### Testing & Quality Assurance
+- [ ] **Integration Tests**
+  - [ ] Add end-to-end DHT functionality tests
+  - [ ] Implement mobile platform integration tests
+  - [ ] Add CLI command comprehensive testing
+  - [ ] Implement network resilience testing
+  - [ ] Add performance benchmark tests
+
+- [ ] **Mobile Testing**
+  - [ ] Set up iOS simulator testing environment
+  - [ ] Set up Android emulator testing environment
+  - [ ] Implement device-specific feature testing
+  - [ ] Add battery state simulation tests
+  - [ ] Test app lifecycle management
+
+### Documentation & Examples
+- [ ] **Implementation Guides**
+  - [ ] Create DHT implementation documentation
+  - [ ] Document mobile platform integration procedures
+  - [ ] Add CLI usage examples and tutorials
+  - [ ] Create troubleshooting guides
+  - [ ] Document performance tuning recommendations
+
+- [ ] **API Documentation**
+  - [ ] Complete gRPC API documentation
+  - [ ] Document configuration options
+  - [ ] Add deployment guides
+  - [ ] Create developer onboarding documentation
+  - [ ] Document security best practices
+
+## 📊 Progress Tracking
+
+### Completion Status
+- [ ] Phase 1 (Critical): 0% Complete
+  - DHT Implementation: 0%
+  - libp2p Integration: 0%
+  - Path Builder: 10% (structure only)
+
+- [ ] Phase 2 (High): 5% Complete
+  - Mobile Platform: 5% (structure only)
+  - FFI Bindings: 0%
+
+- [ ] Phase 3 (Medium): 15% Complete
+  - CLI Monitoring: 15% (basic structure)
+  - System Metrics: 20% (basic collection)
+  - Security: 5% (placeholder only)
+
+- [ ] Phase 4 (Lower): 10% Complete
+  - File Transfer: 50% (send only)
+  - External Integrations: 0%
+  - Advanced Features: 10% (basic structure)
+
+### Development Milestones
+- [ ] **Milestone 1**: Core P2P Network Functionality (Phase 1)
+- [ ] **Milestone 2**: Cross-platform Mobile Support (Phase 2)
+- [ ] **Milestone 3**: Production Monitoring & Security (Phase 3)
+- [ ] **Milestone 4**: Advanced Features & Integrations (Phase 4)
 
 ---
 
-## 📊 **プロジェクト進捗サマリー**
-
-### ✅ **完了済み（90%+）**
-- **デーモン統合**: 完全実装済み
-- **CLI・SDK**: 完全実装済み  
-- **開発・運用**: CI/CD・ドキュメント・テスト完備
-- **プラグインシステム**: 完全実装済み
-- **NAT穴あけ・ICE**: 完全実装済み
-- **暗号機能**: VDF・Noise・HPKE実装済み
-
-### 🔄 **部分完了（50-80%）**
-- **形式検証**: TLA+基本モデル実装、証明・検証は継続中
-- **モバイル・WASM**: 基盤実装済み、プラットフォーム固有API連携は継続中
-
-### 📋 **残りタスク**
-1. **パフォーマンステスト**: 1Gbps目標の性能検証
-2. **BIKE実装**: pqcrypto-bike クレート依存
-3. **iOS/Android FFI**: プラットフォーム固有API連携
-4. **WebTransport**: ブラウザ通信実装
-5. **管理UI**: Web管理インターフェース
-6. **形式検証**: 安全性証明・モデルチェック完成
-
-**全体進捗: 約85%完了** 🎯
+**Last Updated**: 2025年7月31日
+**Total Tasks**: 75+ items identified
+**Critical Path**: DHT + libp2p implementation for basic functionality
