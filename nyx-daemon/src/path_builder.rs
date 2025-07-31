@@ -410,9 +410,10 @@ impl DhtPeerDiscovery {
         // Query each bootstrap peer to build initial peer set
         for bootstrap_addr in &self.bootstrap_peers {
             match self.query_peer_for_neighbors(bootstrap_addr).await {
-                Ok(mut peers) => {
+                Ok(peers) => {
+                    let peer_count = peers.len();
                     bootstrap_peers.extend(peers);
-                    info!("Discovered {} peers from bootstrap node: {}", peers.len(), bootstrap_addr);
+                    info!("Discovered {} peers from bootstrap node: {}", peer_count, bootstrap_addr);
                 }
                 Err(e) => {
                     warn!("Failed to bootstrap from peer {}: {}", bootstrap_addr, e);
@@ -1036,6 +1037,7 @@ impl PathBuilder {
         ];
         
         for criteria in discovery_strategies {
+            let criteria_clone = criteria.clone();
             match self.dht_discovery.discover_peers(criteria).await {
                 Ok(mut peers) => {
                     // Filter peers based on configuration requirements
@@ -1053,7 +1055,7 @@ impl PathBuilder {
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to discover peers with criteria {:?}: {}", criteria, e);
+                    warn!("Failed to discover peers with criteria {:?}: {}", criteria_clone, e);
                     continue;
                 }
             }
