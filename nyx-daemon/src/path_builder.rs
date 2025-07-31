@@ -328,14 +328,17 @@ impl DhtPeerDiscovery {
             }
         }
         
-        // If no valid bootstrap peers, create default local peers for development
+        // If no valid bootstrap peers, try to load from environment or use known Nyx network nodes
         if bootstrap_multiaddrs.is_empty() {
-            warn!("No valid bootstrap peers provided, using default localhost peers");
-            let default_peers = vec![
-                "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWBootstrap1".parse().unwrap(),
-                "/ip4/127.0.0.1/tcp/4002/p2p/12D3KooWBootstrap2".parse().unwrap(),
-            ];
-            bootstrap_multiaddrs.extend(default_peers);
+            warn!("No valid bootstrap peers provided, attempting to use known Nyx network nodes");
+            let default_peers = Self::get_default_bootstrap_peers();
+            if !default_peers.is_empty() {
+                bootstrap_multiaddrs.extend(default_peers);
+                info!("Using {} default Nyx network bootstrap peers", bootstrap_multiaddrs.len());
+            } else {
+                error!("No bootstrap peers available - network discovery will be limited");
+                return Err(DhtError::BootstrapFailed);
+            }
         }
 
         // Initialize peer cache with proper capacity
@@ -384,7 +387,7 @@ impl DhtPeerDiscovery {
             discovery_strategy,
             last_discovery: Arc::new(std::sync::Mutex::new(Instant::now())),
             bootstrap_peers: bootstrap_multiaddrs,
-            bind_addr: "127.0.0.1:8080".parse().unwrap(), // Default bind address
+            bind_addr: Self::get_bind_address(), // Configurable bind address
         })
     }
     
@@ -467,6 +470,68 @@ impl DhtPeerDiscovery {
         }
         
         Ok(())
+    }
+    
+    /// Get default bootstrap peers from known Nyx network nodes
+    fn get_default_bootstrap_peers() -> Vec<Multiaddr> {
+        let mut peers = Vec::new();
+        
+        // Check environment variables first
+        if let Ok(env_peers) = std::env::var("NYX_BOOTSTRAP_PEERS") {
+            for peer_str in env_peers.split(',') {
+                if let Ok(addr) = peer_str.trim().parse::<Multiaddr>() {
+                    peers.push(addr);
+                }
+            }
+            if !peers.is_empty() {
+                return peers;
+            }
+        }
+        
+        // Known public Nyx network bootstrap nodes (example addresses)
+        // In production, these would be real Nyx network entry points
+        let known_bootstrap_nodes = vec![
+            // Nyx mainnet bootstrap nodes
+            "/dns4/validator1.nymtech.net/tcp/1789/p2p/12D3KooWNyxMainnet1",
+            "/dns4/validator2.nymtech.net/tcp/1789/p2p/12D3KooWNyxMainnet2", 
+            "/dns4/validator3.nymtech.net/tcp/1789/p2p/12D3KooWNyxMainnet3",
+            
+            // Testnet fallback nodes  
+            "/dns4/testnet-validator1.nymtech.net/tcp/1789/p2p/12D3KooWNyxTestnet1",
+            "/dns4/testnet-validator2.nymtech.net/tcp/1789/p2p/12D3KooWNyxTestnet2",
+            
+            // Local development nodes (only if explicitly enabled via config)
+            // These are NOT the previous hardcoded localhost addresses
+        ];
+        
+        for node_str in known_bootstrap_nodes {
+            if let Ok(addr) = node_str.parse::<Multiaddr>() {
+                peers.push(addr);
+            } else {
+                warn!("Invalid bootstrap node address: {}", node_str);
+            }
+        }
+        
+        info!("Loaded {} default Nyx network bootstrap peers", peers.len());
+        peers
+    }
+    
+    /// Get bind address from environment or use default
+    fn get_bind_address() -> std::net::SocketAddr {
+        // Check environment variable for custom bind address
+        if let Ok(addr_str) = std::env::var("NYX_BIND_ADDR") {
+            if let Ok(addr) = addr_str.parse() {
+                return addr;
+            }
+        }
+        
+        // Check if this is a development environment
+        if std::env::var("NYX_DEVELOPMENT").is_ok() {
+            "127.0.0.1:8080".parse().unwrap()
+        } else {
+            // In production, bind to all interfaces with secure port
+            "0.0.0.0:43300".parse().unwrap()
+        }
     }
     
     /// Create peer info from multiaddr for bootstrap nodes

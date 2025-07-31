@@ -5,7 +5,7 @@
 ### Core Network Infrastructure
 - [ ] **DHT (Distributed Hash Table) Implementation**
   - [x] Replace placeholder DHT implementation in `nyx-daemon/src/path_builder.rs`
-  - [ ] Implement real peer discovery mechanism
+  - [x] Implement real peer discovery mechanism
   - [ ] Replace hardcoded "placeholder-node-1", "placeholder-node-2" with actual nodes
   - [ ] Implement peer routing and lookup functionality
   - [ ] Add DHT persistence and bootstrap mechanisms

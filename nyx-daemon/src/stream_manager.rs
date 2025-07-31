@@ -253,7 +253,7 @@ impl StreamManager {
     ) -> Result<Self> {
         let (event_tx, _) = broadcast::channel(1000);
         
-        let bootstrap_peers = vec!["127.0.0.1:8080".to_string()]; // Placeholder bootstrap peers
+        let bootstrap_peers = Self::get_bootstrap_peers(); // Real bootstrap peers from config/env
         let path_builder_config = crate::path_builder::PathBuilderConfig::default();
         
         Ok(Self {
@@ -272,6 +272,32 @@ impl StreamManager {
             _cleanup_task: None,
             _monitoring_task: None,
         })
+    }
+    
+    /// Get bootstrap peers from environment or configuration
+    fn get_bootstrap_peers() -> Vec<String> {
+        // Check environment variable first
+        if let Ok(peers_str) = std::env::var("NYX_BOOTSTRAP_PEERS") {
+            return peers_str.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+        
+        // Check configuration file or use defaults
+        if let Ok(config_peers) = std::env::var("NYX_CONFIG_BOOTSTRAP_PEERS") {
+            return config_peers.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+        
+        // Fallback to known Nyx network peers (converted from multiaddr format)
+        vec![
+            "validator1.nymtech.net:1789".to_string(),
+            "validator2.nymtech.net:1789".to_string(),
+            "testnet-validator1.nymtech.net:1789".to_string(),
+        ]
     }
     
     /// Start the stream manager

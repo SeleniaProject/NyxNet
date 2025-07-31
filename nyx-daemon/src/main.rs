@@ -129,7 +129,10 @@ impl ControlService {
         let _metrics_task = Arc::clone(&metrics).start_collection();
         
         // Initialize Prometheus exporter
-        let prometheus_addr = "127.0.0.1:9090".parse().unwrap();
+        let prometheus_addr = std::env::var("NYX_PROMETHEUS_ADDR")
+            .unwrap_or_else(|_| "127.0.0.1:9090".to_string())
+            .parse()
+            .expect("Invalid Prometheus address format");
         let prometheus_exporter = PrometheusExporterBuilder::new()
             .with_server_addr(prometheus_addr)
             .with_update_interval(Duration::from_secs(15))
@@ -1140,7 +1143,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = std::fs::remove_file(DEFAULT_ENDPOINT);
 
     // Use TCP listener for Windows compatibility
-    let addr = "127.0.0.1:50051".parse()?;
+    let addr = std::env::var("NYX_GRPC_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:50051".to_string())
+        .parse()
+        .expect("Invalid gRPC address format");
     info!("Control endpoint bound at {}", addr);
 
     info!("Nyx daemon fully initialized and ready for connections");
