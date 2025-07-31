@@ -151,22 +151,26 @@ impl PrometheusExporter {
             .absolute(collector.failed_connections.load(std::sync::atomic::Ordering::Relaxed));
         
         // Export performance metrics
-        if let Ok(cover_traffic_rate) = collector.cover_traffic_rate.read() {
+        {
+            let cover_traffic_rate = collector.cover_traffic_rate.read().await;
             metrics::gauge!("nyx_cover_traffic_rate_pps")
                 .set(*cover_traffic_rate);
         }
         
-        if let Ok(avg_latency) = collector.avg_latency_ms.read() {
+        {
+            let avg_latency = collector.avg_latency_ms.read().await;
             metrics::gauge!("nyx_average_latency_ms")
                 .set(*avg_latency);
         }
         
-        if let Ok(packet_loss_rate) = collector.packet_loss_rate.read() {
+        {
+            let packet_loss_rate = collector.packet_loss_rate.read().await;
             metrics::gauge!("nyx_packet_loss_rate")
                 .set(*packet_loss_rate);
         }
         
-        if let Ok(bandwidth_utilization) = collector.bandwidth_utilization.read() {
+        {
+            let bandwidth_utilization = collector.bandwidth_utilization.read().await;
             metrics::gauge!("nyx_bandwidth_utilization")
                 .set(*bandwidth_utilization);
         }
@@ -177,7 +181,7 @@ impl PrometheusExporter {
             .set(uptime.as_secs() as f64);
         
         // Export performance metrics from the collector
-        let perf_metrics = collector.get_performance_metrics();
+        let perf_metrics = collector.get_performance_metrics().await;
         metrics::gauge!("nyx_cpu_usage")
             .set(perf_metrics.cpu_usage);
         metrics::gauge!("nyx_memory_usage_mb")
@@ -186,7 +190,7 @@ impl PrometheusExporter {
             .set(perf_metrics.connection_success_rate);
         
         // Export resource usage if available
-        if let Some(resource_usage) = collector.get_resource_usage() {
+        if let Some(resource_usage) = collector.get_resource_usage().await {
             metrics::gauge!("nyx_memory_rss_bytes")
                 .set(resource_usage.memory_rss_bytes as f64);
             metrics::gauge!("nyx_memory_vms_bytes")
@@ -200,26 +204,26 @@ impl PrometheusExporter {
         }
         
         // Export mix routes count
-        let mix_routes = collector.get_mix_routes();
+        let mix_routes = collector.get_mix_routes().await;
         metrics::gauge!("nyx_mix_routes_count")
             .set(mix_routes.len() as f64);
         
         // Export bandwidth, CPU, and memory samples for trend analysis
-        let bandwidth_samples = collector.get_bandwidth_samples();
+        let bandwidth_samples = collector.get_bandwidth_samples().await;
         if !bandwidth_samples.is_empty() {
             let avg_bandwidth = bandwidth_samples.iter().sum::<f64>() / bandwidth_samples.len() as f64;
             metrics::gauge!("nyx_bandwidth_average_mbps")
                 .set(avg_bandwidth);
         }
         
-        let cpu_samples = collector.get_cpu_samples();
+        let cpu_samples = collector.get_cpu_samples().await;
         if !cpu_samples.is_empty() {
             let avg_cpu = cpu_samples.iter().sum::<f64>() / cpu_samples.len() as f64;
             metrics::gauge!("nyx_cpu_average_percent")
                 .set(avg_cpu);
         }
         
-        let memory_samples = collector.get_memory_samples();
+        let memory_samples = collector.get_memory_samples().await;
         if !memory_samples.is_empty() {
             let avg_memory = memory_samples.iter().sum::<f64>() / memory_samples.len() as f64;
             metrics::gauge!("nyx_memory_average_percent")
@@ -246,7 +250,7 @@ impl PrometheusExporter {
         let mut health_score: f64 = 1.0;
         
         // Get performance metrics
-        let perf_metrics = collector.get_performance_metrics();
+        let perf_metrics = collector.get_performance_metrics().await;
         
         // Penalize high CPU usage
         if perf_metrics.cpu_usage > 0.8 {
@@ -289,7 +293,7 @@ impl PrometheusExporter {
     
     /// Export health indicators for alerting
     async fn export_health_indicators(&self) -> Result<(), PrometheusError> {
-        let perf_metrics = self.metrics_collector.get_performance_metrics();
+        let perf_metrics = self.metrics_collector.get_performance_metrics().await;
         
         // Critical thresholds as binary indicators (0 or 1)
         let high_cpu = if perf_metrics.cpu_usage > 0.8 { 1.0 } else { 0.0 };

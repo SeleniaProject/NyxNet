@@ -29,7 +29,10 @@
 
 
 
-- [ ] 1.3 Fix nyx-sdk dependency issues
+- [-] 1.3 Fix nyx-sdk dependency issues
+
+
+
   - Add Clone trait derivation for NyxError type
 
 
@@ -38,6 +41,7 @@
   - _Requirements: 2.1, 4.2_
 
 - [ ] 2. Resolve duplicate type definitions and structural issues
+
 
 
 
@@ -87,6 +91,7 @@
   - _Requirements: 4.1, 4.2, 4.3_
 
 - [ ] 3.1 Update sysinfo API usage in nyx-cli/src/benchmark.rs
+
   - Replace SystemExt, NetworkExt, CpuExt trait usage with direct System methods
 
 
@@ -95,6 +100,7 @@
   - _Requirements: 4.1, 4.2_
 
 - [ ] 3.2 Fix function parameter count mismatches
+
   - Update function calls in nyx-cli/src/main.rs with correct parameter counts
   - Fix function calls in nyx-daemon/src/main.rs with missing arguments
   - Resolve method signature mismatches
@@ -102,6 +108,7 @@
 
 
 - [ ] 3.3 Fix metrics and prometheus exporter API issues
+
   - Update metrics Registry usage to match current API
   - Fix prometheus exporter configuration
   - Resolve set_boxed_recorder vs set_global_recorder API changes
@@ -109,18 +116,21 @@
 
 - [ ] 4. Fix async/await and Future type issues
 
+
   - Correct async function usage and Future type handling
   - Fix RwLock usage in async contexts
   - Resolve type system violations with async code
   - _Requirements: 3.1, 3.2, 3.3_
 
 - [ ] 4.1 Fix async RwLock usage in nyx-daemon/src/metrics.rs
+
   - Replace synchronous RwLock operations with proper async equivalents
   - Fix Future type expectations in async functions
   - Update async function signatures and await usage
   - _Requirements: 3.1, 3.2_
 
 - [ ] 4.2 Fix async trait implementations and method signatures
+
   - Implement missing trait methods in async contexts
   - Fix async function return types
   - Resolve Pin and Future type issues
@@ -128,12 +138,14 @@
 
 - [ ] 5. Fix type system violations and trait implementations
 
+
   - Add missing Clone trait implementations
   - Fix type conversions and casting issues
   - Implement missing trait methods
   - _Requirements: 3.1, 3.2, 4.2_
 
 - [ ] 5.1 Add missing trait implementations
+
   - Add Clone derivation for NyxError in nyx-sdk
   - Implement missing Default trait for SystemTime fields
   - Add required trait implementations for custom types
@@ -141,18 +153,21 @@
 
 
 - [ ] 5.2 Fix type conversion and casting issues
+
   - Fix usize vs u32 type mismatches in path_builder.rs
   - Resolve numeric type ambiguity in calculations
   - Add proper type conversions where needed
   - _Requirements: 3.1, 3.2_
 
 - [ ] 5.3 Implement missing trait methods
+
   - Add missing receive_data method to trait implementation
   - Complete partial trait implementations
   - Fix trait method signatures to match requirements
   - _Requirements: 4.2, 5.2_
 
 - [ ] 6. Fix clap and CLI argument parsing issues
+
 
   - Update clap API usage to match version 4.5
   - Fix argument parsing and command structure

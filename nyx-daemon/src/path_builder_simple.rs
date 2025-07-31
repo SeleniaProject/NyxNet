@@ -21,9 +21,11 @@ use blake3;
 use anyhow;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{
+    Arc, Mutex,
+};
 use std::time::{Duration, SystemTime, Instant};
-use tokio::sync::{RwLock, Mutex};
+use tokio::sync::RwLock;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn, instrument};
 use rand::{seq::SliceRandom, thread_rng, Rng};
@@ -75,9 +77,9 @@ pub enum DhtError {
 /// DHT peer discovery implementation
 pub struct DhtPeerDiscovery {
     dht_client: Arc<DhtHandle>,
-    peer_cache: Arc<std::sync::Mutex<LruCache<String, CachedPeerInfo>>>,
+    peer_cache: Arc<Mutex<LruCache<String, CachedPeerInfo>>>,
     discovery_strategy: DiscoveryStrategy,
-    last_discovery: Arc<std::sync::Mutex<Instant>>,
+    last_discovery: Arc<Mutex<Instant>>,
 }
 
 /// Cached peer information with metadata
@@ -114,7 +116,7 @@ impl Default for DiscoveryStrategy {
 /// Network node information with extended attributes
 #[derive(Debug, Clone)]
 pub struct NetworkNode {
-    pub node_id: String, // Changed from NodeId to String for simplicity
+    pub node_id: NodeId,
     pub address: String,
     pub location: Option<Point<f64>>, // Geographic coordinates
     pub region: String,
@@ -153,7 +155,7 @@ pub struct PathQuality {
 /// Cached path information
 #[derive(Debug, Clone)]
 struct CachedPath {
-    pub hops: Vec<String>, // Changed from NodeId to String
+    pub hops: Vec<NodeId>,
     pub quality: PathQuality,
     pub created_at: Instant,
     pub usage_count: u64,
@@ -169,9 +171,9 @@ impl DhtPeerDiscovery {
         
         Self {
             dht_client,
-            peer_cache: Arc::new(std::sync::Mutex::new(cache)),
+            peer_cache: Arc::new(Mutex::new(cache)),
             discovery_strategy: DiscoveryStrategy::default(),
-            last_discovery: Arc::new(std::sync::Mutex::new(Instant::now() - Duration::from_secs(3600))),
+            last_discovery: Arc::new(Mutex::new(Instant::now() - Duration::from_secs(3600))),
         }
     }
     
@@ -198,6 +200,61 @@ impl DhtPeerDiscovery {
         Ok(peers)
     }
     
+    /// Resolve a specific node by ID
+    pub async fn resolve_node(&mut self, node_id: NodeId) -> Result<crate::proto::PeerInfo, DhtError> {
+        let node_id_str = hex::encode(node_id);
+        debug!("Resolving node: {}", node_id_str);
+        
+        // Check cache first
+        let cache_key = format!("node:{}", node_id_str);
+        if let Some(cached_peer) = self.get_cached_peer(&cache_key).await {
+            return Ok(cached_peer);
+        }
+        
+        // Query DHT for specific node
+        let peer_data = self.dht_client.get(&format!("peer:{}", node_id_str)).await
+            .ok_or_else(|| DhtError::NoPeersFound)?;
+        
+        // Parse peer data
+        let peer_info = self.parse_peer_data(&peer_data)
+            .map_err(|e| DhtError::InvalidPeerData(e.to_string()))?;
+        
+        // Cache the result
+        self.cache_peer_info(&cache_key, &peer_info).await;
+        
+        Ok(peer_info)
+    }
+    
+    /// Update peer information in cache and DHT
+    pub fn update_peer_info(&mut self, peer: crate::proto::PeerInfo) {
+        let cache_key = format!("node:{}", peer.node_id);
+        
+        // Update cache
+        tokio::spawn({
+            let peer_cache = Arc::clone(&self.peer_cache);
+            let peer_clone = peer.clone();
+            async move {
+                let cached_peer = CachedPeerInfo {
+                    peer: peer_clone,
+                    cached_at: Instant::now(),
+                    access_count: 1,
+                    last_accessed: Instant::now(),
+                };
+                
+                peer_cache.lock().unwrap().put(cache_key, cached_peer);
+            }
+        });
+        
+        // Update DHT (fire and forget)
+        let dht_client = Arc::clone(&self.dht_client);
+        let peer_data = self.serialize_peer_data(&peer);
+        tokio::spawn(async move {
+            if let Ok(data) = peer_data {
+                dht_client.put(&format!("peer:{}", peer.node_id), data).await;
+            }
+        });
+    }
+    
     /// Get cached peers matching criteria
     async fn get_cached_peers(&self, criteria: &DiscoveryCriteria) -> Option<Vec<crate::proto::PeerInfo>> {
         let cache = self.peer_cache.lock().unwrap();
@@ -206,7 +263,7 @@ impl DhtPeerDiscovery {
         
         let mut matching_peers = Vec::new();
         
-        for (_, cached_peer) in cache.iter() {
+        for (key, cached_peer) in cache.iter() {
             // Check if cache entry is still valid
             if now.duration_since(cached_peer.cached_at) > ttl {
                 continue;
@@ -223,6 +280,23 @@ impl DhtPeerDiscovery {
         } else {
             Some(matching_peers)
         }
+    }
+    
+    /// Get a specific cached peer
+    async fn get_cached_peer(&self, cache_key: &str) -> Option<crate::proto::PeerInfo> {
+        let mut cache = self.peer_cache.lock().unwrap();
+        let now = Instant::now();
+        let ttl = Duration::from_secs(self.discovery_strategy.cache_ttl_secs);
+        
+        if let Some(cached_peer) = cache.get_mut(cache_key) {
+            if now.duration_since(cached_peer.cached_at) <= ttl {
+                cached_peer.access_count += 1;
+                cached_peer.last_accessed = now;
+                return Some(cached_peer.peer.clone());
+            }
+        }
+        
+        None
     }
     
     /// Discover peers from DHT
@@ -388,6 +462,41 @@ impl DhtPeerDiscovery {
         }
     }
     
+    /// Cache individual peer info
+    async fn cache_peer_info(&self, cache_key: &str, peer: &crate::proto::PeerInfo) {
+        let mut cache = self.peer_cache.lock().unwrap();
+        let cached_peer = CachedPeerInfo {
+            peer: peer.clone(),
+            cached_at: Instant::now(),
+            access_count: 1,
+            last_accessed: Instant::now(),
+        };
+        
+        cache.put(cache_key.to_string(), cached_peer);
+    }
+    
+    /// Parse peer data from DHT with enhanced format support
+    fn parse_peer_data(&self, data: &[u8]) -> anyhow::Result<crate::proto::PeerInfo> {
+        // Use pipe-separated format since proto doesn't have serde derives
+        let data_str = String::from_utf8_lossy(data);
+        let parts: Vec<&str> = data_str.split('|').collect();
+        
+        if parts.len() >= 4 {
+            Ok(crate::proto::PeerInfo {
+                node_id: parts[0].to_string(),
+                address: parts[1].to_string(),
+                latency_ms: parts[2].parse().unwrap_or(100.0),
+                bandwidth_mbps: parts[3].parse().unwrap_or(50.0),
+                status: parts.get(4).unwrap_or(&"active").to_string(),
+                last_seen: Some(crate::system_time_to_proto_timestamp(SystemTime::now())),
+                connection_count: parts.get(5).and_then(|s| s.parse().ok()).unwrap_or(0),
+                region: parts.get(6).unwrap_or(&"unknown").to_string(),
+            })
+        } else {
+            Err(anyhow::anyhow!("Invalid peer data format: expected at least 4 fields, got {}", parts.len()))
+        }
+    }
+    
     /// Serialize peer data for DHT storage with enhanced format
     fn serialize_peer_data(&self, peer: &crate::proto::PeerInfo) -> anyhow::Result<Vec<u8>> {
         // Use pipe-separated format since proto doesn't have serde derives
@@ -402,174 +511,67 @@ impl DhtPeerDiscovery {
         );
         Ok(data.into_bytes())
     }
-}
-
-/// Simple path builder for basic path construction
-pub struct PathBuilder {
-    dht_discovery: DhtPeerDiscovery,
-    path_cache: Arc<RwLock<HashMap<String, CachedPath>>>, // Changed key from NodeId to String
-    config: PathBuilderConfig,
-}
-
-/// Path builder configuration
-#[derive(Debug, Clone)]
-pub struct PathBuilderConfig {
-    pub max_hops: u32,
-    pub cache_ttl_secs: u64,
-    pub quality_threshold: f64,
-    pub geographic_diversity: bool,
-}
-
-impl Default for PathBuilderConfig {
-    fn default() -> Self {
-        Self {
-            max_hops: 5,
-            cache_ttl_secs: 300,
-            quality_threshold: 0.5,
-            geographic_diversity: true,
-        }
-    }
-}
-
-impl PathBuilder {
-    /// Create a new path builder
-    pub fn new(dht_client: Arc<DhtHandle>) -> Self {
-        Self {
-            dht_discovery: DhtPeerDiscovery::new(dht_client),
-            path_cache: Arc::new(RwLock::new(HashMap::new())),
-            config: PathBuilderConfig::default(),
-        }
-    }
     
-    /// Build a path to target with specified number of hops
-    pub async fn build_path(&mut self, request: PathRequest) -> Result<PathResponse, anyhow::Error> {
-        debug!("Building path for request: {:?}", request);
+    /// Persist peer information to DHT with error handling and retries
+    pub async fn persist_peer_info(&self, peer: &crate::proto::PeerInfo) -> Result<(), DhtError> {
+        let peer_key = format!("peer:{}", peer.node_id);
+        let peer_data = self.serialize_peer_data(peer)
+            .map_err(|e| DhtError::InvalidPeerData(e.to_string()))?;
         
-        // Convert request parameters
-        let target_id = request.target.clone();
-        let hops = request.hops as u32;
-        
-        // Discover candidate nodes
-        let candidates = self.dht_discovery.discover_peers(DiscoveryCriteria::All).await
-            .map_err(|e| anyhow::anyhow!("Failed to discover peers: {}", e))?;
-        
-        // Convert to NetworkNode format
-        let network_nodes: Vec<NetworkNode> = candidates.into_iter()
-            .map(|peer| NetworkNode {
-                node_id: peer.node_id.clone(),
-                address: peer.address,
-                location: None, // Would be populated from actual geographic data
-                region: peer.region,
-                latency_ms: peer.latency_ms,
-                bandwidth_mbps: peer.bandwidth_mbps,
-                reliability_score: 0.8, // Default reliability
-                load_factor: 0.5, // Default load
-                last_seen: peer.last_seen.map(proto_timestamp_to_system_time).unwrap_or(SystemTime::now()),
-                connection_count: peer.connection_count,
-                supported_features: HashSet::new(),
-                reputation_score: 0.7, // Default reputation
-            })
-            .collect();
-        
-        // Select best nodes for path
-        let selected_nodes = self.select_path_nodes(&network_nodes, hops).await;
-        
-        // Build path response - convert node IDs to strings for the protobuf path field
-        let mut path_strings = Vec::new();
-        for node_id in &selected_nodes {
-            path_strings.push(node_id.clone());
-        }
-        
-        // Add target node
-        path_strings.push(target_id.clone());
-        
-        // Calculate path quality
-        let quality = self.calculate_path_quality(&selected_nodes, &network_nodes).await;
-        
-        let response = PathResponse {
-            path: path_strings,
-            estimated_latency_ms: quality.total_latency_ms,
-            estimated_bandwidth_mbps: quality.min_bandwidth_mbps,
-            reliability_score: quality.overall_score,
-        };
-        
-        debug!("Built path with {} nodes, quality score: {:.2}", 
-               response.path.len(), quality.overall_score);
-        
-        Ok(response)
-    }
-    
-    /// Select nodes for path construction
-    async fn select_path_nodes(&self, candidates: &[NetworkNode], hops: u32) -> Vec<String> {
-        let mut selected = Vec::new();
-        let mut used_nodes = HashSet::new();
-        
-        // Simple selection based on quality scores
-        let mut scored_candidates: Vec<_> = candidates.iter()
-            .map(|node| {
-                let score = self.calculate_node_quality_score(node);
-                (node.node_id.clone(), score)
-            })
-            .collect();
-        
-        // Sort by score (higher is better)
-        scored_candidates.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        
-        // Select top nodes up to hop count
-        for (node_id, _) in scored_candidates.into_iter().take(hops as usize) {
-            if !used_nodes.contains(&node_id) {
-                selected.push(node_id.clone());
-                used_nodes.insert(node_id);
+        // Store peer data with retries
+        for attempt in 1..=self.discovery_strategy.retry_attempts {
+            match tokio::time::timeout(
+                Duration::from_secs(self.discovery_strategy.discovery_timeout_secs),
+                self.dht_client.put(&peer_key, peer_data.clone())
+            ).await {
+                Ok(_) => {
+                    debug!("Successfully persisted peer {} to DHT", peer.node_id);
+                    return Ok(());
+                }
+                Err(_) => {
+                    warn!("DHT put timeout for peer {} (attempt {}/{})", 
+                          peer.node_id, attempt, self.discovery_strategy.retry_attempts);
+                    
+                    if attempt < self.discovery_strategy.retry_attempts {
+                        let backoff_duration = Duration::from_millis(
+                            (100.0 * self.discovery_strategy.backoff_multiplier.powi(attempt as i32 - 1)) as u64
+                        );
+                        tokio::time::sleep(backoff_duration).await;
+                    }
+                }
             }
         }
         
-        selected
+        Err(DhtError::Timeout)
     }
     
-    /// Calculate quality score for a node
-    fn calculate_node_quality_score(&self, node: &NetworkNode) -> f64 {
-        let latency_score = 1.0 / (1.0 + node.latency_ms / 1000.0);
-        let bandwidth_score = (node.bandwidth_mbps / 1000.0).min(1.0);
-        let reliability_score = node.reliability_score;
-        let load_score = 1.0 - node.load_factor;
+    /// Clean up stale peer information from DHT
+    pub async fn cleanup_stale_peers(&self) -> Result<u32, DhtError> {
+        let mut cleaned_count = 0;
         
-        (latency_score + bandwidth_score + reliability_score + load_score) / 4.0
-    }
-    
-    /// Calculate overall path quality
-    async fn calculate_path_quality(&self, path: &[String], nodes: &[NetworkNode]) -> PathQuality {
-        let mut total_latency = 0.0;
-        let mut min_bandwidth = f64::INFINITY;
-        let mut total_reliability = 1.0;
-        let mut load_balance_sum = 0.0;
+        // Get all cached peers
+        let cached_peers: Vec<String> = {
+            let cache = self.peer_cache.lock().unwrap();
+            cache.iter().map(|(key, _)| key.clone()).collect()
+        };
         
-        for node_id in path {
-            if let Some(node) = nodes.iter().find(|n| n.node_id == *node_id) {
-                total_latency += node.latency_ms;
-                min_bandwidth = min_bandwidth.min(node.bandwidth_mbps);
-                total_reliability *= node.reliability_score;
-                load_balance_sum += node.load_factor;
+        for cache_key in cached_peers {
+            if let Some(cached_peer) = self.get_cached_peer(&cache_key).await {
+                // Check if peer is stale
+                if cached_peer.status == "unreachable" || 
+                   cached_peer.last_seen.map(|ts| {
+                       SystemTime::now().duration_since(proto_timestamp_to_system_time(ts))
+                           .unwrap_or_default().as_secs() > 3600 // 1 hour
+                   }).unwrap_or(true) {
+                    
+                    // Remove from cache
+                    self.peer_cache.lock().unwrap().pop(&cache_key);
+                    cleaned_count += 1;
+                }
             }
         }
         
-        let load_balance_score = if !path.is_empty() {
-            1.0 - (load_balance_sum / path.len() as f64)
-        } else {
-            0.0
-        };
-        
-        let overall_score = (1.0 / (1.0 + total_latency / 1000.0)) * 0.3 +
-            (min_bandwidth / 1000.0).min(1.0) * 0.3 +
-            total_reliability * 0.2 +
-            load_balance_score * 0.2;
-        
-        PathQuality {
-            total_latency_ms: total_latency,
-            min_bandwidth_mbps: min_bandwidth,
-            reliability_score: total_reliability,
-            geographic_diversity: 0.5, // Placeholder
-            load_balance_score,
-            overall_score,
-        }
+        debug!("Cleaned up {} stale peers from cache", cleaned_count);
+        Ok(cleaned_count)
     }
 }

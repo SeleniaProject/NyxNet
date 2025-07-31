@@ -259,8 +259,6 @@ impl StreamManager {
             cmix_controller: Arc::new(CmixController::default()),
             path_builder: Arc::new(PathBuilder::new(
                 Arc::new(nyx_control::spawn_dht().await),
-                Arc::clone(&metrics),
-                PathBuilderConfig::default(),
             )),
             prober: Arc::new(RwLock::new(nyx_mix::larmix::Prober::new())),
             scheduler: Arc::new(RwLock::new(PathScheduler::default())),

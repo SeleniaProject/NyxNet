@@ -373,7 +373,8 @@ impl MetricsCollector {
         let bandwidth_utilization = *self.bandwidth_utilization.read().await;
 
         // Get CPU and memory usage from system
-        let (cpu_usage, memory_usage_mb) = if let Ok(system) = self.system.read().await {
+        let (cpu_usage, memory_usage_mb) = {
+            let system = self.system.read().await;
             let current_pid = std::process::id();
             if let Some(process) = system.process(sysinfo::Pid::from(current_pid as usize)) {
                 (
@@ -383,8 +384,6 @@ impl MetricsCollector {
             } else {
                 (0.0, 0.0)
             }
-        } else {
-            (0.0, 0.0)
         };
 
         // Calculate connection success rate using new tracking
@@ -411,7 +410,8 @@ impl MetricsCollector {
     }
 
     pub async fn get_resource_usage(&self) -> Option<crate::proto::ResourceUsage> {
-        if let Ok(system) = self.system.read().await {
+        {
+            let system = self.system.read().await;
             let current_pid = std::process::id();
             if let Some(process) = system.process(Pid::from(current_pid as usize)) {
                 Some(crate::proto::ResourceUsage {
@@ -426,8 +426,6 @@ impl MetricsCollector {
             } else {
                 None
             }
-        } else {
-            None
         }
     }
 
@@ -781,7 +779,8 @@ impl ComprehensiveMetrics {
     
     /// Update system metrics
     async fn update_system_metrics(&self) {
-        if let Ok(mut system) = self.system.write().await {
+        {
+            let mut system = self.system.write().await;
             system.refresh_all();
             
             let uptime = SystemTime::now()
@@ -1110,7 +1109,7 @@ impl ComprehensiveMetrics {
             health_score -= 0.3;
         }
         
-        health_score = health_score.max(0.0);
+        health_score = f64::max(health_score, 0.0);
         
         PerformanceAnalysis {
             overall_health: health_score,
@@ -1150,7 +1149,7 @@ impl ComprehensiveMetrics {
     /// Update alert threshold
     pub async fn set_alert_threshold(&self, metric: String, threshold: f64) {
         let mut thresholds = self.alert_thresholds.write().await;
-        thresholds.insert(metric, AlertThreshold {
+        let threshold_item = AlertThreshold {
             metric: metric.clone(),
             threshold,
             severity: AlertSeverity::Warning,
@@ -1159,7 +1158,8 @@ impl ComprehensiveMetrics {
             enabled: true,
             cooldown_duration: Duration::from_secs(300),
             last_triggered: None,
-        });
+        };
+        thresholds.insert(metric, threshold_item);
     }
     
     /// Add alert threshold with full configuration
@@ -1171,7 +1171,7 @@ impl ComprehensiveMetrics {
     /// Remove alert threshold
     pub async fn remove_alert_threshold(&self, threshold_id: &str) -> bool {
         let mut thresholds = self.alert_thresholds.write().await;
-        thresholds.remove(threshold_id).is_some();
+        thresholds.remove(threshold_id).is_some()
     }
     
     /// Add alert route
@@ -1261,7 +1261,7 @@ impl ComprehensiveMetrics {
             }
         }
         
-        stats;
+        stats
     }
     
     /// Get metrics history
@@ -1458,7 +1458,7 @@ impl SystemResourceMonitor {
             thread_count: self.get_thread_count().await,
             disk_usage_bytes: self.get_disk_usage().await,
             load_average: self.get_load_average().await,
-            uptime_seconds: system.uptime(),
+            uptime_seconds: sysinfo::System::uptime(),
         };
         
         // Store in history
@@ -1511,9 +1511,11 @@ impl SystemResourceMonitor {
     /// Get disk usage
     async fn get_disk_usage(&self) -> u64 {
         let system = self.system.read().await;
-        system.disks().iter()
-            .map(|disk| disk.total_space() - disk.available_space())
-            .sum()
+        let mut total_used = 0;
+        for disk in sysinfo::System::disks(&*system) {
+            total_used += disk.total_space() - disk.available_space();
+        }
+        total_used
     }
     
     /// Get load average (Unix-specific)
@@ -2759,10 +2761,10 @@ impl PrometheusExporter {
         
         // Enhanced health check endpoint
         let health_handler = move || {
-            let collector = Arc::clone(&metrics_collector);
+            let health_collector = Arc::clone(&metrics_collector);
             async move {
                 // Perform basic health checks
-                let health_status = Self::check_system_health(collector).await;
+                let health_status = Self::check_system_health(health_collector).await;
                 
                 match health_status {
                     Ok(status) => {

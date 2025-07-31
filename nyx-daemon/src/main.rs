@@ -150,14 +150,10 @@ impl ControlService {
         
         // Initialize path builder
         info!("Initializing path builder...");
-        let path_config = PathBuilderConfig::default();
         let path_builder = Arc::new(PathBuilder::new(
             Arc::new(control_manager.dht.clone()),
-            Arc::clone(&metrics),
-            path_config,
         ));
-        info!("Path builder created, starting...");
-        path_builder.start().await?;
+        info!("Path builder created");
         info!("Path builder started successfully");
         
         // Initialize session manager
@@ -169,6 +165,11 @@ impl ControlService {
         session_manager_arc.clone().start().await?;
         info!("Session manager started successfully");
         let session_manager = session_manager_arc;
+        
+        // Event broadcasting
+        info!("Setting up event broadcasting...");
+        let (event_tx, _) = broadcast::channel(1000);
+        info!("Event broadcasting setup complete");
         
         // Initialize configuration manager
         info!("Initializing configuration manager...");
@@ -191,11 +192,6 @@ impl ControlService {
         info!("Initializing cMix controller...");
         let cmix_controller = Arc::new(Mutex::new(CmixController::default()));
         info!("cMix controller initialized");
-        
-        // Event broadcasting
-        info!("Setting up event broadcasting...");
-        let (event_tx, _) = broadcast::channel(1000);
-        info!("Event broadcasting setup complete");
         
         // Initialize layer manager for full protocol stack integration
         info!("Initializing layer manager...");
@@ -319,8 +315,8 @@ impl ControlService {
         loop {
             interval.tick().await;
             
-            let performance = metrics.get_performance_metrics();
-            let _resource_usage = metrics.get_resource_usage().unwrap_or_default();
+            let performance = metrics.get_performance_metrics().await;
+            let _resource_usage = metrics.get_resource_usage().await.unwrap_or_default();
             
             let event = Event {
                 r#type: "performance".to_string(),
@@ -378,11 +374,11 @@ impl ControlService {
     
     /// Build comprehensive node information with all extended fields
     async fn build_node_info(&self) -> NodeInfo {
-        let performance_metrics = self.metrics.get_performance_metrics();
-        let resource_usage = self.metrics.get_resource_usage().unwrap_or_default();
+        let performance_metrics = self.metrics.get_performance_metrics().await;
+        let resource_usage = self.metrics.get_resource_usage().await.unwrap_or_default();
         
         // Get actual mix routes from metrics
-        let mix_routes = self.metrics.get_mix_routes();
+        let mix_routes = self.metrics.get_mix_routes().await;
         
         // Build peer information from actual connected peers
         let mut peers = Vec::new();
@@ -678,8 +674,8 @@ impl NyxControl for ControlService {
                 interval.tick().await;
                 
                 // Build current node info
-                let performance_metrics = metrics.get_performance_metrics();
-                let resource_usage = metrics.get_resource_usage().unwrap_or_default();
+                let performance_metrics = metrics.get_performance_metrics().await;
+                let resource_usage = metrics.get_resource_usage().await.unwrap_or_default();
                 
                 let node_info = NodeInfo {
                     node_id: hex::encode(node_id),

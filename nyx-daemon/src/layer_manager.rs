@@ -13,7 +13,7 @@ use anyhow::Result;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{RwLock, broadcast};
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
 
 use nyx_core::{config::NyxConfig};
 use nyx_mix::{cmix::CmixController};
