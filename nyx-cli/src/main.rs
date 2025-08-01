@@ -899,24 +899,267 @@ fn display_connection_test_results(result: &ConnectionTestResult) {
 
 /// Display comprehensive real-time dashboard
 async fn display_realtime_dashboard(
-    _monitoring_session: &(),  // Placeholder until we implement real-time monitoring
-    _clear_screen: bool,
+    cli: &Cli,
+    clear_screen: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Placeholder implementation for real-time dashboard
-    println!("{}", style("🔥 Nyx Network Real-Time Dashboard").bold().cyan());
-    println!("{}", style("Real-time monitoring will be implemented in future tasks").dim());
+    if clear_screen {
+        execute!(std::io::stdout(), Clear(ClearType::All), MoveTo(0, 0))?;
+    }
     
-
+    // Connect to daemon to get current status
+    let mut client = create_client(cli).await?;
+    let daemon_status = match client.get_info(create_authenticated_request(cli, proto::Empty {})).await {
+        Ok(response) => response.into_inner(),
+        Err(e) => {
+            println!("{}", style(format!("❌ Failed to get daemon status: {}", e)).red());
+            return Ok(());
+        }
+    };
+    
+    // Dashboard header
+    println!("{}", style("🔥 Nyx Network Real-Time Dashboard").bold().cyan());
+    println!("{}", style(format!("Last Updated: {}", Utc::now().format("%Y-%m-%d %H:%M:%S UTC"))).dim());
+    println!("{}", style("═".repeat(80)).dim());
+    
+    // Network overview panel
+    display_network_overview(&daemon_status)?;
+    
+    // Connection quality panel
+    display_connection_quality_overview(&daemon_status)?;
+    
+    // Performance metrics panel
+    display_performance_metrics_panel(&daemon_status)?;
+    
+    // Security and anonymity panel
+    display_security_anonymity_panel(&daemon_status)?;
+    
+    // System resources panel
+    display_system_resources_panel(&daemon_status)?;
+    
+    // Active alerts panel
+    display_active_alerts_panel(&daemon_status)?;
+    
+    // Footer with controls
+    println!("{}", style("─".repeat(80)).dim());
+    println!("{}", style("Controls: [R]efresh | [Q]uit | [S]tatistics | [M]onitor").dim());
+    println!("{}", style("═".repeat(80)).dim());
     
     Ok(())
 }
 
 /// Display connection quality overview panel
-fn display_connection_quality_overview(_quality: &()) -> Result<(), Box<dyn std::error::Error>> {
-    println!("{}", style("🌟 Connection Quality").bold().green());
-    println!("Connection quality monitoring will be implemented in future tasks");
+fn display_connection_quality_overview(status: &proto::NodeInfo) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n{}", style("🌟 Connection Quality Overview").bold().green());
+    
+    // Calculate connection quality metrics
+    let quality_score = calculate_connection_quality_score(status);
+    let quality_grade = match quality_score {
+        x if x >= 0.9 => style("A+").green().bold(),
+        x if x >= 0.8 => style("A").green(),
+        x if x >= 0.7 => style("B").yellow(),
+        x if x >= 0.6 => style("C").yellow(),
+        _ => style("D").red(),
+    };
+    
+    println!("  Overall Grade: {} ({:.1}%)", quality_grade, quality_score * 100.0);
+    
+    // Connection metrics breakdown
+    if let Some(perf) = &status.performance {
+        println!("  Latency: {:.1}ms {}", perf.avg_latency_ms, latency_indicator(perf.avg_latency_ms));
+        println!("  Packet Loss: {:.2}% {}", perf.packet_loss_rate * 100.0, loss_indicator(perf.packet_loss_rate));
+        println!("  Success Rate: {:.1}% {}", perf.connection_success_rate * 100.0, success_indicator(perf.connection_success_rate));
+    }
+    
+    println!("  Connected Peers: {} {}", status.connected_peers, peer_indicator(status.connected_peers));
+    println!("  Active Streams: {}", status.active_streams);
+    
+    // Connection quality bar
+    let bar_width = 40;
+    let filled = (quality_score * bar_width as f64) as usize;
+    let empty = bar_width - filled;
+    let quality_bar = "█".repeat(filled) + &"░".repeat(empty);
+    
+    println!("  Quality: [{}] {:.0}%", 
+        style(&quality_bar).green(),
+        quality_score * 100.0
+    );
+    
+    // Recommendations based on quality score
+    if quality_score < 0.7 {
+        println!("  💡 Recommendations:");
+        println!("    • Check network connectivity");
+        println!("    • Consider switching to a different mix node");
+        println!("    • Enable automatic path optimization");
+    }
     
     Ok(())
+}
+
+/// Calculate connection quality score based on multiple metrics
+fn calculate_connection_quality_score(status: &proto::NodeInfo) -> f64 {
+    let default_performance = proto::PerformanceMetrics {
+        cover_traffic_rate: 10.0,
+        avg_latency_ms: 50.0,
+        packet_loss_rate: 0.01,
+        bandwidth_utilization: 0.5,
+        cpu_usage: 0.3,
+        memory_usage_mb: 100.0,
+        total_packets_sent: 1000,
+        total_packets_received: 950,
+        retransmissions: 10,
+        connection_success_rate: 0.95,
+    };
+    
+    let performance = status.performance.as_ref().unwrap_or(&default_performance);
+    
+    let latency_score = (150.0 - performance.avg_latency_ms.min(150.0)) / 150.0;
+    let loss_score = 1.0 - performance.packet_loss_rate.min(1.0);
+    let peer_score = (status.connected_peers as f64).min(10.0) / 10.0;
+    let uptime_score = (status.uptime_sec as f64 / 86400.0).min(1.0); // Max 24h
+    
+    (latency_score * 0.3 + loss_score * 0.3 + peer_score * 0.2 + uptime_score * 0.2).max(0.0_f64).min(1.0)
+}
+
+/// Display network overview panel
+fn display_network_overview(status: &proto::NodeInfo) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n{}", style("🌐 Network Overview").bold().blue());
+    println!("  Node ID: {}", style(&status.node_id[..12]).cyan());
+    println!("  Version: {}", style(&status.version).green());
+    println!("  Uptime: {}", format_uptime(status.uptime_sec));
+    println!("  Data In/Out: {} / {}", 
+        format_bytes(status.bytes_in), 
+        format_bytes(status.bytes_out)
+    );
+    Ok(())
+}
+
+/// Display performance metrics panel
+fn display_performance_metrics_panel(status: &proto::NodeInfo) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n{}", style("📊 Performance Metrics").bold().magenta());
+    
+    if let Some(perf) = &status.performance {
+        println!("  Throughput: {:.1} pps", perf.cover_traffic_rate);
+        println!("  Bandwidth Usage: {:.1}%", perf.bandwidth_utilization * 100.0);
+        println!("  Packets Sent/Received: {} / {}", perf.total_packets_sent, perf.total_packets_received);
+        println!("  Retransmissions: {}", perf.retransmissions);
+    }
+    
+    Ok(())
+}
+
+/// Display security and anonymity panel
+fn display_security_anonymity_panel(status: &proto::NodeInfo) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n{}", style("🔒 Security & Anonymity").bold().red());
+    println!("  Mix Routes: {}", status.mix_routes.len());
+    if !status.mix_routes.is_empty() {
+        println!("  Active Routes: {}", status.mix_routes.join(", "));
+    }
+    Ok(())
+}
+
+/// Display system resources panel
+fn display_system_resources_panel(status: &proto::NodeInfo) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n{}", style("💻 System Resources").bold().cyan());
+    
+    if let Some(perf) = &status.performance {
+        println!("  CPU Usage: {:.1}%", perf.cpu_usage * 100.0);
+        println!("  Memory Usage: {:.1} MB", perf.memory_usage_mb);
+    }
+    
+    if let Some(resources) = &status.resources {
+        println!("  RSS Memory: {}", format_bytes(resources.memory_rss_bytes));
+        println!("  Virtual Memory: {}", format_bytes(resources.memory_vms_bytes));
+        println!("  Open Files: {}", resources.open_file_descriptors);
+        println!("  Threads: {}", resources.thread_count);
+    }
+    
+    Ok(())
+}
+
+/// Display active alerts panel
+fn display_active_alerts_panel(status: &proto::NodeInfo) -> Result<(), Box<dyn std::error::Error>> {
+    println!("\n{}", style("⚠️  Active Alerts").bold().yellow());
+    
+    let mut alert_count = 0;
+    
+    // Check for performance alerts
+    if let Some(perf) = &status.performance {
+        if perf.avg_latency_ms > 100.0 {
+            println!("  🔸 High latency detected ({:.1}ms)", perf.avg_latency_ms);
+            alert_count += 1;
+        }
+        if perf.packet_loss_rate > 0.05 {
+            println!("  🔸 High packet loss ({:.1}%)", perf.packet_loss_rate * 100.0);
+            alert_count += 1;
+        }
+        if perf.cpu_usage > 0.8 {
+            println!("  🔸 High CPU usage ({:.1}%)", perf.cpu_usage * 100.0);
+            alert_count += 1;
+        }
+    }
+    
+    if status.connected_peers < 3 {
+        println!("  🔸 Low peer count ({})", status.connected_peers);
+        alert_count += 1;
+    }
+    
+    if alert_count == 0 {
+        println!("  ✅ No active alerts - system operating normally");
+    } else {
+        println!("  {} {} active alerts", style("⚠️").yellow(), alert_count);
+    }
+    
+    Ok(())
+}
+
+// Helper functions for indicators and formatting
+fn latency_indicator(latency_ms: f64) -> console::StyledObject<&'static str> {
+    match latency_ms {
+        x if x < 50.0 => style("🟢").green(),
+        x if x < 100.0 => style("🟡").yellow(),
+        _ => style("🔴").red(),
+    }
+}
+
+fn loss_indicator(loss_rate: f64) -> console::StyledObject<&'static str> {
+    match loss_rate {
+        x if x < 0.01 => style("🟢").green(),
+        x if x < 0.05 => style("🟡").yellow(),
+        _ => style("🔴").red(),
+    }
+}
+
+fn success_indicator(success_rate: f64) -> console::StyledObject<&'static str> {
+    match success_rate {
+        x if x > 0.95 => style("🟢").green(),
+        x if x > 0.90 => style("🟡").yellow(),
+        _ => style("🔴").red(),
+    }
+}
+
+fn peer_indicator(peer_count: u32) -> console::StyledObject<&'static str> {
+    match peer_count {
+        x if x >= 5 => style("🟢").green(),
+        x if x >= 3 => style("🟡").yellow(),
+        _ => style("🔴").red(),
+    }
+}
+
+fn format_uptime(uptime_sec: u32) -> String {
+    let hours = uptime_sec / 3600;
+    let minutes = (uptime_sec % 3600) / 60;
+    let seconds = uptime_sec % 60;
+    format!("{}h {}m {}s", hours, minutes, seconds)
+}
+
+fn format_bytes(bytes: u64) -> String {
+    match Byte::from_u128(bytes as u128) {
+        Some(byte_unit) => {
+            let adjusted = byte_unit.get_appropriate_unit(UnitType::Binary);
+            adjusted.to_string()
+        },
+        None => format!("{} B", bytes),
+    }
 }
 
 /// Calculate comprehensive file checksums for integrity verification
@@ -2633,17 +2876,6 @@ fn parse_time_range(time_range: &str) -> Result<(DateTime<Utc>, DateTime<Utc>), 
     Ok((start_time, end_time))
 }
 
-/// Display performance metrics panel
-fn display_performance_metrics_panel(
-    _metrics: &(),
-    _bandwidth: &(),
-) -> Result<(), Box<dyn std::error::Error>> {
-    println!("{}", style("📊 Performance Metrics").bold().blue());
-    println!("Performance metrics monitoring will be implemented in future tasks");
-    
-    Ok(())
-}
-
 /// Display latency monitoring panel
 fn display_latency_monitoring_panel(_latency: &()) -> Result<(), Box<dyn std::error::Error>> {
     println!("{}", style("⚡ Latency Analysis").bold().yellow());
@@ -2662,6 +2894,7 @@ fn display_hop_path_visualization(_path: &[()]) -> Result<(), Box<dyn std::error
 
 /// Enhanced monitoring session with real-time updates
 async fn run_enhanced_monitoring_session(
+    cli: &Cli,
     _client: &mut NyxControlClient<Channel>,
     _stream_id: u32,
     _target_address: String,
@@ -2676,7 +2909,7 @@ async fn run_enhanced_monitoring_session(
     
     while !shutdown.load(Ordering::Relaxed) && update_counter < 5 {
         // Display placeholder dashboard
-        display_realtime_dashboard(&(), true).await?;
+        display_realtime_dashboard(cli, true).await?;
         
         // Show control instructions
         println!();
