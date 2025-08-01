@@ -419,6 +419,8 @@ pub enum DhtError {
     Protocol(String),
     #[error("Bootstrap failed")]
     BootstrapFailed,
+    #[error("Insufficient peers: {0}")]
+    InsufficientPeers(String),
 }
 
 impl PureRustDht {

@@ -31,9 +31,9 @@ use tracing::{debug, error, info, warn, instrument};
 use serde::{Serialize, Deserialize};
 
 // Onion routing imports
-use nyx_crypto::noise::HandshakeState;
-use nyx_crypto::aead::{encrypt, decrypt, generate_nonce};
-use nyx_crypto::kdf::hkdf_expand;
+use nyx_crypto::aead::{NyxAead, AeadError};
+use nyx_crypto::kdf::{hkdf_expand, KdfLabel};
+use nyx_crypto::noise::SessionKey;
 use rand::{thread_rng, RngCore};
 
 /// Convert proto::Timestamp to SystemTime
@@ -97,27 +97,31 @@ pub struct OnionPath {
 
 impl OnionPath {
     /// Encrypt data through all layers (client-side encryption)
-    pub fn encrypt_onion(&self, plaintext: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
+    pub fn encrypt_onion(&self, plaintext: &[u8]) -> Result<Vec<u8>, AeadError> {
         let mut data = plaintext.to_vec();
         
         // Encrypt from innermost to outermost layer (reverse order)
         for layer in self.layers.iter().rev() {
             let additional_data = layer.peer_id.as_bytes();
-            data = encrypt(&layer.key, &layer.nonce, &data, additional_data)?;
+            let session_key = SessionKey::new(layer.key);
+            let aead = NyxAead::new(&session_key);
+            data = aead.encrypt(&layer.nonce, &data, additional_data)?;
         }
         
         Ok(data)
     }
     
     /// Decrypt one layer (relay-side decryption)
-    pub fn decrypt_layer(&self, layer_index: usize, ciphertext: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
+    pub fn decrypt_layer(&self, layer_index: usize, ciphertext: &[u8]) -> Result<Vec<u8>, AeadError> {
         if layer_index >= self.layers.len() {
-            return Err(anyhow::anyhow!("Invalid layer index"));
+            return Err(AeadError::DecryptionFailed("Invalid layer index".to_string()));
         }
         
         let layer = &self.layers[layer_index];
         let additional_data = layer.peer_id.as_bytes();
-        decrypt(&layer.key, &layer.nonce, ciphertext, additional_data)
+        let session_key = SessionKey::new(layer.key);
+        let aead = NyxAead::new(&session_key);
+        aead.decrypt(&layer.nonce, ciphertext, additional_data)
     }
     
     /// Get the next hop for routing
@@ -1994,6 +1998,157 @@ impl DhtPeerDiscovery {
               stats.total_peers, stats.active_buckets);
               
         Ok(stats.total_peers)
+    }
+
+    /// Build an actual onion routing path with encryption layers
+    #[instrument(skip(self))]
+    pub async fn build_onion_path(&self, destination: &str, hop_count: usize) -> Result<OnionPath, DhtError> {
+        info!("Building onion path to {} with {} hops", destination, hop_count);
+        
+        // Discover suitable peers for the path
+        let proto_peers = self.discover_peers(DiscoveryCriteria::HighPerformance).await?;
+        
+        // Convert proto peers to cached peers for internal processing
+        let candidates: Vec<CachedPeerInfo> = proto_peers.into_iter()
+            .filter_map(|proto_peer| {
+                // Convert proto::PeerInfo to CachedPeerInfo
+                let addresses = vec![proto_peer.address.parse().ok()?];
+                Some(CachedPeerInfo {
+                    peer_id: proto_peer.node_id,
+                    addresses,
+                    capabilities: HashSet::new(), // Default empty capabilities
+                    region: Some(proto_peer.region),
+                    location: None, // Location not available in proto
+                    latency_ms: Some(proto_peer.latency_ms),
+                    reliability_score: 0.8, // Default reliability
+                    bandwidth_mbps: Some(proto_peer.bandwidth_mbps),
+                    last_seen: Instant::now(),
+                    response_time_ms: None,
+                })
+            })
+            .collect();
+        
+        if candidates.len() < hop_count {
+            return Err(DhtError::InsufficientPeers(
+                format!("Need {} peers but only found {}", hop_count, candidates.len())
+            ));
+        }
+        
+        // Select best peers for the path with geographic and performance diversity
+        let selected_peers = self.select_diverse_path_peers(&candidates, hop_count).await?;
+        
+        // Generate encryption layers for each hop
+        let mut layers = Vec::with_capacity(hop_count);
+        let mut rng = thread_rng();
+        
+        for (index, peer) in selected_peers.iter().enumerate() {
+            // Generate unique encryption key and nonce for this layer
+            let mut key = [0u8; ONION_LAYER_KEY_SIZE];
+            let mut nonce = [0u8; ONION_LAYER_NONCE_SIZE];
+            rng.fill_bytes(&mut key);
+            rng.fill_bytes(&mut nonce);
+            
+            // Derive layer-specific keys using HKDF for better security  
+            let derived_key = hkdf_expand(&key, KdfLabel::Export, ONION_LAYER_KEY_SIZE);
+            
+            // Convert multiaddr to socket address
+            let peer_addr = self.multiaddr_to_socket_addr(&peer.addresses[0])?;
+            
+            let layer = OnionLayer {
+                key: derived_key.try_into().map_err(|_| 
+                    DhtError::InvalidMessage("Failed to create layer key".to_string()))?,
+                nonce,
+                peer_id: peer.peer_id.clone(),
+                peer_addr,
+            };
+            
+            layers.push(layer);
+            debug!("Created encryption layer {} for peer {}", index, peer.peer_id);
+        }
+        
+        let path_id = rng.next_u64();
+        let onion_path = OnionPath {
+            layers,
+            path_id,
+            created_at: Instant::now(),
+            destination: destination.to_string(),
+        };
+        
+        info!("Successfully built onion path {} with {} layers", path_id, hop_count);
+        Ok(onion_path)
+    }
+    
+    /// Select diverse peers for path construction
+    async fn select_diverse_path_peers(&self, candidates: &[CachedPeerInfo], count: usize) -> Result<Vec<CachedPeerInfo>, DhtError> {
+        let mut selected = Vec::with_capacity(count);
+        let mut available = candidates.to_vec();
+        
+        // Sort by quality score (latency and reliability)
+        available.sort_by(|a, b| {
+            let score_a = self.calculate_path_quality_score(a);
+            let score_b = self.calculate_path_quality_score(b);
+            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        
+        for _ in 0..count {
+            if available.is_empty() {
+                break;
+            }
+            
+            // Select the best remaining peer
+            let best_peer = available.remove(0);
+            
+            // Remove peers that are too close geographically
+            if let Some(location) = &best_peer.location {
+                available.retain(|peer| {
+                    if let Some(peer_location) = &peer.location {
+                        let distance = self.calculate_distance(location, peer_location);
+                        distance > GEOGRAPHIC_DIVERSITY_RADIUS_KM
+                    } else {
+                        true // Keep peers without location info
+                    }
+                });
+            }
+            
+            selected.push(best_peer);
+        }
+        
+        if selected.len() < count {
+            warn!("Could only select {} peers out of requested {}", selected.len(), count);
+        }
+        
+        Ok(selected)
+    }
+    
+    /// Calculate path quality score for peer selection
+    fn calculate_path_quality_score(&self, peer: &CachedPeerInfo) -> f64 {
+        let mut score = peer.reliability_score;
+        
+        // Factor in latency (lower is better)
+        if let Some(latency) = peer.latency_ms {
+            score *= (200.0 - latency.min(200.0)) / 200.0;
+        }
+        
+        // Factor in bandwidth (higher is better)
+        if let Some(bandwidth) = peer.bandwidth_mbps {
+            score *= (bandwidth.min(1000.0)) / 1000.0;
+        }
+        
+        score.clamp(0.0, 1.0)
+    }
+
+    /// Calculate geographic distance between two points in kilometers
+    fn calculate_distance(&self, point1: &Point, point2: &Point) -> f64 {
+        let lat1_rad = point1.x().to_radians();
+        let lat2_rad = point2.x().to_radians();
+        let delta_lat = (point2.x() - point1.x()).to_radians();
+        let delta_lon = (point2.y() - point1.y()).to_radians();
+
+        let a = (delta_lat / 2.0).sin().powi(2) +
+                lat1_rad.cos() * lat2_rad.cos() * (delta_lon / 2.0).sin().powi(2);
+        let c = 2.0 * a.sqrt().atan2((1.0 - a).sqrt());
+
+        6371.0 * c // Earth's radius in kilometers
     }
 }
 
