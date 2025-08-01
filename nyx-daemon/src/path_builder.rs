@@ -65,6 +65,71 @@ const MIN_RELIABILITY_THRESHOLD: f64 = 0.8;
 const MAX_LATENCY_THRESHOLD_MS: f64 = 500.0;
 const MIN_BANDWIDTH_THRESHOLD_MBPS: f64 = 10.0;
 
+/// Onion routing constants
+const ONION_LAYER_KEY_SIZE: usize = 32;
+const ONION_LAYER_NONCE_SIZE: usize = 12;
+
+/// A single encryption layer in the onion routing path
+#[derive(Debug, Clone)]
+pub struct OnionLayer {
+    /// Encryption key for this layer
+    pub key: [u8; ONION_LAYER_KEY_SIZE],
+    /// Nonce for AEAD encryption
+    pub nonce: [u8; ONION_LAYER_NONCE_SIZE],
+    /// Peer ID for this hop
+    pub peer_id: String,
+    /// Network address of the peer
+    pub peer_addr: SocketAddr,
+}
+
+/// Complete onion routing path with all encryption layers
+#[derive(Debug, Clone)]
+pub struct OnionPath {
+    /// All encryption layers from outermost to innermost
+    pub layers: Vec<OnionLayer>,
+    /// Path identifier for tracking
+    pub path_id: u64,
+    /// Creation timestamp
+    pub created_at: Instant,
+    /// Target destination
+    pub destination: String,
+}
+
+impl OnionPath {
+    /// Encrypt data through all layers (client-side encryption)
+    pub fn encrypt_onion(&self, plaintext: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
+        let mut data = plaintext.to_vec();
+        
+        // Encrypt from innermost to outermost layer (reverse order)
+        for layer in self.layers.iter().rev() {
+            let additional_data = layer.peer_id.as_bytes();
+            data = encrypt(&layer.key, &layer.nonce, &data, additional_data)?;
+        }
+        
+        Ok(data)
+    }
+    
+    /// Decrypt one layer (relay-side decryption)
+    pub fn decrypt_layer(&self, layer_index: usize, ciphertext: &[u8]) -> Result<Vec<u8>, anyhow::Error> {
+        if layer_index >= self.layers.len() {
+            return Err(anyhow::anyhow!("Invalid layer index"));
+        }
+        
+        let layer = &self.layers[layer_index];
+        let additional_data = layer.peer_id.as_bytes();
+        decrypt(&layer.key, &layer.nonce, ciphertext, additional_data)
+    }
+    
+    /// Get the next hop for routing
+    pub fn next_hop(&self, current_layer: usize) -> Option<&OnionLayer> {
+        if current_layer + 1 < self.layers.len() {
+            Some(&self.layers[current_layer + 1])
+        } else {
+            None
+        }
+    }
+}
+
 /// DHT peer discovery criteria
 #[derive(Debug, Clone)]
 pub enum DiscoveryCriteria {
