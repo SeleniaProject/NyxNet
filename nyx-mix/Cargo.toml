@@ -12,7 +12,7 @@ mobile = []
 
 [dependencies]
 rand = { version = "0.8", features = ["std"] }
-rand_distr = "0.4"
+rand_distr = "0.5"
 nyx-core = { path = "../nyx-core" }
 sha2 = "0.10"
 rayon = "1.9"

@@ -17,7 +17,7 @@ nyx-stream = { path = "../nyx-stream" }
 nyx-fec = { path = "../nyx-fec" }
 nyx-transport = { path = "../nyx-transport", default-features = false }
 nyx-mix = { path = "../nyx-mix" }
-rand_distr = "0.4"
+rand_distr = "0.5"
 thiserror = "1.0"
 tokio = { version = "1.37", features = ["full"] }
 rand = "0.8"
@@ -30,7 +30,7 @@ num-bigint = "0.4"
 prometheus = "0.13"
 proptest = "1.4"
 rand = "0.8"
-rand_distr = "0.4"
+rand_distr = "0.5"
 tokio-test = "0.4"
 futures = "0.3"
 tracing = "0.1"
