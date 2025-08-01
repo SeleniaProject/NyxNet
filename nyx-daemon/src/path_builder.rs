@@ -5,6 +5,8 @@
 //! This module integrates the Pure Rust DHT implementation for actual peer discovery
 //! and network-based path building, replacing all placeholder implementations with
 //! fully functional networking code that operates without C/C++ dependencies.
+//!
+//! NEW: Implements actual onion routing path construction with layered encryption.
 
 use crate::proto::{PathRequest, PathResponse};
 use crate::pure_rust_dht_tcp::{PureRustDht, PeerInfo as DhtPeerInfo, DhtError};
@@ -27,6 +29,12 @@ use tokio::sync::{RwLock, Mutex};
 use tokio::time::interval;
 use tracing::{debug, error, info, warn, instrument};
 use serde::{Serialize, Deserialize};
+
+// Onion routing imports
+use nyx_crypto::noise::HandshakeState;
+use nyx_crypto::aead::{encrypt, decrypt, generate_nonce};
+use nyx_crypto::kdf::hkdf_expand;
+use rand::{thread_rng, RngCore};
 
 /// Convert proto::Timestamp to SystemTime
 fn proto_timestamp_to_system_time(timestamp: crate::proto::Timestamp) -> SystemTime {
