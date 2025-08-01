@@ -87,6 +87,29 @@ pub struct PeerInfo {
 /// Node identifier (256-bit hash)
 pub type NodeId = [u8; 32];
 
+/// Storage metadata for authentication integration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StorageMetadata {
+    /// Trust level of the stored data
+    pub trust_level: f64,
+    /// Tags for categorization
+    pub tags: Vec<String>,
+    /// Access control list
+    pub access_permissions: Vec<String>,
+    /// Content type
+    pub content_type: String,
+    /// Encryption status
+    pub is_encrypted: bool,
+    /// Compression status
+    pub is_compressed: bool,
+    /// Priority level (0-10)
+    pub priority: u8,
+    /// Source peer ID
+    pub source_peer: Option<String>,
+    /// Replication factor
+    pub replication_factor: u8,
+}
+
 /// Persistent storage for DHT state and peer information
 #[derive(Debug, Clone)]
 pub struct PersistentDhtStorage {
@@ -248,8 +271,8 @@ impl TaskDhtHandle {
                 value: record.value.clone(),
                 timestamp: record.timestamp.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs(),
                 ttl: record.ttl.as_secs(),
-                signature: record.signature.clone(),  // signature は既に Vec<u8>
-                publisher: String::from_utf8_lossy(&record.publisher).to_string(),   // Vec<u8> から String へ
+                signature: record.signature.clone().unwrap_or_default(),  // signature は既に Vec<u8>
+                publisher: String::from_utf8_lossy(&record.publisher.as_ref().unwrap_or(&Vec::new())).to_string(),   // Vec<u8> から String へ
             }
         }).collect();
 
@@ -314,9 +337,11 @@ pub struct DhtRecord {
     /// Time-to-live for the record
     pub ttl: Duration,
     /// Signature of the record
-    pub signature: Vec<u8>,
+    pub signature: Option<Vec<u8>>,
     /// Public key of the record publisher
-    pub publisher: Vec<u8>,
+    pub publisher: Option<Vec<u8>>,
+    /// Additional metadata for authentication integration
+    pub metadata: Option<StorageMetadata>,
 }
 
 /// DHT message types for peer communication
@@ -1095,6 +1120,215 @@ impl PureRustDht {
         }
     }
     
+    /// Get all peer IDs for authentication system integration
+    pub async fn get_all_peer_ids(&self) -> Result<Vec<String>, DhtError> {
+        let routing_table = self.routing_table.read().await;
+        let mut peer_ids = Vec::new();
+        
+        for bucket in &routing_table.buckets {
+            for peer in &bucket.peers {
+                peer_ids.push(peer.peer_id.clone());
+            }
+        }
+        
+        Ok(peer_ids)
+    }
+    
+    /// Get local node ID for DHT integration
+    pub async fn get_local_node_id(&self) -> Result<NodeId, DhtError> {
+        // Generate deterministic node ID from our Ed25519 public key
+        let public_key = self.keypair.verifying_key();
+        let mut hasher = Sha256::new();
+        hasher.update(public_key.to_bytes());
+        let hash_result = hasher.finalize();
+        
+        let mut node_id = [0u8; 32];
+        node_id.copy_from_slice(&hash_result[..32]);
+        
+        Ok(node_id)
+    }
+    
+    /// Store data with enhanced error handling for authentication integration
+    pub async fn store_with_metadata(
+        &self,
+        key: &str,
+        value: Vec<u8>,
+        metadata: StorageMetadata,
+    ) -> Result<(), DhtError> {
+        let record = DhtRecord {
+            key: key.to_string(),
+            value,
+            timestamp: SystemTime::now(),
+            ttl: Duration::from_secs(3600), // Default 1 hour TTL
+            signature: None, // Authentication system will handle signatures
+            publisher: None, // Authentication system will handle publisher
+            metadata: Some(metadata),
+        };
+        
+        // Store locally
+        self.storage.write().await.insert(key.to_string(), record.clone());
+        
+        // Replicate to closest peers for persistence
+        self.replicate_to_peers(&record).await?;
+        
+        // Auto-save if needed
+        let last_save = *self.last_save_time.read().await;
+        if last_save.elapsed() > self.auto_save_interval {
+            self.save_to_storage().await?;
+            *self.last_save_time.write().await = Instant::now();
+        }
+        
+        Ok(())
+    }
+    
+    /// Enhanced get with metadata support
+    pub async fn get_with_metadata(
+        &self,
+        key: &str,
+    ) -> Result<Option<(Vec<u8>, StorageMetadata)>, DhtError> {
+        // Try local storage first
+        if let Some(record) = self.storage.read().await.get(key) {
+            let metadata = record.metadata.clone().unwrap_or_default();
+            return Ok(Some((record.value.clone(), metadata)));
+        }
+        
+        // Query remote peers
+        let closest_peers = self.find_closest_peers_for_key(key).await?;
+        
+        for peer in closest_peers {
+            if let Ok(Some((value, metadata))) = self.query_peer_for_key_with_metadata(&peer, key).await {
+                // Cache locally
+                let record = DhtRecord {
+                    key: key.to_string(),
+                    value: value.clone(),
+                    timestamp: SystemTime::now(),
+                    ttl: Duration::from_secs(3600), // Default 1 hour TTL
+                    signature: None,
+                    publisher: None,
+                    metadata: Some(metadata.clone()),
+                };
+                self.storage.write().await.insert(key.to_string(), record);
+                
+                return Ok(Some((value, metadata)));
+            }
+        }
+        
+        Ok(None)
+    }
+    
+    /// Replicate record to closest peers for fault tolerance
+    async fn replicate_to_peers(&self, record: &DhtRecord) -> Result<(), DhtError> {
+        let closest_peers = self.find_closest_peers_for_key(&record.key).await?;
+        let replication_factor = 3; // Replicate to 3 closest peers
+        
+        for peer in closest_peers.into_iter().take(replication_factor) {
+            if let Err(e) = self.send_store_request_to_peer(&peer, record).await {
+                warn!("Failed to replicate to peer {}: {}", peer.peer_id, e);
+                // Continue with other peers
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Send store request to specific peer
+    async fn send_store_request_to_peer(
+        &self,
+        peer: &PeerInfo,
+        record: &DhtRecord,
+    ) -> Result<(), DhtError> {
+        // Convert multiaddr to socket address
+        let socket_addr = self.multiaddr_to_socket_addr(&peer.address)?;
+        
+        let store_msg = DhtMessage::Store {
+            record: record.clone(),
+        };
+        
+        self.send_message_to_peer(socket_addr, store_msg).await?;
+        
+        Ok(())
+    }
+    
+    /// Find closest peers for a specific key
+    async fn find_closest_peers_for_key(&self, key: &str) -> Result<Vec<PeerInfo>, DhtError> {
+        let key_hash = Self::hash_key(key);
+        let routing_table = self.routing_table.read().await;
+        
+        let mut all_peers = Vec::new();
+        for bucket in &routing_table.buckets {
+            all_peers.extend(bucket.peers.clone());
+        }
+        
+        // Sort by XOR distance to key
+        all_peers.sort_by(|a, b| {
+            let dist_a = Self::xor_distance(&Self::hash_key(&a.peer_id), &key_hash);
+            let dist_b = Self::xor_distance(&Self::hash_key(&b.peer_id), &key_hash);
+            dist_a.cmp(&dist_b)
+        });
+        
+        // Return closest k peers
+        let k = 20; // Kademlia k parameter
+        Ok(all_peers.into_iter().take(k).collect())
+    }
+    
+    /// Query peer for key with metadata
+    async fn query_peer_for_key_with_metadata(
+        &self,
+        peer: &PeerInfo,
+        key: &str,
+    ) -> Result<Option<(Vec<u8>, StorageMetadata)>, DhtError> {
+        let socket_addr = self.multiaddr_to_socket_addr(&peer.address)?;
+        
+        let find_value_msg = DhtMessage::FindValue {
+            key: key.to_string(),
+            requester_id: hex::encode(self.get_local_node_id().await?),
+        };
+        
+        // Send message and wait for response
+        self.send_message_to_peer(socket_addr, find_value_msg).await?;
+        
+        // In a real implementation, this would wait for and parse the response
+        // For now, we'll return None to indicate no value found
+        Ok(None)
+    }
+    
+    /// Convert multiaddr to socket address
+    fn multiaddr_to_socket_addr(&self, multiaddr: &Multiaddr) -> Result<SocketAddr, DhtError> {
+        // Simple conversion - in production, this would handle various multiaddr formats
+        for component in multiaddr.iter() {
+            match component {
+                multiaddr::Protocol::Ip4(ip) => {
+                    for next_component in multiaddr.iter().skip(1) {
+                        if let multiaddr::Protocol::Tcp(port) = next_component {
+                            return Ok(SocketAddr::new(ip.into(), port));
+                        }
+                    }
+                }
+                multiaddr::Protocol::Ip6(ip) => {
+                    for next_component in multiaddr.iter().skip(1) {
+                        if let multiaddr::Protocol::Tcp(port) = next_component {
+                            return Ok(SocketAddr::new(ip.into(), port));
+                        }
+                    }
+                }
+                _ => continue,
+            }
+        }
+        
+        Err(DhtError::InvalidAddress("Could not convert multiaddr to socket addr".to_string()))
+    }
+    
+    /// Hash a key to node ID space
+    fn hash_key(key: &str) -> NodeId {
+        let mut hasher = Sha256::new();
+        hasher.update(key.as_bytes());
+        let hash_result = hasher.finalize();
+        
+        let mut node_id = [0u8; 32];
+        node_id.copy_from_slice(&hash_result[..32]);
+        node_id
+    }
+    
     /// Get routing table statistics
     pub async fn get_routing_stats(&self) -> RoutingStats {
         let routing_table = self.routing_table.read().await;
@@ -1138,39 +1372,44 @@ impl PureRustDht {
             value,
             timestamp,
             ttl,
-            signature: signature.to_bytes().to_vec(),
-            publisher: self.keypair.verifying_key().to_bytes().to_vec(),
+            signature: Some(signature.to_bytes().to_vec()),
+            publisher: Some(self.keypair.verifying_key().to_bytes().to_vec()),
+            metadata: None, // Default no metadata
         })
     }
     
     /// Verify a record's signature
     fn verify_record(record: &DhtRecord) -> Result<bool, DhtError> {
-        if record.publisher.len() != 32 {
+        let publisher = match &record.publisher {
+            Some(p) => p,
+            None => return Ok(false), // No publisher to verify
+        };
+        
+        if publisher.len() != 32 {
             return Ok(false);
         }
         
         // Convert Vec<u8> to [u8; 32] for public key
-        if record.publisher.len() != 32 {
-            return Err(DhtError::Crypto("Public key must be 32 bytes".to_string()));
-        }
         let mut pub_key_bytes = [0u8; 32];
-        pub_key_bytes.copy_from_slice(&record.publisher);
+        pub_key_bytes.copy_from_slice(publisher);
         let public_key = VerifyingKey::from_bytes(&pub_key_bytes)
             .map_err(|e| DhtError::Crypto(format!("Invalid public key: {}", e)))?;
         
         let record_content = format!("{}:{:?}:{:?}:{:?}", 
             record.key, record.value, record.timestamp, record.ttl);
         
-        if record.signature.len() != 64 {
+        let signature_bytes = match &record.signature {
+            Some(s) => s,
+            None => return Ok(false), // No signature to verify
+        };
+        
+        if signature_bytes.len() != 64 {
             return Ok(false);
         }
         
         // Convert Vec<u8> to [u8; 64] for signature
-        if record.signature.len() != 64 {
-            return Err(DhtError::Crypto("Signature must be 64 bytes".to_string()));
-        }
         let mut sig_bytes = [0u8; 64];
-        sig_bytes.copy_from_slice(&record.signature);
+        sig_bytes.copy_from_slice(signature_bytes);
         let signature = Signature::from_bytes(&sig_bytes);
         
         Ok(public_key.verify(record_content.as_bytes(), &signature).is_ok())
@@ -1180,16 +1419,6 @@ impl PureRustDht {
     fn calculate_node_id(public_key: &[u8]) -> NodeId {
         let mut hasher = Sha256::new();
         hasher.update(public_key);
-        let hash = hasher.finalize();
-        let mut node_id = [0u8; 32];
-        node_id.copy_from_slice(&hash);
-        node_id
-    }
-    
-    /// Hash a key to node ID
-    fn hash_key(key: &str) -> NodeId {
-        let mut hasher = Sha256::new();
-        hasher.update(key.as_bytes());
         let hash = hasher.finalize();
         let mut node_id = [0u8; 32];
         node_id.copy_from_slice(&hash);
@@ -1557,8 +1786,8 @@ impl PureRustDht {
                 timestamp: record.timestamp.duration_since(UNIX_EPOCH)
                     .unwrap_or_default().as_secs(),
                 ttl: record.ttl.as_secs(),
-                signature: record.signature.clone(),  // 既に Vec<u8>
-                publisher: String::from_utf8_lossy(&record.publisher).to_string(),   // Vec<u8> から String へ
+                signature: record.signature.clone().unwrap_or_default(),  // 既に Vec<u8>
+                publisher: String::from_utf8_lossy(&record.publisher.as_ref().unwrap_or(&Vec::new())).to_string(),   // Vec<u8> から String へ
             };
             serializable_records.push(serializable_record);
         }
@@ -1598,8 +1827,9 @@ impl PureRustDht {
                 value: serializable_record.value,
                 timestamp: UNIX_EPOCH + Duration::from_secs(serializable_record.timestamp),
                 ttl: Duration::from_secs(serializable_record.ttl),
-                signature: serializable_record.signature,  // 既に Vec<u8>
-                publisher: serializable_record.publisher.into_bytes(),   // String から Vec<u8> へ
+                signature: Some(serializable_record.signature),  // 既に Vec<u8>
+                publisher: Some(serializable_record.publisher.into_bytes()),   // String から Vec<u8> へ
+                metadata: None, // Legacy records have no metadata
             };
             
             // Check if record is still valid (not expired)

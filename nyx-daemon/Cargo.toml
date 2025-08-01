@@ -49,14 +49,21 @@ sysinfo = "0.30"
 toml = "0.8"
 config = "0.14"
 
-# DHT and P2P networking (Disabled to avoid C++ dependencies)
-# libp2p = { version = "0.53", features = ["kad", "mdns", "yamux", "tcp", "dns", "tokio", "macros"] }
+# DHT and P2P networking - libp2p DISABLED due to ring C/C++ dependency
+# libp2p = { version = "0.53", features = ["kad", "mdns", "yamux", "tcp", "dns", "tokio", "macros", "noise", "request-response"] }
 # libp2p-identity = "0.2"
 # libp2p-kad = "0.45"
 
-# Pure Rust cryptography to replace libp2p-noise
-chacha20poly1305 = { version = "0.10", features = ["alloc"] }
+# Pure Rust cryptography to replace libp2p (temporarily disabled due to ring dependency)
+# rustls = { version = "0.21", default-features = false, features = ["logging", "tls12"] }
+# tokio-rustls = "0.24"
 x25519-dalek = { version = "2.0", features = ["static_secrets"] }
+ed25519-dalek = { version = "2.0", features = ["rand_core"] }
+blake3 = "1.8"
+chacha20poly1305 = { version = "0.10", features = ["alloc"] }
+rand = "0.8"
+bincode = "1.3"
+hex = "0.4"
 multiaddr = "0.18"
 
 # Networking and async utilities
@@ -76,11 +83,9 @@ opentelemetry-semantic-conventions = "0.13"
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "matched-path", "original-uri", "tokio"] }
 
 # Crypto and security
-rand = "0.8"
-blake3 = "1.5"
+# blake3 = "1.5" # Moved to P2P section above
 # Pure Rust DHT dependencies (ed25519-dalek already present above)
 # Additional DHT support (hex already present above)
-hex = "0.4"
 
 # Pure Rust TLS for tonic (avoiding ring dependency) - DISABLED to avoid C++ deps
 # rustls = { version = "0.21", default-features = false, features = ["logging", "std", "tls12"] }
@@ -109,8 +114,6 @@ redb = { version = "2.1", features = ["logging"] }
 # Avoiding ALL ring dependencies including rustls, tokio-rustls
 # Using plain TCP/TLS with pure Rust crypto
 trust-dns-resolver = "0.23"
-bincode = "1.3"
-ed25519-dalek = { version = "2.0", features = ["rand_core"] }
 sha2 = "0.10"
 # Pure Rust TLS alternative (no ring dependency)
 native-tls = "0.2"  # Pure Rust TLS implementation

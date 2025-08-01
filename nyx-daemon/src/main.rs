@@ -42,6 +42,7 @@ mod event_system;
 mod layer_manager;
 mod pure_rust_dht;
 mod pure_rust_dht_tcp;
+mod pure_rust_p2p;
 
 #[cfg(test)]
 mod layer_recovery_test;
@@ -55,6 +56,8 @@ use config_manager::{ConfigManager};
 use health_monitor::{HealthMonitor};
 use event_system::EventSystem;
 use layer_manager::LayerManager;
+use pure_rust_dht_tcp::PureRustDht;
+use pure_rust_p2p::{PureRustP2P, P2PConfig, P2PNetworkEvent};
 use crate::proto::EventFilter;
 
 /// Convert SystemTime to proto::Timestamp
@@ -90,6 +93,10 @@ pub struct ControlService {
     health_monitor: Arc<HealthMonitor>,
     event_system: Arc<EventSystem>,
     layer_manager: Arc<RwLock<LayerManager>>,
+    
+    // P2P networking
+    pure_rust_dht: Arc<PureRustDht>,
+    pure_rust_p2p: Arc<PureRustP2P>,
     
     // Mix routing
     cmix_controller: Arc<Mutex<CmixController>>,
@@ -218,6 +225,73 @@ impl ControlService {
         layer_manager.start().await?;
         info!("All protocol layers started successfully");
         let layer_manager = Arc::new(RwLock::new(layer_manager));
+
+        // Initialize Pure Rust DHT
+        info!("Initializing Pure Rust DHT...");
+        let dht_addr = "127.0.0.1:3001".parse()
+            .map_err(|e| anyhow::anyhow!("Invalid DHT address: {}", e))?;
+        let bootstrap_addrs = vec![
+            "127.0.0.1:3002".parse().unwrap(),
+            "127.0.0.1:3003".parse().unwrap(),
+        ];
+        let mut dht_instance = PureRustDht::new(dht_addr, bootstrap_addrs)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create Pure Rust DHT: {}", e))?;
+        
+        // Start Pure Rust DHT
+        dht_instance.start().await
+            .map_err(|e| anyhow::anyhow!("Failed to start Pure Rust DHT: {}", e))?;
+        info!("Pure Rust DHT started on {}", dht_addr);
+        
+        let pure_rust_dht = Arc::new(dht_instance);
+
+        // Initialize Pure Rust P2P network
+        info!("Initializing Pure Rust P2P network...");
+        let p2p_config = P2PConfig {
+            listen_address: "127.0.0.1:3100".parse().unwrap(),
+            bootstrap_peers: vec![
+                "127.0.0.1:3101".parse().unwrap(),
+                "127.0.0.1:3102".parse().unwrap(),
+            ],
+            max_peers: 50,
+            enable_encryption: false, // Disabled for now to avoid TLS complexity
+            ..Default::default()
+        };
+        
+        let (pure_rust_p2p, mut p2p_events) = PureRustP2P::new(
+            Arc::clone(&pure_rust_dht),
+            p2p_config,
+        ).await.map_err(|e| anyhow::anyhow!("Failed to create Pure Rust P2P: {}", e))?;
+        
+        let pure_rust_p2p = Arc::new(pure_rust_p2p);
+        
+        // Start Pure Rust P2P network
+        pure_rust_p2p.start().await
+            .map_err(|e| anyhow::anyhow!("Failed to start Pure Rust P2P: {}", e))?;
+        info!("Pure Rust P2P network started with peer ID: {}", hex::encode(pure_rust_p2p.local_peer().peer_id));
+
+        // Handle P2P events
+        let event_tx_clone = event_tx.clone();
+        let pure_rust_p2p_clone = Arc::clone(&pure_rust_p2p);
+        tokio::spawn(async move {
+            while let Some(event) = p2p_events.recv().await {
+                match event {
+                    P2PNetworkEvent::PeerConnected { peer_id, address } => {
+                        info!("P2P peer connected: {} at {}", hex::encode(peer_id), address);
+                    }
+                    P2PNetworkEvent::PeerDiscovered { peer_info } => {
+                        info!("P2P peer discovered: {} at {}", hex::encode(peer_info.peer_id), peer_info.address);
+                    }
+                    P2PNetworkEvent::MessageReceived { from, message } => {
+                        debug!("P2P message received from {}: {:?}", hex::encode(from), message);
+                    }
+                    P2PNetworkEvent::NetworkError { error } => {
+                        tracing::warn!("P2P network error: {}", error);
+                    }
+                    _ => {}
+                }
+            }
+        });
         
         info!("Creating control service instance...");
         let service = Self {
@@ -233,6 +307,8 @@ impl ControlService {
             health_monitor,
             event_system,
             layer_manager,
+            pure_rust_dht,
+            pure_rust_p2p,
             cmix_controller,
             event_tx,
             config: Arc::new(RwLock::new(config)),
@@ -1067,6 +1143,8 @@ impl Clone for ControlService {
             health_monitor: Arc::clone(&self.health_monitor),
             event_system: Arc::clone(&self.event_system),
             layer_manager: Arc::clone(&self.layer_manager),
+            pure_rust_dht: Arc::clone(&self.pure_rust_dht),
+            pure_rust_p2p: Arc::clone(&self.pure_rust_p2p),
             cmix_controller: Arc::clone(&self.cmix_controller),
             event_tx: self.event_tx.clone(),
             config: Arc::clone(&self.config),
