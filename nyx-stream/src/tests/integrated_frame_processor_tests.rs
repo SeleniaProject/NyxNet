@@ -1,8 +1,6 @@
 use super::super::integrated_frame_processor::*;
 use super::super::frame_handler::{FrameHandler, StreamFrame};
-use super::super::flow_controller::FlowController;
 use tokio::time::{sleep, Duration};
-use std::collections::HashMap;
 use std::sync::Arc;
 
 #[tokio::test]
@@ -159,7 +157,7 @@ async fn test_concurrent_stream_processing() {
         ..IntegratedFrameConfig::default()
     };
     
-    let processor = Arc::new(IntegratedFrameProcessor::new(config).await);
+    let processor: Arc<IntegratedFrameProcessor> = Arc::new(IntegratedFrameProcessor::new(config).await);
     
     // Create multiple concurrent tasks
     let mut handles = Vec::new();

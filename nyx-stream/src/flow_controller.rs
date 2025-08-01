@@ -806,7 +806,7 @@ mod tests {
 
     #[test]
     fn test_flow_controller() {
-        let mut controller = FlowController::new(1000, 10000, 1000, 4096);
+        let mut controller = FlowController::new(1000);
         
         // Should be able to send initially
         assert!(controller.can_send(500));
@@ -823,7 +823,7 @@ mod tests {
 
     #[test]
     fn test_buffer_management() {
-        let mut controller = FlowController::new(1000, 10000, 1000, 100);
+        let mut controller = FlowController::new(1000);
         
         // Buffer some data
         let data = vec![1u8; 50];
@@ -842,7 +842,7 @@ mod tests {
 
     #[test]
     fn test_backpressure() {
-        let mut controller = FlowController::new(1000, 10000, 1000, 100);
+        let mut controller = FlowController::new(1000);
         controller.set_backpressure_threshold(0.5);
         
         // Should not have backpressure initially

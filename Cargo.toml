@@ -13,6 +13,7 @@ members = [
     "nyx-sdk",
     "nyx-sdk-wasm",
     "nyx-conformance",
+    "nyx-mobile-ffi", # Mobile platform FFI bindings
     "build-protoc",
 ]
 resolver = "2"

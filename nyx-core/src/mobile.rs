@@ -406,77 +406,78 @@ impl Clone for MobileStateMonitor {
     }
 }
 
-// iOS platform-specific functions (would be implemented via FFI)
+// iOS platform-specific functions (would use nyx-mobile-ffi in production)
 #[cfg(target_os = "ios")]
 async fn ios_get_battery_level() -> Result<u8, Box<dyn std::error::Error + Send + Sync>> {
-    // Placeholder - would call UIDevice.current.batteryLevel
+    // In production, this would call into nyx-mobile-ffi
+    // For now, return a simulated value
     Ok(80)
 }
 
 #[cfg(target_os = "ios")]
 async fn ios_is_charging() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    // Placeholder - would call UIDevice.current.batteryState
+    // In production, this would call into nyx-mobile-ffi
     Ok(false)
 }
 
 #[cfg(target_os = "ios")]
 async fn ios_is_screen_on() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    // Placeholder - would monitor UIApplication state notifications
+    // In production, this would call into nyx-mobile-ffi
     Ok(true)
 }
 
 #[cfg(target_os = "ios")]
 async fn ios_is_low_power_mode() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    // Placeholder - would call ProcessInfo.processInfo.isLowPowerModeEnabled
+    // In production, this would call into nyx-mobile-ffi
     Ok(false)
 }
 
 #[cfg(target_os = "ios")]
 async fn ios_get_app_state() -> Result<AppState, Box<dyn std::error::Error + Send + Sync>> {
-    // Placeholder - would monitor UIApplication.shared.applicationState
+    // In production, this would call into nyx-mobile-ffi
     Ok(AppState::Active)
 }
 
 #[cfg(target_os = "ios")]
 async fn ios_get_network_state() -> Result<NetworkState, Box<dyn std::error::Error + Send + Sync>> {
-    // Placeholder - would use Network framework or Reachability
+    // In production, this would call into nyx-mobile-ffi
     Ok(NetworkState::WiFi)
 }
 
-// Android platform-specific functions (would be implemented via JNI)
+// Android platform-specific functions (would use nyx-mobile-ffi in production)
 #[cfg(target_os = "android")]
 async fn android_get_battery_level() -> Result<u8, Box<dyn std::error::Error + Send + Sync>> {
-    // Placeholder - would call BatteryManager APIs
+    // In production, this would call into nyx-mobile-ffi
     Ok(75)
 }
 
 #[cfg(target_os = "android")]
 async fn android_is_charging() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    // Placeholder - would check BatteryManager.BATTERY_STATUS_CHARGING
+    // In production, this would call into nyx-mobile-ffi
     Ok(false)
 }
 
 #[cfg(target_os = "android")]
 async fn android_is_screen_on() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    // Placeholder - would use PowerManager.isInteractive()
+    // In production, this would call into nyx-mobile-ffi
     Ok(true)
 }
 
 #[cfg(target_os = "android")]
 async fn android_is_power_save_mode() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    // Placeholder - would call PowerManager.isPowerSaveMode()
+    // In production, this would call into nyx-mobile-ffi
     Ok(false)
 }
 
 #[cfg(target_os = "android")]
 async fn android_get_app_state() -> Result<AppState, Box<dyn std::error::Error + Send + Sync>> {
-    // Placeholder - would monitor ActivityManager lifecycle
+    // In production, this would call into nyx-mobile-ffi
     Ok(AppState::Active)
 }
 
 #[cfg(target_os = "android")]
 async fn android_get_network_state() -> Result<NetworkState, Box<dyn std::error::Error + Send + Sync>> {
-    // Placeholder - would use ConnectivityManager
+    // In production, this would call into nyx-mobile-ffi
     Ok(NetworkState::WiFi)
 }
 
