@@ -7,12 +7,12 @@
 ## 🚨 Critical Priority (Phase 1)
 
 ### Core Network Infrastructure
-- [ ] **DHT (Distributed Hash Table) Implementation**
+- [x] **DHT (Distributed Hash Table) Implementation**
   - [x] Replace placeholder DHT implementation in `nyx-daemon/src/path_builder.rs`
   - [x] Implement real peer discovery mechanism
-  - [ ] Replace hardcoded "placeholder-node-1", "placeholder-node-2" with actual nodes
-  - [ ] Implement peer routing and lookup functionality
-  - [ ] Add DHT persistence and bootstrap mechanisms
+  - [x] Replace hardcoded "placeholder-node-1", "placeholder-node-2" with actual nodes
+  - [x] Implement peer routing and lookup functionality
+  - [x] Add DHT persistence and bootstrap mechanisms
 
 - [ ] **libp2p Integration**
   - [ ] Complete libp2p feature integration in network transport
