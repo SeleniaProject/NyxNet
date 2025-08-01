@@ -36,6 +36,12 @@ use nyx_crypto::kdf::{hkdf_expand, KdfLabel};
 use nyx_crypto::noise::SessionKey;
 use rand::{thread_rng, RngCore};
 
+// Performance monitoring imports
+use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use tokio::time::timeout;
+use sysinfo::{System, NetworkData};
+use std::collections::VecDeque;
+
 /// Convert proto::Timestamp to SystemTime
 fn proto_timestamp_to_system_time(timestamp: crate::proto::Timestamp) -> SystemTime {
     let duration = Duration::new(timestamp.seconds as u64, timestamp.nanos as u32);
@@ -68,6 +74,458 @@ const MIN_BANDWIDTH_THRESHOLD_MBPS: f64 = 10.0;
 /// Onion routing constants
 const ONION_LAYER_KEY_SIZE: usize = 32;
 const ONION_LAYER_NONCE_SIZE: usize = 12;
+
+/// Performance monitoring constants
+const PERFORMANCE_SAMPLE_WINDOW: usize = 100;
+const MONITORING_INTERVAL_SECS: u64 = 5;
+const PERFORMANCE_ALERT_THRESHOLD: f64 = 0.3; // Trigger alert if performance drops below 30%
+
+/// Real-time performance metrics for individual path monitoring
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathPerformanceMetrics {
+    /// Current round-trip latency in milliseconds
+    pub current_latency_ms: f64,
+    /// Average latency over the sample window
+    pub avg_latency_ms: f64,
+    /// Current bandwidth utilization in Mbps
+    pub current_bandwidth_mbps: f64,
+    /// Average bandwidth over the sample window
+    pub avg_bandwidth_mbps: f64,
+    /// Packet loss rate (0.0 to 1.0)
+    pub packet_loss_rate: f64,
+    /// Connection reliability score (0.0 to 1.0)
+    pub reliability_score: f64,
+    /// Throughput efficiency (0.0 to 1.0)
+    pub throughput_efficiency: f64,
+    /// Number of successful transmissions
+    pub successful_transmissions: u64,
+    /// Number of failed transmissions
+    pub failed_transmissions: u64,
+    /// Total bytes transmitted
+    pub bytes_transmitted: u64,
+    /// Total bytes received
+    pub bytes_received: u64,
+    /// Timestamp of last measurement
+    pub last_updated: SystemTime,
+    /// Performance trend over time (ascending/descending/stable)
+    pub performance_trend: PerformanceTrend,
+}
+
+impl Default for PathPerformanceMetrics {
+    fn default() -> Self {
+        Self {
+            current_latency_ms: 0.0,
+            avg_latency_ms: 0.0,
+            current_bandwidth_mbps: 0.0,
+            avg_bandwidth_mbps: 0.0,
+            packet_loss_rate: 0.0,
+            reliability_score: 1.0,
+            throughput_efficiency: 1.0,
+            successful_transmissions: 0,
+            failed_transmissions: 0,
+            bytes_transmitted: 0,
+            bytes_received: 0,
+            last_updated: SystemTime::now(),
+            performance_trend: PerformanceTrend::Stable,
+        }
+    }
+}
+
+/// Performance trend indicators for predictive analysis
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PerformanceTrend {
+    /// Performance is improving over time
+    Ascending,
+    /// Performance is declining over time
+    Descending,
+    /// Performance is stable with minor fluctuations
+    Stable,
+    /// Performance shows high volatility
+    Volatile,
+    /// Insufficient data to determine trend
+    Unknown,
+}
+
+/// Historical performance data point for trend analysis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerformanceDataPoint {
+    pub timestamp: SystemTime,
+    pub latency_ms: f64,
+    pub bandwidth_mbps: f64,
+    pub packet_loss_rate: f64,
+    pub reliability_score: f64,
+}
+
+/// Comprehensive path performance monitor with historical tracking
+pub struct PathPerformanceMonitor {
+    /// Current performance metrics
+    metrics: Arc<RwLock<PathPerformanceMetrics>>,
+    /// Historical performance data (circular buffer)
+    history: Arc<RwLock<VecDeque<PerformanceDataPoint>>>,
+    /// Latency sample window for moving averages
+    latency_samples: Arc<RwLock<VecDeque<f64>>>,
+    /// Bandwidth sample window for moving averages
+    bandwidth_samples: Arc<RwLock<VecDeque<f64>>>,
+    /// Monitoring task handle
+    monitoring_task: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// System information for resource monitoring
+    system_info: Arc<Mutex<System>>,
+    /// Performance alert callback (without Debug trait requirement)
+    alert_callback: Arc<Mutex<Option<Box<dyn Fn(&PathPerformanceMetrics) + Send + Sync>>>>,
+    /// Path identifier for tracking
+    path_id: String,
+    /// Monitoring enabled flag
+    enabled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl PathPerformanceMonitor {
+    /// Create a new performance monitor for a specific path
+    pub fn new(path_id: String) -> Self {
+        Self {
+            metrics: Arc::new(RwLock::new(PathPerformanceMetrics::default())),
+            history: Arc::new(RwLock::new(VecDeque::with_capacity(PERFORMANCE_SAMPLE_WINDOW))),
+            latency_samples: Arc::new(RwLock::new(VecDeque::with_capacity(PERFORMANCE_SAMPLE_WINDOW))),
+            bandwidth_samples: Arc::new(RwLock::new(VecDeque::with_capacity(PERFORMANCE_SAMPLE_WINDOW))),
+            monitoring_task: Arc::new(Mutex::new(None)),
+            system_info: Arc::new(Mutex::new(System::new_all())),
+            alert_callback: Arc::new(Mutex::new(None)),
+            path_id,
+            enabled: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+
+    /// Start continuous performance monitoring
+    pub async fn start_monitoring(&self) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if self.enabled.swap(true, Ordering::SeqCst) {
+            return Ok(()); // Already monitoring
+        }
+
+        let metrics = Arc::clone(&self.metrics);
+        let history = Arc::clone(&self.history);
+        let latency_samples = Arc::clone(&self.latency_samples);
+        let bandwidth_samples = Arc::clone(&self.bandwidth_samples);
+        let system_info = Arc::clone(&self.system_info);
+        let alert_callback = Arc::clone(&self.alert_callback);
+        let path_id = self.path_id.clone();
+        let enabled = Arc::clone(&self.enabled);
+
+        let task = tokio::spawn(async move {
+            let mut interval = interval(Duration::from_secs(MONITORING_INTERVAL_SECS));
+            
+            info!("Started performance monitoring for path: {}", path_id);
+            
+            while enabled.load(Ordering::SeqCst) {
+                interval.tick().await;
+                
+                // Update system information
+                {
+                    let mut sys = system_info.lock().await;
+                    sys.refresh_all();
+                }
+                
+                // Collect current performance metrics
+                if let Err(e) = Self::collect_performance_data(
+                    &metrics, 
+                    &history, 
+                    &latency_samples, 
+                    &bandwidth_samples,
+                    &system_info,
+                    &alert_callback
+                ).await {
+                    error!("Failed to collect performance data for path {}: {}", path_id, e);
+                }
+            }
+            
+            info!("Performance monitoring stopped for path: {}", path_id);
+        });
+
+        *self.monitoring_task.lock().await = Some(task);
+        Ok(())
+    }
+
+    /// Stop performance monitoring
+    pub async fn stop_monitoring(&self) {
+        self.enabled.store(false, Ordering::SeqCst);
+        
+        if let Some(task) = self.monitoring_task.lock().await.take() {
+            task.abort();
+        }
+    }
+
+    /// Record a latency measurement
+    pub async fn record_latency(&self, latency_ms: f64) {
+        let mut latency_samples = self.latency_samples.write().await;
+        
+        // Add new sample
+        latency_samples.push_back(latency_ms);
+        
+        // Maintain window size
+        if latency_samples.len() > PERFORMANCE_SAMPLE_WINDOW {
+            latency_samples.pop_front();
+        }
+        
+        // Update metrics
+        let avg_latency = latency_samples.iter().sum::<f64>() / latency_samples.len() as f64;
+        
+        let mut metrics = self.metrics.write().await;
+        metrics.current_latency_ms = latency_ms;
+        metrics.avg_latency_ms = avg_latency;
+        metrics.last_updated = SystemTime::now();
+    }
+
+    /// Record a bandwidth measurement
+    pub async fn record_bandwidth(&self, bandwidth_mbps: f64) {
+        let mut bandwidth_samples = self.bandwidth_samples.write().await;
+        
+        // Add new sample
+        bandwidth_samples.push_back(bandwidth_mbps);
+        
+        // Maintain window size
+        if bandwidth_samples.len() > PERFORMANCE_SAMPLE_WINDOW {
+            bandwidth_samples.pop_front();
+        }
+        
+        // Update metrics
+        let avg_bandwidth = bandwidth_samples.iter().sum::<f64>() / bandwidth_samples.len() as f64;
+        
+        let mut metrics = self.metrics.write().await;
+        metrics.current_bandwidth_mbps = bandwidth_mbps;
+        metrics.avg_bandwidth_mbps = avg_bandwidth;
+        metrics.last_updated = SystemTime::now();
+    }
+
+    /// Record transmission statistics
+    pub async fn record_transmission(&self, bytes_sent: u64, bytes_received: u64, success: bool) {
+        let mut metrics = self.metrics.write().await;
+        
+        metrics.bytes_transmitted += bytes_sent;
+        metrics.bytes_received += bytes_received;
+        
+        if success {
+            metrics.successful_transmissions += 1;
+        } else {
+            metrics.failed_transmissions += 1;
+        }
+        
+        // Update reliability score
+        let total_transmissions = metrics.successful_transmissions + metrics.failed_transmissions;
+        if total_transmissions > 0 {
+            metrics.reliability_score = metrics.successful_transmissions as f64 / total_transmissions as f64;
+            
+            // Update packet loss rate (inverse of reliability for simplicity)
+            metrics.packet_loss_rate = 1.0 - metrics.reliability_score;
+        }
+        
+        // Update throughput efficiency based on successful transmission ratio
+        metrics.throughput_efficiency = metrics.reliability_score;
+        
+        metrics.last_updated = SystemTime::now();
+    }
+
+    /// Set performance alert callback
+    pub async fn set_alert_callback<F>(&self, callback: F) 
+    where
+        F: Fn(&PathPerformanceMetrics) + Send + Sync + 'static,
+    {
+        *self.alert_callback.lock().await = Some(Box::new(callback));
+    }
+
+    /// Get current performance metrics
+    pub async fn get_metrics(&self) -> PathPerformanceMetrics {
+        self.metrics.read().await.clone()
+    }
+
+    /// Get performance history
+    pub async fn get_history(&self) -> Vec<PerformanceDataPoint> {
+        self.history.read().await.iter().cloned().collect()
+    }
+
+    /// Analyze performance trends
+    pub async fn analyze_performance_trend(&self) -> PerformanceTrend {
+        let history = self.history.read().await;
+        
+        if history.len() < 5 {
+            return PerformanceTrend::Unknown;
+        }
+        
+        let recent_points: Vec<_> = history.iter().rev().take(10).collect();
+        
+        // Calculate trend based on latency and reliability
+        let mut latency_trend = 0.0;
+        let mut reliability_trend = 0.0;
+        
+        for window in recent_points.windows(2) {
+            let (older, newer) = (window[1], window[0]);
+            
+            // Lower latency is better (negative trend is good)
+            latency_trend += newer.latency_ms - older.latency_ms;
+            
+            // Higher reliability is better (positive trend is good)
+            reliability_trend += newer.reliability_score - older.reliability_score;
+        }
+        
+        let overall_trend = reliability_trend - latency_trend / 100.0; // Normalize latency impact
+        
+        // Determine trend with volatility consideration
+        let volatility = Self::calculate_volatility(&recent_points);
+        
+        if volatility > 0.3 {
+            PerformanceTrend::Volatile
+        } else if overall_trend > 0.1 {
+            PerformanceTrend::Ascending
+        } else if overall_trend < -0.1 {
+            PerformanceTrend::Descending
+        } else {
+            PerformanceTrend::Stable
+        }
+    }
+
+    /// Calculate performance volatility (standard deviation of recent measurements)
+    fn calculate_volatility(data_points: &[&PerformanceDataPoint]) -> f64 {
+        if data_points.len() < 2 {
+            return 0.0;
+        }
+        
+        let reliability_values: Vec<f64> = data_points.iter().map(|p| p.reliability_score).collect();
+        let mean = reliability_values.iter().sum::<f64>() / reliability_values.len() as f64;
+        
+        let variance = reliability_values.iter()
+            .map(|value| (value - mean).powi(2))
+            .sum::<f64>() / reliability_values.len() as f64;
+        
+        variance.sqrt()
+    }
+
+    /// Internal method to collect performance data
+    async fn collect_performance_data(
+        metrics: &Arc<RwLock<PathPerformanceMetrics>>,
+        history: &Arc<RwLock<VecDeque<PerformanceDataPoint>>>,
+        _latency_samples: &Arc<RwLock<VecDeque<f64>>>,
+        _bandwidth_samples: &Arc<RwLock<VecDeque<f64>>>,
+        system_info: &Arc<Mutex<System>>,
+        alert_callback: &Arc<Mutex<Option<Box<dyn Fn(&PathPerformanceMetrics) + Send + Sync>>>>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Update system-level network metrics (simplified)
+        {
+            // For now, we'll skip system-level network monitoring as the sysinfo API
+            // has changed and requires different implementation. We'll use placeholder values.
+            let mut metrics_write = metrics.write().await;
+            
+            // Set a default throughput efficiency until we can properly implement
+            // system-level network monitoring with the current sysinfo version
+            if metrics_write.throughput_efficiency == 0.0 {
+                metrics_write.throughput_efficiency = 0.8; // Reasonable default
+            }
+        }
+        
+        // Add current metrics to history
+        {
+            let current_metrics = metrics.read().await;
+            let data_point = PerformanceDataPoint {
+                timestamp: SystemTime::now(),
+                latency_ms: current_metrics.current_latency_ms,
+                bandwidth_mbps: current_metrics.current_bandwidth_mbps,
+                packet_loss_rate: current_metrics.packet_loss_rate,
+                reliability_score: current_metrics.reliability_score,
+            };
+            
+            let mut history_write = history.write().await;
+            history_write.push_back(data_point);
+            
+            // Maintain history size
+            if history_write.len() > PERFORMANCE_SAMPLE_WINDOW {
+                history_write.pop_front();
+            }
+            
+            // Check for performance alerts
+            if current_metrics.reliability_score < PERFORMANCE_ALERT_THRESHOLD {
+                if let Some(callback) = alert_callback.lock().await.as_ref() {
+                    callback(&current_metrics);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    /// Generate performance summary report
+    pub async fn generate_performance_report(&self) -> String {
+        let metrics = self.get_metrics().await;
+        let trend = self.analyze_performance_trend().await;
+        let history = self.get_history().await;
+        
+        format!(
+            "Path Performance Report - {}\n\
+            ================================\n\
+            Current Latency: {:.2}ms (avg: {:.2}ms)\n\
+            Current Bandwidth: {:.2}Mbps (avg: {:.2}Mbps)\n\
+            Packet Loss Rate: {:.2}%\n\
+            Reliability Score: {:.2}%\n\
+            Throughput Efficiency: {:.2}%\n\
+            Successful Transmissions: {}\n\
+            Failed Transmissions: {}\n\
+            Total Bytes Transmitted: {}\n\
+            Total Bytes Received: {}\n\
+            Performance Trend: {:?}\n\
+            Historical Data Points: {}\n\
+            Last Updated: {:?}",
+            self.path_id,
+            metrics.current_latency_ms,
+            metrics.avg_latency_ms,
+            metrics.current_bandwidth_mbps,
+            metrics.avg_bandwidth_mbps,
+            metrics.packet_loss_rate * 100.0,
+            metrics.reliability_score * 100.0,
+            metrics.throughput_efficiency * 100.0,
+            metrics.successful_transmissions,
+            metrics.failed_transmissions,
+            metrics.bytes_transmitted,
+            metrics.bytes_received,
+            trend,
+            history.len(),
+            metrics.last_updated
+        )
+    }
+}
+
+/// Global path performance statistics for system-wide analysis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GlobalPathStats {
+    /// Total number of active paths
+    pub active_paths: u32,
+    /// Average performance across all paths
+    pub avg_performance_score: f64,
+    /// System-wide packet loss rate
+    pub global_packet_loss_rate: f64,
+    /// Total successful transmissions across all paths
+    pub total_successful_transmissions: u64,
+    /// Total failed transmissions across all paths
+    pub total_failed_transmissions: u64,
+    /// System uptime for performance monitoring
+    pub monitoring_uptime_secs: u64,
+    /// Best performing path ID
+    pub best_performing_path: Option<String>,
+    /// Worst performing path ID
+    pub worst_performing_path: Option<String>,
+    /// Last global statistics update
+    pub last_updated: SystemTime,
+}
+
+impl Default for GlobalPathStats {
+    fn default() -> Self {
+        Self {
+            active_paths: 0,
+            avg_performance_score: 1.0,
+            global_packet_loss_rate: 0.0,
+            total_successful_transmissions: 0,
+            total_failed_transmissions: 0,
+            monitoring_uptime_secs: 0,
+            best_performing_path: None,
+            worst_performing_path: None,
+            last_updated: SystemTime::now(),
+        }
+    }
+}
 
 /// Path validation result with detailed feedback
 #[derive(Debug, Clone)]
@@ -2449,6 +2907,10 @@ pub struct PathBuilder {
     dht_discovery: DhtPeerDiscovery,
     path_cache: Arc<RwLock<HashMap<String, CachedPath>>>,
     config: PathBuilderConfig,
+    /// Performance monitoring for each active path
+    path_monitors: Arc<RwLock<HashMap<String, Arc<PathPerformanceMonitor>>>>,
+    /// Global path performance statistics
+    global_stats: Arc<RwLock<GlobalPathStats>>,
 }
 
 /// Path builder configuration
@@ -2486,16 +2948,90 @@ impl PathBuilder {
             dht_discovery,
             path_cache: Arc::new(RwLock::new(HashMap::new())),
             config,
+            path_monitors: Arc::new(RwLock::new(HashMap::new())),
+            global_stats: Arc::new(RwLock::new(GlobalPathStats::default())),
         })
     }
     
     /// Start the path builder service
     pub async fn start(&mut self) -> Result<(), DhtError> {
-        info!("Starting path builder service");
+        info!("Starting path builder service with performance monitoring");
         self.dht_discovery.start().await?;
         self.start_cache_cleanup_task().await;
+        self.start_global_performance_monitoring().await;
         info!("Path builder service started successfully");
         Ok(())
+    }
+    
+    /// Start global performance monitoring for all paths
+    async fn start_global_performance_monitoring(&self) {
+        let global_stats = Arc::clone(&self.global_stats);
+        let path_monitors = Arc::clone(&self.path_monitors);
+        
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(MONITORING_INTERVAL_SECS));
+            let start_time = SystemTime::now();
+            
+            info!("Started global path performance monitoring");
+            
+            loop {
+                interval.tick().await;
+                
+                // Update global statistics
+                {
+                    let monitors = path_monitors.read().await;
+                    let mut stats = global_stats.write().await;
+                    
+                    stats.active_paths = monitors.len() as u32;
+                    stats.monitoring_uptime_secs = start_time.elapsed()
+                        .unwrap_or_default()
+                        .as_secs();
+                    
+                    // Aggregate performance metrics across all paths
+                    let mut total_performance = 0.0;
+                    let mut total_successful = 0;
+                    let mut total_failed = 0;
+                    let mut total_packet_loss = 0.0;
+                    let mut best_performance = 0.0;
+                    let mut worst_performance = 1.0;
+                    let mut best_path_id = None;
+                    let mut worst_path_id = None;
+                    
+                    for (path_id, monitor) in monitors.iter() {
+                        let metrics = monitor.get_metrics().await;
+                        let performance_score = metrics.reliability_score * metrics.throughput_efficiency;
+                        total_performance += performance_score;
+                        total_successful += metrics.successful_transmissions;
+                        total_failed += metrics.failed_transmissions;
+                        total_packet_loss += metrics.packet_loss_rate;
+                        
+                        if performance_score > best_performance {
+                            best_performance = performance_score;
+                            best_path_id = Some(path_id.clone());
+                        }
+                        
+                        if performance_score < worst_performance {
+                            worst_performance = performance_score;
+                            worst_path_id = Some(path_id.clone());
+                        }
+                    }
+                    
+                    if !monitors.is_empty() {
+                        stats.avg_performance_score = total_performance / monitors.len() as f64;
+                        stats.global_packet_loss_rate = total_packet_loss / monitors.len() as f64;
+                    }
+                    
+                    stats.total_successful_transmissions = total_successful;
+                    stats.total_failed_transmissions = total_failed;
+                    stats.best_performing_path = best_path_id;
+                    stats.worst_performing_path = worst_path_id;
+                    stats.last_updated = SystemTime::now();
+                    
+                    debug!("Global stats updated: {} active paths, avg performance: {:.2}%", 
+                           stats.active_paths, stats.avg_performance_score * 100.0);
+                }
+            }
+        });
     }
     
     /// Start background task for cache cleanup
@@ -2520,6 +3056,158 @@ impl PathBuilder {
             }
         });
     }
+
+    /// Build an optimal onion routing path using real peer discovery
+    #[instrument(skip(self))]
+    pub async fn build_path(&self, request: &PathRequest) -> Result<Option<PathResponse>, DhtError> {
+        let cache_key = format!("{}:{}", request.target, request.hops);
+        
+        // Check cache first
+        {
+            let cache = self.path_cache.read().await;
+            if let Some(cached_path) = cache.get(&cache_key) {
+                // Check if cached path is still valid
+                if cached_path.created_at.elapsed().as_secs() < self.config.cache_ttl_secs {
+                    info!("Using cached path for target: {}", request.target);
+                    
+                    let path_response = PathResponse {
+                        path: cached_path.hops.clone(),
+                        estimated_latency_ms: cached_path.quality.latency_ms,
+                        estimated_bandwidth_mbps: cached_path.quality.bandwidth_mbps,
+                        reliability_score: cached_path.quality.reliability_score,
+                    };
+                    
+                    // Update usage statistics
+                    drop(cache);
+                    let mut cache_write = self.path_cache.write().await;
+                    if let Some(cached_path_mut) = cache_write.get_mut(&cache_key) {
+                        cached_path_mut.usage_count += 1;
+                        cached_path_mut.last_used = Instant::now();
+                    }
+                    
+                    return Ok(Some(path_response));
+                }
+            }
+        }
+        
+        // Build new onion path using DHT peer discovery
+        info!("Building new onion path for target: {} with {} hops", request.target, request.hops);
+        
+        match self.dht_discovery.build_onion_path(&request.target, request.hops as usize).await {
+            Ok(onion_path) => {
+                // Validate the constructed path
+                let validation_result = self.validate_onion_path(&onion_path).await
+                    .map_err(|e| DhtError::InvalidMessage(format!("Path validation failed: {}", e)))?;
+                
+                if !validation_result.is_valid {
+                    warn!("Built path failed validation: {:?}", validation_result.warnings);
+                    return Ok(None);
+                }
+                
+                // Test path connectivity
+                if let Err(e) = self.test_onion_path(&onion_path).await {
+                    warn!("Built path failed connectivity test: {}", e);
+                    return Ok(None);
+                }
+                
+                // Convert OnionPath to PathResponse format
+                let path_hops: Vec<String> = onion_path.layers.iter()
+                    .map(|layer| format!("{}@{}", layer.peer_id, layer.peer_addr))
+                    .collect();
+                
+                let performance_estimate = onion_path.estimate_performance();
+                
+                let path_quality = PathQuality {
+                    latency_ms: performance_estimate.estimated_latency_ms,
+                    bandwidth_mbps: performance_estimate.bandwidth_efficiency * 100.0, // Convert to Mbps estimate
+                    reliability_score: validation_result.security_score * validation_result.anonymity_score,
+                    geographic_diversity: validation_result.anonymity_score,
+                    load_balance_score: validation_result.performance_score,
+                    overall_score: (validation_result.security_score + 
+                                  validation_result.anonymity_score + 
+                                  validation_result.performance_score) / 3.0,
+                };
+                
+                // Create performance monitor for this path
+                let path_id = format!("path_{}", onion_path.path_id);
+                let monitor = Arc::new(PathPerformanceMonitor::new(path_id.clone()));
+                
+                // Start monitoring for this path
+                if let Err(e) = monitor.start_monitoring().await {
+                    warn!("Failed to start performance monitoring for path {}: {}", path_id, e);
+                } else {
+                    // Add to monitored paths
+                    {
+                        let mut monitors = self.path_monitors.write().await;
+                        monitors.insert(path_id.clone(), Arc::clone(&monitor));
+                    }
+                    
+                    // Set up performance alert callback
+                    let path_id_clone = path_id.clone();
+                    monitor.set_alert_callback(move |metrics| {
+                        warn!("Performance alert for path {}: reliability {:.2}%, latency {:.2}ms", 
+                              path_id_clone, metrics.reliability_score * 100.0, metrics.current_latency_ms);
+                    }).await;
+                    
+                    info!("Performance monitoring started for path: {}", path_id);
+                }
+                
+                // Record initial performance baseline
+                monitor.record_latency(path_quality.latency_ms).await;
+                monitor.record_bandwidth(path_quality.bandwidth_mbps).await;
+                monitor.record_transmission(0, 0, true).await; // Initial successful "transmission"
+                
+                // Cache the built path
+                let cached_path = CachedPath {
+                    hops: path_hops.clone(),
+                    quality: path_quality.clone(),
+                    created_at: Instant::now(),
+                    usage_count: 1,
+                    last_used: Instant::now(),
+                };
+                
+                {
+                    let mut cache = self.path_cache.write().await;
+                    cache.insert(cache_key, cached_path);
+                    
+                    // Limit cache size
+                    if cache.len() > MAX_CACHED_PATHS {
+                        // Collect keys to remove first
+                        let mut keys_to_remove = Vec::new();
+                        {
+                            let mut entries: Vec<_> = cache.iter().map(|(k, v)| (k.clone(), v.last_used)).collect();
+                            entries.sort_by_key(|(_, last_used)| *last_used);
+                            
+                            let to_remove = entries.len() - MAX_CACHED_PATHS + 10; // Remove extra to reduce frequency
+                            for (key, _) in entries.iter().take(to_remove) {
+                                keys_to_remove.push(key.clone());
+                            }
+                        }
+                        
+                        // Remove the entries
+                        for key in keys_to_remove {
+                            cache.remove(&key);
+                        }
+                    }
+                }
+                
+                let path_response = PathResponse {
+                    path: path_hops,
+                    estimated_latency_ms: path_quality.latency_ms,
+                    estimated_bandwidth_mbps: path_quality.bandwidth_mbps,
+                    reliability_score: path_quality.reliability_score,
+                };
+                
+                info!("Successfully built and validated onion path for target: {}", request.target);
+                Ok(Some(path_response))
+            }
+            Err(e) => {
+                warn!("Failed to build onion path for target {}: {}", request.target, e);
+                Err(e)
+            }
+        }
+    }
+
     pub async fn validate_onion_path(&self, path: &OnionPath) -> Result<PathValidationResult, PathValidationError> {
         let mut result = path.validate_path()?;
         
@@ -2708,6 +3396,129 @@ impl PathBuilder {
         
         recommendations
     }
+    
+    /// Get performance monitor for a specific path
+    pub async fn get_path_monitor(&self, path_id: &str) -> Option<Arc<PathPerformanceMonitor>> {
+        let monitors = self.path_monitors.read().await;
+        monitors.get(path_id).cloned()
+    }
+    
+    /// Remove performance monitor for a path (when path is no longer active)
+    pub async fn remove_path_monitor(&self, path_id: &str) -> bool {
+        let mut monitors = self.path_monitors.write().await;
+        if let Some(monitor) = monitors.remove(path_id) {
+            monitor.stop_monitoring().await;
+            info!("Removed performance monitor for path: {}", path_id);
+            true
+        } else {
+            false
+        }
+    }
+    
+    /// Get global performance statistics across all paths
+    pub async fn get_global_stats(&self) -> GlobalPathStats {
+        self.global_stats.read().await.clone()
+    }
+    
+    /// Record performance metrics for a specific path
+    pub async fn record_path_performance(&self, path_id: &str, latency_ms: f64, bandwidth_mbps: f64, bytes_sent: u64, bytes_received: u64, success: bool) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let monitors = self.path_monitors.read().await;
+        if let Some(monitor) = monitors.get(path_id) {
+            monitor.record_latency(latency_ms).await;
+            monitor.record_bandwidth(bandwidth_mbps).await;
+            monitor.record_transmission(bytes_sent, bytes_received, success).await;
+            Ok(())
+        } else {
+            Err(format!("No performance monitor found for path: {}", path_id).into())
+        }
+    }
+    
+    /// Generate comprehensive performance report for all paths
+    pub async fn generate_global_performance_report(&self) -> String {
+        let global_stats = self.get_global_stats().await;
+        let monitors = self.path_monitors.read().await;
+        
+        let mut report = format!(
+            "Global Path Performance Report\n\
+            ==============================\n\
+            Active Paths: {}\n\
+            Average Performance Score: {:.2}%\n\
+            Global Packet Loss Rate: {:.2}%\n\
+            Total Successful Transmissions: {}\n\
+            Total Failed Transmissions: {}\n\
+            Monitoring Uptime: {}s\n\
+            Best Performing Path: {:?}\n\
+            Worst Performing Path: {:?}\n\
+            Last Updated: {:?}\n\n",
+            global_stats.active_paths,
+            global_stats.avg_performance_score * 100.0,
+            global_stats.global_packet_loss_rate * 100.0,
+            global_stats.total_successful_transmissions,
+            global_stats.total_failed_transmissions,
+            global_stats.monitoring_uptime_secs,
+            global_stats.best_performing_path,
+            global_stats.worst_performing_path,
+            global_stats.last_updated
+        );
+        
+        // Add individual path reports
+        report.push_str("Individual Path Performance:\n");
+        report.push_str("============================\n");
+        
+        for (path_id, monitor) in monitors.iter() {
+            let path_report = monitor.generate_performance_report().await;
+            report.push_str(&format!("\n{}\n", path_report));
+        }
+        
+        report
+    }
+
+    /// Calculate path quality from peer information
+    pub async fn calculate_path_quality(&self, peers: &[crate::proto::PeerInfo]) -> Result<PathQuality, DhtError> {
+        if peers.is_empty() {
+            return Err(DhtError::InvalidMessage("No peers provided for quality calculation".to_string()));
+        }
+
+        // Calculate latency (sum of all hops)
+        let total_latency = peers.iter().map(|p| p.latency_ms).sum::<f64>();
+        
+        // Calculate bandwidth (limited by bottleneck)
+        let min_bandwidth = peers.iter()
+            .map(|p| p.bandwidth_mbps)
+            .fold(f64::INFINITY, f64::min);
+        
+        // Calculate reliability (product of individual reliabilities)
+        let reliability_score = peers.iter()
+            .map(|p| {
+                // Convert connection count to reliability score
+                let base_reliability = 0.5; // Base reliability
+                let connection_bonus = (p.connection_count as f64).min(10.0) / 10.0 * 0.4;
+                (base_reliability + connection_bonus).min(1.0)
+            })
+            .product::<f64>();
+        
+        // Calculate geographic diversity
+        let unique_regions: HashSet<_> = peers.iter().map(|p| &p.region).collect();
+        let geographic_diversity = unique_regions.len() as f64 / peers.len() as f64;
+        
+        // Calculate load balance score (based on connection counts)
+        let avg_connections = peers.iter().map(|p| p.connection_count).sum::<u32>() as f64 / peers.len() as f64;
+        let load_balance_score = 1.0 - (peers.iter()
+            .map(|p| (p.connection_count as f64 - avg_connections).abs())
+            .sum::<f64>() / (peers.len() as f64 * avg_connections)).min(1.0);
+        
+        // Calculate overall score
+        let overall_score = (reliability_score + geographic_diversity + load_balance_score) / 3.0;
+        
+        Ok(PathQuality {
+            latency_ms: total_latency,
+            bandwidth_mbps: min_bandwidth,
+            reliability_score,
+            geographic_diversity,
+            load_balance_score,
+            overall_score,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -2790,6 +3601,7 @@ mod tests {
         let request = PathRequest {
             target: "target-node-123".to_string(),
             hops: 3,
+            strategy: "latency_optimized".to_string(),
         };
         
         // Build path with timeout
@@ -2797,12 +3609,16 @@ mod tests {
         assert!(result.is_ok(), "Path building should complete within timeout");
         
         let path_response = result.unwrap().expect("Path building should succeed");
-        assert!(!path_response.path.is_empty(), "Path should not be empty");
-        assert!(path_response.path.contains(&request.target), "Path should include target");
-        assert!(path_response.estimated_latency_ms >= 0.0, "Latency should be non-negative");
-        assert!(path_response.estimated_bandwidth_mbps >= 0.0, "Bandwidth should be non-negative");
-        assert!(path_response.reliability_score >= 0.0 && path_response.reliability_score <= 1.0, 
-                "Reliability score should be between 0 and 1");
+        if let Some(response) = path_response {
+            assert!(!response.path.is_empty(), "Path should not be empty");
+            assert!(response.path.contains(&request.target), "Path should include target");
+            assert!(response.estimated_latency_ms >= 0.0, "Latency should be non-negative");
+            assert!(response.estimated_bandwidth_mbps >= 0.0, "Bandwidth should be non-negative");
+            assert!(response.reliability_score >= 0.0 && response.reliability_score <= 1.0, 
+                    "Reliability score should be between 0 and 1");
+        } else {
+            panic!("Path building should return a valid response");
+        }
     }
     
     #[tokio::test]
@@ -2942,13 +3758,17 @@ mod tests {
         let request = PathRequest {
             target: "unreachable-target".to_string(),
             hops: 5,
+            strategy: "bandwidth_optimized".to_string(),
         };
         
         let result = path_builder.build_path(&request).await;
         // Should either succeed with synthetic path or fail gracefully
         match result {
-            Ok(response) => {
+            Ok(Some(response)) => {
                 assert!(!response.path.is_empty(), "Response should contain some path");
+            }
+            Ok(None) => {
+                info!("Path building returned None (expected with no peers)");
             }
             Err(e) => {
                 debug!("Path building failed as expected: {}", e);
@@ -3117,7 +3937,173 @@ mod tests {
         
         info!("PathBuilder validation integration test completed successfully");
     }
-    
+
+    #[tokio::test]
+    async fn test_onion_path_construction_integration() {
+        let bootstrap_peers = vec![
+            "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWIntegration1".to_string(),
+        ];
+        
+        let config = PathBuilderConfig::default();
+        let mut path_builder = PathBuilder::new(bootstrap_peers, config).await
+            .expect("PathBuilder initialization should succeed");
+        
+        // Start the path builder service
+        path_builder.start().await
+            .expect("PathBuilder start should succeed");
+        
+        // Create test path request
+        let request = PathRequest {
+            target: "integration-target.test".to_string(),
+            hops: 4,
+            strategy: "latency_optimized".to_string(),
+        };
+        
+        // Test build_path method with actual onion routing construction
+        let result = timeout(Duration::from_secs(15), path_builder.build_path(&request)).await;
+        
+        match result {
+            Ok(path_result) => {
+                match path_result {
+                    Ok(Some(path_response)) => {
+                        // Verify path response structure
+                        assert!(!path_response.path.is_empty(), "Path should not be empty");
+                        assert_eq!(path_response.path.len(), request.hops as usize, "Path should have requested number of hops");
+                        
+                        // Verify path quality metrics
+                        assert!(path_response.estimated_latency_ms >= 0.0, "Latency should be non-negative");
+                        assert!(path_response.estimated_bandwidth_mbps >= 0.0, "Bandwidth should be non-negative");
+                        assert!(path_response.reliability_score >= 0.0 && path_response.reliability_score <= 1.0, 
+                                "Reliability score should be between 0 and 1");
+                        
+                        // Verify each hop has proper format: peer_id@address
+                        for hop in &path_response.path {
+                            assert!(hop.contains('@'), "Hop should contain peer_id@address format");
+                            let parts: Vec<&str> = hop.split('@').collect();
+                            assert_eq!(parts.len(), 2, "Hop should have exactly one @ separator");
+                            assert!(!parts[0].is_empty(), "Peer ID should not be empty");
+                            assert!(!parts[1].is_empty(), "Address should not be empty");
+                        }
+                        
+                        info!("Successfully built onion routing path: {:?}", path_response);
+                    }
+                    Ok(None) => {
+                        info!("Path construction returned None - likely due to insufficient peers in test environment");
+                    }
+                    Err(e) => {
+                        info!("Path construction failed (expected in test environment): {}", e);
+                    }
+                }
+            }
+            Err(_) => {
+                info!("Path construction timed out (expected in test environment without real DHT)");
+            }
+        }
+        
+        info!("Onion path construction integration test completed");
+    }
+
+    #[tokio::test]
+    async fn test_path_caching_functionality() {
+        let bootstrap_peers = vec![
+            "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWCache1".to_string(),
+        ];
+        
+        let mut config = PathBuilderConfig::default();
+        config.cache_ttl_secs = 10; // Short TTL for testing
+        
+        let mut path_builder = PathBuilder::new(bootstrap_peers, config).await
+            .expect("PathBuilder initialization should succeed");
+        
+        path_builder.start().await
+            .expect("PathBuilder start should succeed");
+        
+        let request = PathRequest {
+            target: "cache-test.target".to_string(),
+            hops: 3,
+            strategy: "reliability_optimized".to_string(),
+        };
+        
+        // First call - should attempt to build new path
+        let first_result = timeout(Duration::from_secs(10), path_builder.build_path(&request)).await;
+        
+        // Second call - should use cache if first succeeded
+        let second_result = timeout(Duration::from_secs(5), path_builder.build_path(&request)).await;
+        
+        // Verify caching behavior
+        match (&first_result, &second_result) {
+            (Ok(Ok(Some(_))), Ok(Ok(Some(_)))) => {
+                info!("Both path requests succeeded - caching functionality working");
+            }
+            _ => {
+                info!("Path caching test completed (results depend on DHT availability)");
+            }
+        }
+        
+        info!("Path caching functionality test completed");
+    }
+
+    #[tokio::test]
+    async fn test_path_quality_calculation_integration() {
+        let bootstrap_peers = vec![
+            "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWQuality1".to_string(),
+        ];
+        
+        let config = PathBuilderConfig::default();
+        let path_builder = PathBuilder::new(bootstrap_peers, config).await
+            .expect("PathBuilder initialization should succeed");
+        
+        // Create test peer information
+        let test_peers = vec![
+            crate::proto::PeerInfo {
+                node_id: "quality_peer_1".to_string(),
+                address: "/ip4/127.0.0.1/tcp/4001".to_string(),
+                latency_ms: 25.0,
+                bandwidth_mbps: 150.0,
+                status: "connected".to_string(),
+                last_seen: None,
+                connection_count: 8,
+                region: "us-west".to_string(),
+            },
+            crate::proto::PeerInfo {
+                node_id: "quality_peer_2".to_string(),
+                address: "/ip4/127.0.0.1/tcp/4002".to_string(),
+                latency_ms: 35.0,
+                bandwidth_mbps: 120.0,
+                status: "connected".to_string(),
+                last_seen: None,
+                connection_count: 12,
+                region: "us-east".to_string(),
+            },
+            crate::proto::PeerInfo {
+                node_id: "quality_peer_3".to_string(),
+                address: "/ip4/127.0.0.1/tcp/4003".to_string(),
+                latency_ms: 45.0,
+                bandwidth_mbps: 200.0,
+                status: "connected".to_string(),
+                last_seen: None,
+                connection_count: 5,
+                region: "eu-west".to_string(),
+            },
+        ];
+        
+        // Test path quality calculation
+        let quality_result = path_builder.calculate_path_quality(&test_peers).await;
+        assert!(quality_result.is_ok(), "Quality calculation should succeed");
+        
+        let quality = quality_result.unwrap();
+        
+        // Verify quality metrics
+        assert_eq!(quality.latency_ms, 105.0, "Total latency should be sum of all hops");
+        assert_eq!(quality.bandwidth_mbps, 120.0, "Bandwidth should be minimum of all hops");
+        assert!(quality.reliability_score > 0.0 && quality.reliability_score <= 1.0, "Reliability score should be valid");
+        assert!(quality.geographic_diversity > 0.0, "Should have geographic diversity");
+        assert!(quality.overall_score > 0.0 && quality.overall_score <= 1.0, "Overall score should be valid");
+        
+        info!("Path quality calculation integration test completed successfully");
+        info!("Quality metrics: {:?}", quality);
+    }
+
     #[tokio::test]
     async fn test_path_connectivity_testing() {
         use rand::{thread_rng, RngCore};

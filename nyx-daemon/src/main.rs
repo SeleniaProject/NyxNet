@@ -32,6 +32,7 @@ mod metrics;
 mod alert_system;
 mod alert_system_enhanced;
 mod alert_system_test;
+mod path_performance_test;
 mod prometheus_exporter;
 mod stream_manager;
 mod path_builder;
