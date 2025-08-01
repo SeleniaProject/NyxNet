@@ -78,6 +78,11 @@ const ONION_LAYER_NONCE_SIZE: usize = 12;
 /// Performance monitoring constants
 const PERFORMANCE_SAMPLE_WINDOW: usize = 100;
 const MONITORING_INTERVAL_SECS: u64 = 5;
+
+/// Fallback path selection constants
+const MAX_FALLBACK_ATTEMPTS: usize = 3;
+const FALLBACK_QUALITY_THRESHOLD: f64 = 0.6;
+const EMERGENCY_FALLBACK_THRESHOLD: f64 = 0.3;
 const PERFORMANCE_ALERT_THRESHOLD: f64 = 0.3; // Trigger alert if performance drops below 30%
 
 /// Real-time performance metrics for individual path monitoring
@@ -610,6 +615,51 @@ pub struct PathPerformanceEstimate {
     pub encryption_overhead_bytes: usize,
     pub bandwidth_efficiency: f64,
     pub anonymity_score: f64,
+}
+
+/// Fallback path selection strategy
+#[derive(Debug, Clone, PartialEq)]
+pub enum FallbackStrategy {
+    /// Use highest quality available paths
+    QualityFirst,
+    /// Prioritize low latency paths
+    LatencyOptimized,
+    /// Use geographically diverse paths for anonymity
+    DiversityOptimized,
+    /// Emergency mode - use any available path
+    Emergency,
+}
+
+/// Fallback path selection criteria
+#[derive(Debug, Clone)]
+pub struct FallbackCriteria {
+    pub strategy: FallbackStrategy,
+    pub min_quality_threshold: f64,
+    pub max_latency_ms: f64,
+    pub required_diversity: bool,
+    pub allow_fallback_peers: bool,
+}
+
+impl Default for FallbackCriteria {
+    fn default() -> Self {
+        Self {
+            strategy: FallbackStrategy::QualityFirst,
+            min_quality_threshold: FALLBACK_QUALITY_THRESHOLD,
+            max_latency_ms: MAX_LATENCY_THRESHOLD_MS * 2.0, // More lenient for fallback
+            required_diversity: true,
+            allow_fallback_peers: true,
+        }
+    }
+}
+
+/// Fallback path selection result
+#[derive(Debug, Clone)]
+pub struct FallbackPathResult {
+    pub path: Vec<String>,
+    pub strategy_used: FallbackStrategy,
+    pub quality_score: f64,
+    pub fallback_level: usize, // 0 = primary, 1 = first fallback, etc.
+    pub warning_messages: Vec<String>,
 }
 
 impl Default for PathPerformanceEstimate {
@@ -3202,8 +3252,24 @@ impl PathBuilder {
                 Ok(Some(path_response))
             }
             Err(e) => {
-                warn!("Failed to build onion path for target {}: {}", request.target, e);
-                Err(e)
+                warn!("Primary path building failed for target {}: {}", request.target, e);
+                
+                // Try fallback path selection strategies
+                match self.build_fallback_path(request).await {
+                    Ok(Some(fallback_response)) => {
+                        info!("Successfully built fallback path for target: {}", request.target);
+                        Ok(Some(fallback_response))
+                    }
+                    Ok(None) => {
+                        warn!("No suitable fallback path found for target: {}", request.target);
+                        Ok(None)
+                    }
+                    Err(fallback_err) => {
+                        error!("Both primary and fallback path building failed for target {}: primary={}, fallback={}", 
+                               request.target, e, fallback_err);
+                        Err(e) // Return original error
+                    }
+                }
             }
         }
     }
@@ -3313,6 +3379,255 @@ impl PathBuilder {
         score *= age_factor;
         
         score.clamp(0.0, 1.0)
+    }
+    
+    /// Build fallback path using alternative strategies
+    #[instrument(skip(self))]
+    pub async fn build_fallback_path(&self, request: &PathRequest) -> Result<Option<PathResponse>, DhtError> {
+        info!("Attempting fallback path construction for target: {}", request.target);
+        
+        let fallback_criteria = FallbackCriteria::default();
+        
+        for attempt in 0..MAX_FALLBACK_ATTEMPTS {
+            let strategy = match attempt {
+                0 => FallbackStrategy::LatencyOptimized,
+                1 => FallbackStrategy::DiversityOptimized,
+                _ => FallbackStrategy::Emergency,
+            };
+            
+            info!("Fallback attempt {} using strategy: {:?}", attempt + 1, strategy);
+            
+            match self.try_fallback_strategy(request, strategy.clone(), &fallback_criteria).await {
+                Ok(Some(path_result)) => {
+                    info!("Successfully built fallback path using strategy {:?}", strategy);
+                    
+                    // Convert FallbackPathResult to PathResponse
+                    let path_response = PathResponse {
+                        path: path_result.path,
+                        estimated_latency_ms: 0.0, // Will be updated by monitoring
+                        estimated_bandwidth_mbps: 0.0, // Will be updated by monitoring
+                        reliability_score: path_result.quality_score,
+                    };
+                    
+                    return Ok(Some(path_response));
+                }
+                Ok(None) => {
+                    warn!("Fallback strategy {:?} failed to find suitable path", strategy);
+                    continue;
+                }
+                Err(e) => {
+                    warn!("Fallback strategy {:?} encountered error: {}", strategy, e);
+                    continue;
+                }
+            }
+        }
+        
+        warn!("All fallback strategies exhausted for target: {}", request.target);
+        Ok(None)
+    }
+    
+    /// Try a specific fallback strategy
+    async fn try_fallback_strategy(
+        &self,
+        request: &PathRequest,
+        strategy: FallbackStrategy,
+        criteria: &FallbackCriteria,
+    ) -> Result<Option<FallbackPathResult>, DhtError> {
+        // Discover all available peers
+        let peers = self.dht_discovery.discover_peers(DiscoveryCriteria::All).await?;
+        
+        if peers.len() < request.hops as usize {
+            return Ok(None);
+        }
+        
+        // Filter and sort peers based on strategy
+        let mut filtered_peers = self.filter_peers_for_fallback(&peers, criteria).await;
+        
+        match strategy {
+            FallbackStrategy::QualityFirst => {
+                filtered_peers.sort_by(|a, b| {
+                    let score_a = self.calculate_peer_quality_score(a);
+                    let score_b = self.calculate_peer_quality_score(b);
+                    score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+            FallbackStrategy::LatencyOptimized => {
+                filtered_peers.sort_by(|a, b| {
+                    a.latency_ms.partial_cmp(&b.latency_ms).unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+            FallbackStrategy::DiversityOptimized => {
+                // Group by region and select diverse peers
+                filtered_peers = self.select_diverse_peers(filtered_peers, request.hops as usize).await;
+            }
+            FallbackStrategy::Emergency => {
+                // Use any available peers - no specific sorting
+            }
+        }
+        
+        // Take the required number of peers
+        let selected_peers: Vec<_> = filtered_peers.into_iter()
+            .take(request.hops as usize)
+            .collect();
+        
+        if selected_peers.len() < request.hops as usize {
+            return Ok(None);
+        }
+        
+        // Build path from selected peers
+        let path: Vec<String> = selected_peers.iter()
+            .map(|peer| format!("{}@{}", peer.node_id, peer.address))
+            .collect();
+        
+        // Calculate overall quality score
+        let quality_score = self.calculate_fallback_path_quality(&selected_peers, &strategy);
+        
+        let fallback_level = match strategy {
+            FallbackStrategy::QualityFirst => 0,
+            FallbackStrategy::LatencyOptimized => 1,
+            FallbackStrategy::DiversityOptimized => 1,
+            FallbackStrategy::Emergency => 2,
+        };
+        
+        let mut warnings = Vec::new();
+        if quality_score < FALLBACK_QUALITY_THRESHOLD {
+            warnings.push(format!("Path quality {} below recommended threshold {}", 
+                                 quality_score, FALLBACK_QUALITY_THRESHOLD));
+        }
+        
+        if quality_score < EMERGENCY_FALLBACK_THRESHOLD {
+            warnings.push("Using emergency fallback with very low quality".to_string());
+        }
+        
+        let result = FallbackPathResult {
+            path,
+            strategy_used: strategy,
+            quality_score,
+            fallback_level,
+            warning_messages: warnings,
+        };
+        
+        Ok(Some(result))
+    }
+    
+    /// Filter peers suitable for fallback paths
+    async fn filter_peers_for_fallback(
+        &self,
+        peers: &[crate::proto::PeerInfo],
+        criteria: &FallbackCriteria,
+    ) -> Vec<crate::proto::PeerInfo> {
+        let mut filtered = Vec::new();
+        
+        for peer in peers {
+            // Basic availability check
+            if peer.latency_ms > criteria.max_latency_ms {
+                continue;
+            }
+            
+            // Calculate peer quality score
+            let quality = self.calculate_peer_quality_score(peer);
+            if quality < criteria.min_quality_threshold {
+                continue;
+            }
+            
+            filtered.push(peer.clone());
+        }
+        
+        filtered
+    }
+    
+    /// Calculate quality score for a single peer
+    fn calculate_peer_quality_score(&self, peer: &crate::proto::PeerInfo) -> f64 {
+        let latency_score = 1.0 - (peer.latency_ms / 1000.0).min(1.0);
+        let bandwidth_score = (peer.bandwidth_mbps / 100.0).min(1.0);
+        
+        (latency_score * 0.6 + bandwidth_score * 0.4).clamp(0.0, 1.0)
+    }
+    
+    /// Select diverse peers for better anonymity
+    async fn select_diverse_peers(
+        &self,
+        mut peers: Vec<crate::proto::PeerInfo>,
+        count: usize,
+    ) -> Vec<crate::proto::PeerInfo> {
+        let mut selected = Vec::new();
+        
+        while selected.len() < count && !peers.is_empty() {
+            // Find peer with maximum diversity from already selected
+            let mut best_index = 0;
+            let mut best_diversity = 0.0;
+            
+            for (i, peer) in peers.iter().enumerate() {
+                let diversity = self.calculate_peer_diversity_score(peer, &selected);
+                if diversity > best_diversity {
+                    best_diversity = diversity;
+                    best_index = i;
+                }
+            }
+            
+            selected.push(peers.remove(best_index));
+        }
+        
+        selected
+    }
+    
+    /// Calculate diversity score for a peer relative to already selected peers
+    fn calculate_peer_diversity_score(
+        &self,
+        peer: &crate::proto::PeerInfo,
+        selected: &[crate::proto::PeerInfo],
+    ) -> f64 {
+        if selected.is_empty() {
+            return 1.0;
+        }
+        
+        let mut min_distance = f64::MAX;
+        
+        for selected_peer in selected {
+            // Region diversity
+            let region_distance = if peer.region != selected_peer.region { 1.0 } else { 0.0 };
+            
+            // Network diversity (simple IP-based estimation)
+            let network_distance = if peer.address.split(':').next() != selected_peer.address.split(':').next() {
+                1.0
+            } else {
+                0.0
+            };
+            
+            let combined_distance = region_distance * 0.7 + network_distance * 0.3;
+            min_distance = min_distance.min(combined_distance);
+        }
+        
+        min_distance
+    }
+    
+    /// Calculate overall quality score for a fallback path
+    fn calculate_fallback_path_quality(
+        &self,
+        peers: &[crate::proto::PeerInfo],
+        strategy: &FallbackStrategy,
+    ) -> f64 {
+        if peers.is_empty() {
+            return 0.0;
+        }
+        
+        let avg_latency = peers.iter().map(|p| p.latency_ms).sum::<f64>() / peers.len() as f64;
+        let avg_bandwidth = peers.iter().map(|p| p.bandwidth_mbps).sum::<f64>() / peers.len() as f64;
+        
+        let latency_score = 1.0 - (avg_latency / 1000.0).min(1.0);
+        let bandwidth_score = (avg_bandwidth / 100.0).min(1.0);
+        
+        let base_score = latency_score * 0.5 + bandwidth_score * 0.3;
+        
+        // Strategy-specific adjustments
+        let strategy_bonus = match strategy {
+            FallbackStrategy::QualityFirst => 0.2, // Highest quality
+            FallbackStrategy::LatencyOptimized => 0.15,
+            FallbackStrategy::DiversityOptimized => 0.1,
+            FallbackStrategy::Emergency => 0.0, // No bonus for emergency
+        };
+        
+        (base_score + strategy_bonus).clamp(0.0, 1.0)
     }
     
     /// Calculate anonymity score based on path diversity and characteristics
@@ -4148,5 +4463,169 @@ mod tests {
         assert_eq!(result.layer_decrypt_times.len(), onion_path.layers.len());
         
         info!("Path connectivity testing completed successfully");
+    }
+
+    #[tokio::test]
+    async fn test_fallback_path_strategies() {
+        let bootstrap_peers = vec![
+            "/ip4/127.0.0.1/tcp/4001/p2p/QmBootstrap1".to_string(),
+        ];
+        let config = PathBuilderConfig::default();
+        let path_builder = PathBuilder::new(bootstrap_peers, config).await.unwrap();
+        
+        // Test fallback criteria creation
+        let criteria = FallbackCriteria::default();
+        assert_eq!(criteria.strategy, FallbackStrategy::QualityFirst);
+        assert_eq!(criteria.min_quality_threshold, FALLBACK_QUALITY_THRESHOLD);
+        assert!(criteria.required_diversity);
+        
+        // Test emergency criteria
+        let emergency_criteria = FallbackCriteria {
+            strategy: FallbackStrategy::Emergency,
+            min_quality_threshold: EMERGENCY_FALLBACK_THRESHOLD,
+            max_latency_ms: 2000.0,
+            required_diversity: false,
+            allow_fallback_peers: true,
+        };
+        assert_eq!(emergency_criteria.strategy, FallbackStrategy::Emergency);
+        assert!(emergency_criteria.max_latency_ms > MAX_LATENCY_THRESHOLD_MS);
+        
+        info!("Fallback strategy configuration test completed successfully");
+    }
+
+    #[tokio::test]
+    async fn test_fallback_path_quality_calculation() {
+        let bootstrap_peers = vec![
+            "/ip4/127.0.0.1/tcp/4001/p2p/QmBootstrap1".to_string(),
+        ];
+        let config = PathBuilderConfig::default();
+        let path_builder = PathBuilder::new(bootstrap_peers, config).await.unwrap();
+        
+        // Create mock peers for testing
+        let timestamp = crate::proto::Timestamp {
+            seconds: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64,
+            nanos: 0,
+        };
+        
+        let peers = vec![
+            crate::proto::PeerInfo {
+                node_id: "high_quality_peer".to_string(),
+                address: "192.168.1.10:7000".to_string(),
+                region: "US-West".to_string(),
+                latency_ms: 50.0,
+                bandwidth_mbps: 100.0,
+                connection_count: 1,
+                last_seen: Some(timestamp.clone()),
+                status: "connected".to_string(),
+            },
+            crate::proto::PeerInfo {
+                node_id: "low_latency_peer".to_string(),
+                address: "192.168.1.20:7000".to_string(),
+                region: "US-East".to_string(),
+                latency_ms: 25.0,
+                bandwidth_mbps: 50.0,
+                connection_count: 1,
+                last_seen: Some(timestamp.clone()),
+                status: "connected".to_string(),
+            },
+            crate::proto::PeerInfo {
+                node_id: "high_bandwidth_peer".to_string(),
+                address: "192.168.1.30:7000".to_string(),
+                region: "EU-Central".to_string(),
+                latency_ms: 80.0,
+                bandwidth_mbps: 200.0,
+                connection_count: 1,
+                last_seen: Some(timestamp.clone()),
+                status: "connected".to_string(),
+            },
+        ];
+        
+        // Test quality score calculation
+        for peer in &peers {
+            let quality_score = path_builder.calculate_peer_quality_score(peer);
+            assert!(quality_score >= 0.0 && quality_score <= 1.0);
+            info!("Peer {} quality score: {:.3}", peer.node_id, quality_score);
+        }
+        
+        // Test fallback path quality calculation
+        let quality_first_score = path_builder.calculate_fallback_path_quality(&peers, &FallbackStrategy::QualityFirst);
+        let latency_optimized_score = path_builder.calculate_fallback_path_quality(&peers, &FallbackStrategy::LatencyOptimized);
+        let emergency_score = path_builder.calculate_fallback_path_quality(&peers, &FallbackStrategy::Emergency);
+        
+        assert!(quality_first_score >= latency_optimized_score);
+        assert!(latency_optimized_score >= emergency_score);
+        
+        info!("Quality scores - QualityFirst: {:.3}, LatencyOptimized: {:.3}, Emergency: {:.3}",
+              quality_first_score, latency_optimized_score, emergency_score);
+        
+        info!("Fallback path quality calculation test completed successfully");
+    }
+
+    #[tokio::test]
+    async fn test_peer_diversity_calculation() {
+        let bootstrap_peers = vec![
+            "/ip4/127.0.0.1/tcp/4001/p2p/QmBootstrap1".to_string(),
+        ];
+        let config = PathBuilderConfig::default();
+        let path_builder = PathBuilder::new(bootstrap_peers, config).await.unwrap();
+        
+        // Create mock peers with different characteristics
+        let timestamp = crate::proto::Timestamp {
+            seconds: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64,
+            nanos: 0,
+        };
+        
+        let peer1 = crate::proto::PeerInfo {
+            node_id: "peer1".to_string(),
+            address: "192.168.1.10:7000".to_string(),
+            region: "US-West".to_string(),
+            latency_ms: 50.0,
+            bandwidth_mbps: 100.0,
+            connection_count: 1,
+            last_seen: Some(timestamp.clone()),
+            status: "connected".to_string(),
+        };
+        
+        let peer2 = crate::proto::PeerInfo {
+            node_id: "peer2".to_string(),
+            address: "10.0.0.20:7000".to_string(), // Different network
+            region: "EU-Central".to_string(), // Different region
+            latency_ms: 75.0,
+            bandwidth_mbps: 80.0,
+            connection_count: 1,
+            last_seen: Some(timestamp.clone()),
+            status: "connected".to_string(),
+        };
+        
+        let peer3 = crate::proto::PeerInfo {
+            node_id: "peer3".to_string(),
+            address: "192.168.1.30:7000".to_string(), // Same network as peer1
+            region: "US-West".to_string(), // Same region as peer1
+            latency_ms: 60.0,
+            bandwidth_mbps: 90.0,
+            connection_count: 1,
+            last_seen: Some(timestamp.clone()),
+            status: "connected".to_string(),
+        };
+        
+        // Test diversity calculation
+        let diversity1 = path_builder.calculate_peer_diversity_score(&peer1, &[]);
+        assert_eq!(diversity1, 1.0); // First peer always has max diversity
+        
+        let diversity2 = path_builder.calculate_peer_diversity_score(&peer2, &[peer1.clone()]);
+        let diversity3 = path_builder.calculate_peer_diversity_score(&peer3, &[peer1.clone()]);
+        
+        assert!(diversity2 > diversity3); // peer2 is more diverse than peer3 relative to peer1
+        
+        info!("Diversity scores - peer1: {:.3}, peer2: {:.3}, peer3: {:.3}",
+              diversity1, diversity2, diversity3);
+        
+        info!("Peer diversity calculation test completed successfully");
     }
 }
