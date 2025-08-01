@@ -69,6 +69,102 @@ const MIN_BANDWIDTH_THRESHOLD_MBPS: f64 = 10.0;
 const ONION_LAYER_KEY_SIZE: usize = 32;
 const ONION_LAYER_NONCE_SIZE: usize = 12;
 
+/// Path validation result with detailed feedback
+#[derive(Debug, Clone)]
+pub struct PathValidationResult {
+    pub is_valid: bool,
+    pub warnings: Vec<String>,
+    pub security_score: f64,
+    pub anonymity_score: f64,
+    pub performance_score: f64,
+}
+
+impl PathValidationResult {
+    pub fn new() -> Self {
+        Self {
+            is_valid: false,
+            warnings: Vec::new(),
+            security_score: 0.0,
+            anonymity_score: 0.0,
+            performance_score: 0.0,
+        }
+    }
+}
+
+/// Path validation errors
+#[derive(Debug, thiserror::Error)]
+pub enum PathValidationError {
+    #[error("Path is empty")]
+    EmptyPath,
+    #[error("Invalid cryptographic material: {0}")]
+    InvalidCryptographicMaterial(String),
+    #[error("Invalid peer information: {0}")]
+    InvalidPeerInfo(String),
+    #[error("Invalid network address: {0}")]
+    InvalidNetworkAddress(String),
+    #[error("Path structure error: {0}")]
+    StructureError(String),
+}
+
+/// Path connectivity test result
+#[derive(Debug, Clone)]
+pub struct PathConnectivityResult {
+    pub connectivity_verified: bool,
+    pub total_test_time: Duration,
+    pub encryption_latency: Duration,
+    pub layer_decrypt_times: Vec<Duration>,
+    pub encrypted_size: usize,
+    pub test_timestamp: Instant,
+}
+
+impl PathConnectivityResult {
+    pub fn new() -> Self {
+        Self {
+            connectivity_verified: false,
+            total_test_time: Duration::default(),
+            encryption_latency: Duration::default(),
+            layer_decrypt_times: Vec::new(),
+            encrypted_size: 0,
+            test_timestamp: Instant::now(),
+        }
+    }
+}
+
+/// Path testing errors
+#[derive(Debug, thiserror::Error)]
+pub enum PathTestError {
+    #[error("Encryption failure: {0}")]
+    EncryptionFailure(String),
+    #[error("Decryption failure: {0}")]
+    DecryptionFailure(String),
+    #[error("Data corruption: {0}")]
+    DataCorruption(String),
+    #[error("Network connectivity failure: {0}")]
+    NetworkFailure(String),
+    #[error("Timeout: {0}")]
+    Timeout(String),
+}
+
+/// Path performance estimation
+#[derive(Debug, Clone)]
+pub struct PathPerformanceEstimate {
+    pub estimated_latency_ms: f64,
+    pub encryption_overhead_bytes: usize,
+    pub bandwidth_efficiency: f64,
+    pub anonymity_score: f64,
+}
+
+impl Default for PathPerformanceEstimate {
+    fn default() -> Self {
+        Self {
+            estimated_latency_ms: 0.0,
+            encryption_overhead_bytes: 0,
+            bandwidth_efficiency: 1.0,
+            anonymity_score: 0.0,
+        }
+    }
+}
+
 /// A single encryption layer in the onion routing path
 #[derive(Debug, Clone)]
 pub struct OnionLayer {
@@ -131,6 +227,134 @@ impl OnionPath {
         } else {
             None
         }
+    }
+    
+    /// Validate the onion path structure and cryptographic integrity
+    pub fn validate_path(&self) -> Result<PathValidationResult, PathValidationError> {
+        let mut result = PathValidationResult::new();
+        
+        // Check minimum requirements
+        if self.layers.is_empty() {
+            return Err(PathValidationError::EmptyPath);
+        }
+        
+        if self.layers.len() < 3 {
+            result.warnings.push("Path has fewer than 3 hops, which reduces anonymity".to_string());
+        }
+        
+        if self.layers.len() > 10 {
+            result.warnings.push("Path has more than 10 hops, which may increase latency".to_string());
+        }
+        
+        // Validate each layer
+        for (i, layer) in self.layers.iter().enumerate() {
+            // Check cryptographic material
+            if layer.key.iter().all(|&b| b == 0) {
+                return Err(PathValidationError::InvalidCryptographicMaterial(
+                    format!("Layer {} has all-zero encryption key", i)
+                ));
+            }
+            
+            if layer.nonce.iter().all(|&b| b == 0) {
+                result.warnings.push(format!("Layer {} has all-zero nonce, which may reduce security", i));
+            }
+            
+            // Check peer information
+            if layer.peer_id.is_empty() {
+                return Err(PathValidationError::InvalidPeerInfo(
+                    format!("Layer {} has empty peer ID", i)
+                ));
+            }
+            
+            // Check for duplicate peers (reduces anonymity)
+            for (j, other_layer) in self.layers.iter().enumerate() {
+                if i != j && layer.peer_id == other_layer.peer_id {
+                    result.warnings.push(format!("Duplicate peer {} at layers {} and {}", layer.peer_id, i, j));
+                }
+            }
+            
+            // Validate network address
+            if layer.peer_addr.port() == 0 {
+                return Err(PathValidationError::InvalidNetworkAddress(
+                    format!("Layer {} has invalid port 0", i)
+                ));
+            }
+        }
+        
+        // Check path age
+        let path_age = self.created_at.elapsed();
+        if path_age > Duration::from_secs(3600) {
+            result.warnings.push("Path is older than 1 hour and may be stale".to_string());
+        }
+        
+        result.is_valid = true;
+        Ok(result)
+    }
+    
+    /// Test the path by attempting to encrypt and decrypt a test message
+    pub async fn test_path_connectivity(&self) -> Result<PathConnectivityResult, PathTestError> {
+        let mut result = PathConnectivityResult::new();
+        let test_message = b"test_connectivity_probe";
+        
+        // Test encryption/decryption cycle
+        let start_time = Instant::now();
+        match self.encrypt_onion(test_message) {
+            Ok(encrypted) => {
+                result.encryption_latency = start_time.elapsed();
+                result.encrypted_size = encrypted.len();
+                
+                // Test layer-by-layer decryption
+                let mut current_data = encrypted;
+                for i in 0..self.layers.len() {
+                    let decrypt_start = Instant::now();
+                    match self.decrypt_layer(i, &current_data) {
+                        Ok(decrypted) => {
+                            current_data = decrypted;
+                            result.layer_decrypt_times.push(decrypt_start.elapsed());
+                        }
+                        Err(e) => {
+                            return Err(PathTestError::DecryptionFailure(
+                                format!("Failed to decrypt layer {}: {}", i, e)
+                            ));
+                        }
+                    }
+                }
+                
+                // Verify final result
+                if current_data == test_message {
+                    result.connectivity_verified = true;
+                } else {
+                    return Err(PathTestError::DataCorruption(
+                        "Decrypted data does not match original test message".to_string()
+                    ));
+                }
+            }
+            Err(e) => {
+                return Err(PathTestError::EncryptionFailure(format!("Encryption failed: {}", e)));
+            }
+        }
+        
+        result.total_test_time = start_time.elapsed();
+        Ok(result)
+    }
+    
+    /// Estimate path performance metrics
+    pub fn estimate_performance(&self) -> PathPerformanceEstimate {
+        let mut estimate = PathPerformanceEstimate::default();
+        
+        // Calculate estimated latency (rough approximation)
+        estimate.estimated_latency_ms = (self.layers.len() as f64) * 50.0; // 50ms per hop
+        
+        // Calculate overhead from encryption layers
+        estimate.encryption_overhead_bytes = self.layers.len() * 32; // AEAD tag size per layer
+        
+        // Estimate bandwidth reduction due to encryption overhead
+        estimate.bandwidth_efficiency = 1.0 - (estimate.encryption_overhead_bytes as f64 / 1500.0).min(0.3);
+        
+        // Calculate anonymity score based on path length and diversity
+        estimate.anonymity_score = ((self.layers.len() as f64).ln() / 10.0_f64.ln()).min(1.0);
+        
+        estimate
     }
 }
 
@@ -2152,6 +2376,14 @@ impl DhtPeerDiscovery {
     }
 }
 
+/// Comprehensive path analysis result
+#[derive(Debug)]
+pub struct PathAnalysisResult {
+    pub validation: PathValidationResult,
+    pub connectivity: PathConnectivityResult,
+    pub recommendations: Vec<String>,
+}
+
 /// Routing statistics for DHT analysis
 #[derive(Debug, Clone)]
 pub struct RouteStats {
@@ -2266,287 +2498,13 @@ impl PathBuilder {
         Ok(())
     }
     
-    /// Build a path for the given request with real DHT-based peer discovery
-    #[instrument(skip(self, request), fields(target = ?request.target))]
-    pub async fn build_path(&self, request: &PathRequest) -> Result<PathResponse, anyhow::Error> {
-        info!("Building path for target: {} with {} hops", request.target, request.hops);
-        
-        // Check cache first for existing valid paths
-        if let Some(cached_path) = self.check_cached_path(&request.target).await? {
-            info!("Using cached path for target: {}", request.target);
-            return Ok(cached_path);
-        }
-        
-        // Discover available peers through DHT
-        let available_peers = self.discover_available_peers().await?;
-        if available_peers.is_empty() {
-            return Err(anyhow::anyhow!("No peers available for path building"));
-        }
-        
-        // Build optimized path using discovered peers
-        let path_nodes = self.construct_optimal_path(&available_peers, &request.target, request.hops as usize).await?;
-        
-        // Calculate path quality metrics
-        let path_quality = self.calculate_path_quality(&path_nodes).await?;
-        
-        // Create response with actual peer data
-        let response = PathResponse {
-            path: path_nodes.iter().map(|peer| peer.node_id.clone()).collect(),
-            estimated_latency_ms: path_quality.latency_ms,
-            estimated_bandwidth_mbps: path_quality.bandwidth_mbps,
-            reliability_score: path_quality.reliability_score,
-        };
-        
-        // Cache the successful path for future use
-        self.cache_successful_path(&request.target, &path_nodes, &path_quality).await?;
-        
-        info!("Successfully built path for target: {} with {} hops", request.target, response.path.len());
-        Ok(response)
-    }
-    
-    /// Check for cached valid paths to the target
-    async fn check_cached_path(&self, target: &str) -> Result<Option<PathResponse>, anyhow::Error> {
-        let cache = self.path_cache.read().await;
-        
-        if let Some(cached_path) = cache.get(target) {
-            let age = cached_path.created_at.elapsed();
-            
-            // Check if cached path is still valid (not expired and meets quality threshold)
-            if age.as_secs() < self.config.cache_ttl_secs 
-                && cached_path.quality.overall_score >= self.config.quality_threshold {
-                
-                debug!("Found valid cached path for target: {}, age: {:?}", target, age);
-                
-                return Ok(Some(PathResponse {
-                    path: cached_path.hops.clone(),
-                    estimated_latency_ms: cached_path.quality.latency_ms,
-                    estimated_bandwidth_mbps: cached_path.quality.bandwidth_mbps,
-                    reliability_score: cached_path.quality.reliability_score,
-                }));
-            } else {
-                debug!("Cached path for target {} is expired or low quality", target);
-            }
-        }
-        
-        Ok(None)
-    }
-    
-    /// Discover available peers through DHT with various criteria
-    async fn discover_available_peers(&self) -> Result<Vec<crate::proto::PeerInfo>, anyhow::Error> {
-        let mut all_peers = Vec::new();
-        
-        // Discover peers using multiple criteria for diversity
-        let discovery_strategies = vec![
-            DiscoveryCriteria::ByLatency(self.config.max_latency_ms),
-            DiscoveryCriteria::ByBandwidth(self.config.min_bandwidth_mbps),
-            DiscoveryCriteria::All,
-        ];
-        
-        for criteria in discovery_strategies {
-            let criteria_clone = criteria.clone();
-            match self.dht_discovery.discover_peers(criteria).await {
-                Ok(mut peers) => {
-                    // Filter peers based on configuration requirements
-                    peers.retain(|peer| {
-                        peer.latency_ms <= self.config.max_latency_ms
-                            && peer.bandwidth_mbps >= self.config.min_bandwidth_mbps
-                            && peer.status == "connected"
-                    });
-                    
-                    // Merge with existing peers, avoiding duplicates
-                    for peer in peers {
-                        if !all_peers.iter().any(|p: &crate::proto::PeerInfo| p.node_id == peer.node_id) {
-                            all_peers.push(peer);
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to discover peers with criteria {:?}: {}", criteria_clone, e);
-                    continue;
-                }
-            }
-        }
-        
-        // Sort peers by quality score (combination of latency, bandwidth, reliability)
-        all_peers.sort_by(|a, b| {
-            let score_a = self.calculate_peer_score(a);
-            let score_b = self.calculate_peer_score(b);
-            score_b.partial_cmp(&score_a).unwrap_or(std::cmp::Ordering::Equal)
-        });
-        
-        info!("Discovered {} available peers for path building", all_peers.len());
-        Ok(all_peers)
-    }
-    
-    /// Construct optimal path from available peers
-    async fn construct_optimal_path(
-        &self,
-        available_peers: &[crate::proto::PeerInfo],
-        target: &str,
-        desired_hops: usize,
-    ) -> Result<Vec<crate::proto::PeerInfo>, anyhow::Error> {
-        let mut path_nodes = Vec::new();
-        let mut used_regions = HashSet::new();
-        let actual_hops = std::cmp::min(desired_hops, available_peers.len());
-        
-        if actual_hops == 0 {
-            return Err(anyhow::anyhow!("No peers available for path construction"));
-        }
-        
-        // Select nodes with geographic diversity if enabled
-        let mut candidate_peers = available_peers.to_vec();
-        
-        for _hop in 0..actual_hops {
-            let selected_peer = if self.config.prefer_geographic_diversity {
-                // Find peer from unused region with best quality
-                self.select_geographically_diverse_peer(&candidate_peers, &used_regions)?
-            } else {
-                // Select best quality peer regardless of region
-                candidate_peers.first()
-                    .ok_or_else(|| anyhow::anyhow!("No more peers available for path"))?
-                    .clone()
-            };
-            
-            // Add selected peer's region to used regions
-            used_regions.insert(selected_peer.region.clone());
-            
-            // Remove selected peer from candidates to avoid reuse
-            candidate_peers.retain(|p| p.node_id != selected_peer.node_id);
-            
-            path_nodes.push(selected_peer);
-        }
-        
-        // Add target as final hop if it's not already in the path
-        if !path_nodes.iter().any(|peer| peer.node_id == target) {
-            // Create a synthetic peer info for the target
-            let target_peer = crate::proto::PeerInfo {
-                node_id: target.to_string(),
-                address: format!("target://{}", target),
-                latency_ms: 0.0, // Target latency is unknown
-                bandwidth_mbps: 0.0, // Target bandwidth is unknown
-                status: "target".to_string(),
-                last_seen: Some(crate::proto::Timestamp {
-                    seconds: chrono::Utc::now().timestamp(),
-                    nanos: 0,
-                }),
-                connection_count: 0,
-                region: "target".to_string(),
-            };
-            path_nodes.push(target_peer);
-        }
-        
-        debug!("Constructed path with {} hops for target: {}", path_nodes.len(), target);
-        Ok(path_nodes)
-    }
-    
-    /// Select geographically diverse peer from candidates
-    fn select_geographically_diverse_peer(
-        &self,
-        candidates: &[crate::proto::PeerInfo],
-        used_regions: &HashSet<String>,
-    ) -> Result<crate::proto::PeerInfo, anyhow::Error> {
-        // First, try to find a peer from an unused region
-        if let Some(peer) = candidates.iter()
-            .find(|peer| !used_regions.contains(&peer.region)) {
-            return Ok(peer.clone());
-        }
-        
-        // If no unused regions available, select the best quality peer
-        candidates.first()
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("No peers available for selection"))
-    }
-    
-    /// Calculate quality score for a single peer
-    fn calculate_peer_score(&self, peer: &crate::proto::PeerInfo) -> f64 {
-        // Normalize metrics to 0-1 range and combine with weights
-        let latency_score = (1000.0 - peer.latency_ms.min(1000.0)) / 1000.0; // Lower latency = higher score
-        let bandwidth_score = (peer.bandwidth_mbps / 1000.0).min(1.0); // Higher bandwidth = higher score (cap at 1000 Mbps)
-        let connection_score = (peer.connection_count as f64 / 100.0).min(1.0); // More connections = higher score (cap at 100)
-        
-        // Weighted combination of metrics
-        (latency_score * 0.4) + (bandwidth_score * 0.4) + (connection_score * 0.2)
-    }
-    
-    /// Calculate overall path quality metrics
-    async fn calculate_path_quality(&self, path_nodes: &[crate::proto::PeerInfo]) -> Result<PathQuality, anyhow::Error> {
-        if path_nodes.is_empty() {
-            return Err(anyhow::anyhow!("Cannot calculate quality for empty path"));
-        }
-        
-        // Sum latencies for total path latency
-        let total_latency_ms: f64 = path_nodes.iter()
-            .map(|peer| peer.latency_ms)
-            .sum();
-        
-        // Use minimum bandwidth as path bandwidth (bottleneck)
-        let min_bandwidth_mbps = path_nodes.iter()
-            .map(|peer| peer.bandwidth_mbps)
-            .fold(f64::INFINITY, f64::min);
-        
-        // Calculate reliability as average of all nodes
-        let avg_reliability = path_nodes.iter()
-            .map(|peer| self.calculate_peer_score(peer))
-            .sum::<f64>() / path_nodes.len() as f64;
-        
-        // Calculate geographic diversity score
-        let unique_regions: HashSet<String> = path_nodes.iter()
-            .map(|peer| peer.region.clone())
-            .collect();
-        let geographic_diversity = unique_regions.len() as f64 / path_nodes.len() as f64;
-        
-        // Calculate load balance score (higher is better)
-        let load_balance_score = path_nodes.iter()
-            .map(|peer| 1.0 - (peer.connection_count as f64 / 1000.0).min(1.0))
-            .sum::<f64>() / path_nodes.len() as f64;
-        
-        // Calculate overall quality score
-        let overall_score = (avg_reliability * 0.3) + 
-                           (geographic_diversity * 0.2) + 
-                           (load_balance_score * 0.2) + 
-                           ((1000.0 - total_latency_ms.min(1000.0)) / 1000.0 * 0.15) +
-                           ((min_bandwidth_mbps / 1000.0).min(1.0) * 0.15);
-        
-        Ok(PathQuality {
-            latency_ms: total_latency_ms,
-            bandwidth_mbps: min_bandwidth_mbps,
-            reliability_score: avg_reliability,
-            geographic_diversity,
-            load_balance_score,
-            overall_score,
-        })
-    }
-    
-    /// Cache successful path for future use
-    async fn cache_successful_path(
-        &self,
-        target: &str,
-        path_nodes: &[crate::proto::PeerInfo],
-        quality: &PathQuality,
-    ) -> Result<(), anyhow::Error> {
-        let cached_path = CachedPath {
-            hops: path_nodes.iter().map(|peer| peer.node_id.clone()).collect(),
-            quality: quality.clone(),
-            created_at: Instant::now(),
-            usage_count: 1,
-            last_used: Instant::now(),
-        };
-        
-        let mut cache = self.path_cache.write().await;
-        cache.insert(target.to_string(), cached_path);
-        
-        debug!("Cached successful path for target: {} with quality score: {:.3}", 
-               target, quality.overall_score);
-        Ok(())
-    }
-    
     /// Start background task for cache cleanup
     async fn start_cache_cleanup_task(&self) {
         let cache = Arc::clone(&self.path_cache);
         let ttl = self.config.cache_ttl_secs;
         
         tokio::spawn(async move {
-            let mut interval = interval(Duration::from_secs(300)); // Clean every 5 minutes
+            let mut interval = tokio::time::interval(Duration::from_secs(300)); // Clean every 5 minutes
             
             loop {
                 interval.tick().await;
@@ -2561,6 +2519,194 @@ impl PathBuilder {
                 debug!("Cache cleanup completed, {} paths retained", cache.len());
             }
         });
+    }
+    pub async fn validate_onion_path(&self, path: &OnionPath) -> Result<PathValidationResult, PathValidationError> {
+        let mut result = path.validate_path()?;
+        
+        // Additional validation specific to PathBuilder context
+        
+        // Check if peers are still available in DHT
+        let mut unavailable_peers = Vec::new();
+        for (i, layer) in path.layers.iter().enumerate() {
+            // Try to verify peer availability through DHT
+            match self.dht_discovery.discover_peers(DiscoveryCriteria::All).await {
+                Ok(peers) => {
+                    if !peers.iter().any(|p| p.node_id == layer.peer_id) {
+                        unavailable_peers.push((i, layer.peer_id.clone()));
+                    }
+                }
+                Err(_) => {
+                    result.warnings.push("Unable to verify peer availability".to_string());
+                }
+            }
+        }
+        
+        if !unavailable_peers.is_empty() {
+            for (layer_idx, peer_id) in unavailable_peers {
+                result.warnings.push(format!("Peer {} at layer {} may be unavailable", peer_id, layer_idx));
+            }
+            result.performance_score *= 0.7; // Reduce performance score for unavailable peers
+        }
+        
+        // Calculate security score based on path length and diversity
+        result.security_score = self.calculate_security_score(path);
+        result.anonymity_score = self.calculate_anonymity_score(path);
+        result.performance_score = self.calculate_performance_score(path);
+        
+        Ok(result)
+    }
+    
+    /// Test an onion path's functionality and performance
+    pub async fn test_onion_path(&self, path: &OnionPath) -> Result<PathConnectivityResult, PathTestError> {
+        let mut result = path.test_path_connectivity().await?;
+        
+        // Add PathBuilder-specific testing
+        
+        // Test peer reachability
+        let mut unreachable_peers = Vec::new();
+        for (i, layer) in path.layers.iter().enumerate() {
+            match self.test_peer_connectivity(&layer.peer_addr).await {
+                Ok(latency) => {
+                    debug!("Peer {} at layer {} is reachable ({}ms)", layer.peer_id, i, latency.as_millis());
+                }
+                Err(e) => {
+                    unreachable_peers.push((i, format!("{}: {}", layer.peer_id, e)));
+                }
+            }
+        }
+        
+        if !unreachable_peers.is_empty() {
+            return Err(PathTestError::NetworkFailure(
+                format!("Unreachable peers: {:?}", unreachable_peers)
+            ));
+        }
+        
+        Ok(result)
+    }
+    
+    /// Test connectivity to a specific peer
+    async fn test_peer_connectivity(&self, addr: &SocketAddr) -> Result<Duration, Box<dyn std::error::Error + Send + Sync>> {
+        let start = Instant::now();
+        
+        match tokio::time::timeout(Duration::from_secs(5), TcpStream::connect(addr)).await {
+            Ok(Ok(_stream)) => {
+                Ok(start.elapsed())
+            }
+            Ok(Err(e)) => Err(Box::new(e)),
+            Err(_) => Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "Connection timeout"
+            ))),
+        }
+    }
+    
+    /// Calculate security score based on cryptographic strength and path characteristics
+    fn calculate_security_score(&self, path: &OnionPath) -> f64 {
+        let mut score = 1.0;
+        
+        // Path length factor (more hops = better security, up to a point)
+        let length_factor = match path.layers.len() {
+            0..=2 => 0.4,
+            3..=5 => 1.0,
+            6..=8 => 0.9,
+            _ => 0.7, // Too many hops can be counterproductive
+        };
+        score *= length_factor;
+        
+        // Check for cryptographic diversity (different keys)
+        let unique_keys: HashSet<_> = path.layers.iter().map(|l| l.key).collect();
+        if unique_keys.len() < path.layers.len() {
+            score *= 0.5; // Penalty for duplicate keys
+        }
+        
+        // Path age factor (newer paths are more secure)
+        let age_hours = path.created_at.elapsed().as_secs() as f64 / 3600.0;
+        let age_factor = (1.0 - (age_hours / 24.0)).max(0.1); // Decay over 24 hours
+        score *= age_factor;
+        
+        score.clamp(0.0, 1.0)
+    }
+    
+    /// Calculate anonymity score based on path diversity and characteristics
+    fn calculate_anonymity_score(&self, path: &OnionPath) -> f64 {
+        let mut score = 1.0;
+        
+        // Path length contributes to anonymity
+        score *= (path.layers.len() as f64 / 10.0).min(1.0);
+        
+        // Peer diversity (unique peers)
+        let unique_peers: HashSet<_> = path.layers.iter().map(|l| &l.peer_id).collect();
+        let diversity_ratio = unique_peers.len() as f64 / path.layers.len() as f64;
+        score *= diversity_ratio;
+        
+        // Geographic diversity (if location data available)
+        // Note: This would require actual location data from peers
+        // For now, we use address diversity as a proxy
+        let unique_networks: HashSet<_> = path.layers.iter()
+            .map(|l| format!("{}/24", l.peer_addr.ip()))
+            .collect();
+        let network_diversity = unique_networks.len() as f64 / path.layers.len() as f64;
+        score *= network_diversity;
+        
+        score.clamp(0.0, 1.0)
+    }
+    
+    /// Calculate performance score based on estimated latency and throughput
+    fn calculate_performance_score(&self, path: &OnionPath) -> f64 {
+        let estimate = path.estimate_performance();
+        
+        let mut score = 1.0;
+        
+        // Latency factor (lower is better)
+        let latency_factor = (500.0 - estimate.estimated_latency_ms.min(500.0)) / 500.0;
+        score *= latency_factor;
+        
+        // Bandwidth efficiency factor
+        score *= estimate.bandwidth_efficiency;
+        
+        // Path length penalty for performance
+        let length_penalty = 1.0 - ((path.layers.len() as f64 - 3.0) / 10.0).max(0.0);
+        score *= length_penalty;
+        
+        score.clamp(0.0, 1.0)
+    }
+    
+    /// Comprehensive path analysis combining validation and testing
+    pub async fn analyze_path(&self, path: &OnionPath) -> Result<PathAnalysisResult, Box<dyn std::error::Error + Send + Sync>> {
+        let validation_result = self.validate_onion_path(path).await?;
+        let connectivity_result = self.test_onion_path(path).await?;
+        
+        Ok(PathAnalysisResult {
+            validation: validation_result,
+            connectivity: connectivity_result,
+            recommendations: self.generate_path_recommendations(path),
+        })
+    }
+    
+    /// Generate recommendations for path improvement
+    fn generate_path_recommendations(&self, path: &OnionPath) -> Vec<String> {
+        let mut recommendations = Vec::new();
+        
+        if path.layers.len() < 3 {
+            recommendations.push("Consider using at least 3 hops for better anonymity".to_string());
+        }
+        
+        if path.layers.len() > 8 {
+            recommendations.push("Consider reducing hop count to improve performance".to_string());
+        }
+        
+        // Check for age
+        if path.created_at.elapsed() > Duration::from_secs(3600) {
+            recommendations.push("Path is old - consider rebuilding for better security".to_string());
+        }
+        
+        // Check for peer diversity
+        let unique_peers: HashSet<_> = path.layers.iter().map(|l| &l.peer_id).collect();
+        if unique_peers.len() < path.layers.len() {
+            recommendations.push("Avoid reusing peers in the same path".to_string());
+        }
+        
+        recommendations
     }
 }
 
@@ -2808,5 +2954,213 @@ mod tests {
                 debug!("Path building failed as expected: {}", e);
             }
         }
+    }
+    
+    #[tokio::test]
+    async fn test_onion_path_validation() {
+        use rand::{thread_rng, RngCore};
+        use std::net::{IpAddr, Ipv4Addr};
+        
+        // Create a test onion path
+        let mut rng = thread_rng();
+        let mut layers = Vec::new();
+        
+        for i in 0..5 {
+            let mut key = [0u8; ONION_LAYER_KEY_SIZE];
+            let mut nonce = [0u8; ONION_LAYER_NONCE_SIZE];
+            rng.fill_bytes(&mut key);
+            rng.fill_bytes(&mut nonce);
+            
+            let layer = OnionLayer {
+                key,
+                nonce,
+                peer_id: format!("test_peer_{}", i),
+                peer_addr: SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+                    8000 + i as u16,
+                ),
+            };
+            layers.push(layer);
+        }
+        
+        let onion_path = OnionPath {
+            layers,
+            path_id: rng.next_u64(),
+            created_at: Instant::now(),
+            destination: "test.example.com".to_string(),
+        };
+        
+        // Test basic validation
+        let validation_result = onion_path.validate_path();
+        assert!(validation_result.is_ok());
+        
+        let result = validation_result.unwrap();
+        assert!(result.is_valid);
+        
+        // Test performance estimation
+        let performance = onion_path.estimate_performance();
+        assert!(performance.estimated_latency_ms > 0.0);
+        assert!(performance.bandwidth_efficiency > 0.0);
+        assert!(performance.anonymity_score > 0.0);
+        
+        info!("Onion path validation test completed successfully");
+    }
+    
+    #[tokio::test]
+    async fn test_onion_path_encryption_decryption() {
+        use rand::{thread_rng, RngCore};
+        use std::net::{IpAddr, Ipv4Addr};
+        
+        let mut rng = thread_rng();
+        let mut layers = Vec::new();
+        
+        // Create test path with 3 layers
+        for i in 0..3 {
+            let mut key = [0u8; ONION_LAYER_KEY_SIZE];
+            let mut nonce = [0u8; ONION_LAYER_NONCE_SIZE];
+            rng.fill_bytes(&mut key);
+            rng.fill_bytes(&mut nonce);
+            
+            let layer = OnionLayer {
+                key,
+                nonce,
+                peer_id: format!("relay_{}", i),
+                peer_addr: SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, i as u8 + 1)),
+                    9000 + i as u16,
+                ),
+            };
+            layers.push(layer);
+        }
+        
+        let onion_path = OnionPath {
+            layers,
+            path_id: rng.next_u64(),
+            created_at: Instant::now(),
+            destination: "encrypted.test.com".to_string(),
+        };
+        
+        // Test encryption and decryption
+        let test_message = b"Hello, anonymous world!";
+        
+        // Encrypt the message through all layers
+        let encrypted = onion_path.encrypt_onion(test_message);
+        assert!(encrypted.is_ok());
+        
+        let encrypted_data = encrypted.unwrap();
+        assert_ne!(encrypted_data, test_message.to_vec());
+        assert!(encrypted_data.len() > test_message.len()); // Should be larger due to encryption overhead
+        
+        // Decrypt layer by layer
+        let mut current_data = encrypted_data;
+        for i in 0..onion_path.layers.len() {
+            let decrypted = onion_path.decrypt_layer(i, &current_data);
+            assert!(decrypted.is_ok(), "Layer {} decryption should succeed", i);
+            current_data = decrypted.unwrap();
+        }
+        
+        // Final decrypted data should match original message
+        assert_eq!(current_data, test_message.to_vec());
+        
+        info!("Onion path encryption/decryption test completed successfully");
+    }
+    
+    #[tokio::test]
+    async fn test_path_builder_validation_integration() {
+        let bootstrap_peers = vec![
+            "/ip4/127.0.0.1/tcp/4001/p2p/QmBootstrap1".to_string(),
+        ];
+        let config = PathBuilderConfig::default();
+        let path_builder = PathBuilder::new(bootstrap_peers, config).await.unwrap();
+        
+        // Create a mock onion path for testing
+        use rand::{thread_rng, RngCore};
+        use std::net::{IpAddr, Ipv4Addr};
+        
+        let mut rng = thread_rng();
+        let mut layers = Vec::new();
+        
+        for i in 0..4 {
+            let mut key = [0u8; ONION_LAYER_KEY_SIZE];
+            let mut nonce = [0u8; ONION_LAYER_NONCE_SIZE];
+            rng.fill_bytes(&mut key);
+            rng.fill_bytes(&mut nonce);
+            
+            let layer = OnionLayer {
+                key,
+                nonce,
+                peer_id: format!("integration_peer_{}", i),
+                peer_addr: SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(192, 168, 1, i as u8 + 1)),
+                    7000 + i as u16,
+                ),
+            };
+            layers.push(layer);
+        }
+        
+        let onion_path = OnionPath {
+            layers,
+            path_id: rng.next_u64(),
+            created_at: Instant::now(),
+            destination: "integration.test".to_string(),
+        };
+        
+        // Test validation through PathBuilder
+        let validation_result = path_builder.validate_onion_path(&onion_path).await;
+        assert!(validation_result.is_ok());
+        
+        let result = validation_result.unwrap();
+        assert!(result.is_valid);
+        assert!(result.security_score > 0.0);
+        assert!(result.anonymity_score > 0.0);
+        assert!(result.performance_score > 0.0);
+        
+        info!("PathBuilder validation integration test completed successfully");
+    }
+    
+    #[tokio::test]
+    async fn test_path_connectivity_testing() {
+        use rand::{thread_rng, RngCore};
+        use std::net::{IpAddr, Ipv4Addr};
+        
+        let mut rng = thread_rng();
+        let mut layers = Vec::new();
+        
+        // Create minimal test path
+        for i in 0..2 {
+            let mut key = [0u8; ONION_LAYER_KEY_SIZE];
+            let mut nonce = [0u8; ONION_LAYER_NONCE_SIZE];
+            rng.fill_bytes(&mut key);
+            rng.fill_bytes(&mut nonce);
+            
+            let layer = OnionLayer {
+                key,
+                nonce,
+                peer_id: format!("connectivity_peer_{}", i),
+                peer_addr: SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(172, 16, 0, i as u8 + 1)),
+                    6000 + i as u16,
+                ),
+            };
+            layers.push(layer);
+        }
+        
+        let onion_path = OnionPath {
+            layers,
+            path_id: rng.next_u64(),
+            created_at: Instant::now(),
+            destination: "connectivity.test".to_string(),
+        };
+        
+        // Test path connectivity
+        let connectivity_result = onion_path.test_path_connectivity().await;
+        assert!(connectivity_result.is_ok());
+        
+        let result = connectivity_result.unwrap();
+        assert!(result.connectivity_verified);
+        assert!(result.total_test_time > Duration::default());
+        assert_eq!(result.layer_decrypt_times.len(), onion_path.layers.len());
+        
+        info!("Path connectivity testing completed successfully");
     }
 }
